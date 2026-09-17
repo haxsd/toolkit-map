@@ -1,6 +1,6 @@
 ---
 name: runtime-census
-description: "盘点和管理本机的语言运行时（Node / Python / Java 等的多版本共存）。当需要回答这台机器上到底装了哪些版本、发现 node/python/java 版本与预期不符、遇到某个项目需要旧版本而新版本看不见、要在项目里锁定运行时版本、或者要在一台新机器上一次性配好工具链时使用。Use when asked which runtime versions are installed on this machine, when a version mismatch appears (e.g. only Node 16 is visible while a project needs 22), when pinning per-project tool versions, or when setting up a machine's toolchain declaratively."
+description: "盘点和管理本机的工具链：任意工具（语言运行时、编译器、CLI、逆向与渗透工具）装了几份、分别在哪、哪一份会被解析到，以及声明与实际是否漂移。当需要回答这台机器上到底装了哪些工具与版本、发现某个命令的行为与预期不符、遇到某个项目需要旧版本而新版本看不见、要在项目里锁定版本、要在一台新机器上一次性配好工具链，或开工前做环境预检时使用。Use when asked which tools or runtime versions are installed on this machine, when a command resolves to the wrong version (e.g. only Node 16 is visible while a project needs 22), when pinning per-project tool versions, when auditing a dirty machine, or when setting up a machine's toolchain declaratively."
 license: MIT
 metadata:
   version: 0.1.0
@@ -9,17 +9,19 @@ metadata:
 
 # runtime-census
 
-管理本机语言运行时的工具集。核心作用是解决一个常见的错误认知：
+盘点本机**工具**并把它们声明式管起来的工具集：语言运行时只是其中一类，编译器、
+CLI、逆向与渗透工具都走同一条流水线。核心作用是解决一个常见的错误认知：
 
 > `node --version` 是**解析器**（回答"按 PATH 顺序现在用哪个"），
 > 不是**盘点器**（回答"这台机器上装了哪些"）。
 
-把前者当成后者，就会得出 `本机只有 Node 16` 这种关于机器的错误结论。
-真实情况常常是装了 2 个 Node、3 个 Python、3 个 JVM，只是后两个被 PATH 挡住了。
+把前者当成后者，就会得出"本机只有 Node 16"这种关于机器的错误结论。
+真实情况常常是同一个命令有好几份副本、IDE 里还捆着一套工具、conda 环境里还有一套，
+只是都被 PATH 挡住了。
 
 ## 铁律
 
-在动任何运行时之前先读这几条，它们决定了后面所有命令的写法。
+在动任何工具之前先读这几条，它们决定了后面所有命令的写法。
 
 1. **不要用 `--version` 回答"有哪些"。** 它只能回答"用哪个"。
 2. **先读声明，再决定版本。** 项目里的 `mise.toml` / `.tool-versions` /

@@ -5,11 +5,13 @@
 
 # runtime-census
 
-Find every language runtime that **actually exists** on this machine, and manage them declaratively.
+Find every **tool** that actually exists on this machine — language runtimes are just one
+kind of tool — and manage them declaratively.
 
 `node --version` tells you **which one is active**. It does not tell you **what is installed**.
 That gap is where confident, wrong answers like "this machine only has Node 16" come from —
-while two Nodes, three Pythons and three JVMs sit on disk.
+while another copy of the same command, a tool bundled inside an IDE, a conda environment,
+a CLI you installed by hand last year and a reversing tool you forgot about all sit on disk.
 
 ## Quick start
 
@@ -64,13 +66,14 @@ PATH. Treating them as **inventories** hides most of what is installed. Four com
 
 | How it hides | Example |
 |---|---|
-| PATH is single-valued | Seven JDKs installed; `java` is only ever the first one on PATH |
-| Custom naming | Node 22 installed as `node22`, because the name `node` was taken by a legacy project |
-| Not on PATH at all | conda's Python, pyenv versions — even `py -0p` does not know them |
-| Bundled with a host | An IDE's `jbr/` contains a full JDK that never registers as a system runtime |
+| PATH is single-valued | Two versions of the same tool installed; the bare name is only ever the first one on PATH |
+| Custom naming | A tool installed as `node22` / `python3.12` / `r2-5.9`, because the plain name was taken |
+| Not on PATH at all | conda's Python, pyenv versions, a CLI dropped into `~/toolchains` or `~/.local/bin` |
+| Bundled with a host | An IDE's `jbr/` contains a full JDK that never registers as a system tool |
 
 census walks all four categories, keeping **which one** and **which ones** as separate
-questions.
+questions. It is not limited to language runtimes: anything you can declare (a compiler, a
+CLI, a reversing tool) gets the same treatment — resolution, version, placement, drift.
 
 ## Per-project version switching
 

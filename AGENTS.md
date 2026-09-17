@@ -1,7 +1,10 @@
-# AGENTS.md —— 运行时发现契约
+# AGENTS.md —— 工具链发现契约
 
 这个文件是给 AI agent 看的。它规定的不是"这个项目怎么写代码"，而是
-**"你在这台机器上找运行时的时候，必须遵守什么规则"**。
+**"你在这台机器上找工具、判断版本的时候，必须遵守什么规则"**。
+
+适用范围是**所有工具**：语言运行时、编译器、CLI、逆向与渗透工具都算。下文里出现
+`node` / `java` 之类只是举例，规则本身与具体工具无关。
 
 把本文件的内容复制到你实际使用的规则文件里（Cursor 的 `.cursor/rules/`、
 `AGENTS.md`、`CLAUDE.md`，或任何会在会话开始时注入的上下文）。
@@ -12,7 +15,7 @@
 
 > `node --version` 是解析器，不是盘点器。
 
-它回答的是"按 PATH 顺序，第一个赢家是谁"，**不是**"这台机器上有哪些版本"。
+它回答的是"按 PATH 顺序，第一个赢家是谁"，**不是**"这台机器上有哪些工具与版本"。
 把前者当成后者，就会说出一句关于机器的错误陈述，而且说得很自信——
 
 > "本机只有 Node 16" ← 这句话通常是**错的**。它真正的含义是"PATH 解析到了 Node 16"。
@@ -213,7 +216,7 @@ JetBrains 系 IDE（PyCharm / IntelliJ）的安装目录里有 `jbr/`，
 ### 坑 5：Windows PowerShell 5.1 的 `@()` 陷阱
 
 `@($list)` 作用于 `List[object]` 会抛 `Argument types do not match`。
-要用 `$list.ToArray()`。写 PowerShell 脚本处理运行时清单时会碰到。
+要用 `$list.ToArray()`。写 PowerShell 脚本处理工具清单时会碰到。
 
 ### 坑 6：声明会漂移（模板 ≠ 部署副本）
 
@@ -229,6 +232,52 @@ JetBrains 系 IDE（PyCharm / IntelliJ）的安装目录里有 `jbr/`，
 `~/.config/mise/config.toml` 就降级成"从工作目录向上发现"的配置——工作目录不在用户
 目录之下时它不生效，`auto_update` 这类只允许写在全局配置里的设置也会被忽略
 （`census` 的 `[XDG_SHIFT]` 告警会指出）。
+
+---
+
+## 开工前的环境预检
+
+接手"跑不起来 / 行为不对"的任务时，**先把环境排除掉，再动应用代码**——
+把项目当成无辜的，直到环境被证明有问题。下面这套清单里，脚本能自动化的部分由
+`census` 负责，其余是必须逐项走一遍的取证动作。
+
+**脚本能替你做的**（只读，不改机器）：
+
+```powershell
+.\scripts\census.ps1 -Json -Timing        # 工具/运行时盘点：装了几份、在哪、解析到哪、有没有漂移
+```
+
+```bash
+./scripts/census.sh --json --timing
+```
+
+重点看这几类告警：`[MISSING]`（声明要求了但没装）、`[PATH_ORDER]`（装了却不是它在生效）、
+`[STUB]`（命令解析到一个跑不起来的文件）、`[DRIFT]`（声明与模板/项目要求不一致）、
+`[UNDECLARED]`（项目有版本约束却没有可读的声明文件）。
+
+**需要人工取证的部分**（逐条走，别跳）：
+
+1. **项目类型与声明的版本**：看 `mise.toml` / `.tool-versions` / `package.json engines`
+   / `go.mod` / `pyproject.toml` 等，先读需求，再与 `census` 的现状对照。
+2. **依赖目录是否就位**：`node_modules/`、`.venv/`、`vendor/` 这类目录缺失是"跑不起来"
+   的高频原因；报告里要直接给出对应的安装命令。
+3. **端口占用**：先取证再动手——查出监听者的 PID 与可执行文件路径，把证据摆出来。
+   Windows 用 `Get-NetTCPConnection -LocalPort <端口>` + `Get-Process -Id <PID>`，
+   macOS/Linux 用 `lsof -nP -iTCP:<端口> -sTCP:LISTEN` + `ps -p <PID>`。
+   **未经用户对"那一个进程"的明确同意，不得结束任何进程**；不要默认 `kill -9` 或
+   `Stop-Process -Force`，也不要按进程名批量杀。
+4. **`.env` 只比键名**：如果存在 `.env.example`，只比较**键名**与"值是否为空"。
+   第一个 `=` 之后的一切都当密钥处理——**绝不打印、引用、转述或写进日志**，
+   也不要用 `cat .env` / `Get-Content .env` 这种原样输出。缺失项只以键名引用
+   （例如 `DATABASE_URL: 缺失`）。
+5. **服务依赖是否在跑**：`DATABASE_URL` / `REDIS_URL` / MySQL DSN 出现时，
+   先做非破坏性的状态检查（如 `docker compose ps`），确认它是什么服务之后再建议启动。
+6. **权限**：确认项目目录可写；被 `package.json` / `Makefile` 引用的脚本在 Unix 上
+   可能需要执行位（`chmod +x`）。
+
+**输出形状**：按影响排序（High / Medium / …），每条都给「证据 + 修法」，
+命令按当前系统给（Windows 用 `powershell` 代码块，macOS/Linux 用 `bash` 代码块，
+只给匹配的那一份），最后附一条最可能的启动命令与"我检查了什么"。
 
 ---
 

@@ -73,14 +73,14 @@ $script:Text = @{
     'meta'         = @{ zh = '生成时间: {time}   主机: {user}@{arch}   当前目录: {cwd}'
                         en = 'generated {time}   host {user}@{arch}   cwd {cwd}' }
 
-    'sec.decl'     = @{ zh = '1. 声明层 —— 谁在要求什么版本'
-                        en = '1. Declarations — who asks for which version' }
-    'sec.managed'  = @{ zh = '2. 纳管层 —— mise 管理的运行时'
-                        en = '2. Managed — runtimes that mise manages' }
+    'sec.decl'     = @{ zh = '1. 声明层 —— 谁在要求哪些工具与版本'
+                        en = '1. Declarations — who asks for which tools and versions' }
+    'sec.managed'  = @{ zh = '2. 纳管层 —— mise 管理的工具'
+                        en = '2. Managed — tools that mise manages' }
     'sec.conv'     = @{ zh = '3. 约定层 —— 带版本号的命名 shim（最容易失传的约定）'
                         en = '3. Conventions — version-suffixed shims (the kind that gets lost)' }
-    'sec.inv'      = @{ zh = '4. 运行时清单 —— 磁盘上实际存在的运行时（含纳管与未纳管）'
-                        en = '4. Inventory — runtimes actually present on disk (managed or not)' }
+    'sec.inv'      = @{ zh = '4. 工具清单 —— 磁盘上实际存在的运行时与工具（含纳管与未纳管）'
+                        en = '4. Inventory — runtimes and tools actually present on disk (managed or not)' }
     'sec.res'      = @{ zh = '5. 解析层 —— 命令实际解析到哪'
                         en = '5. Resolution — what each command actually resolves to' }
     'sec.warn'     = @{ zh = '6. 告警 —— 需要人工确认的问题'
@@ -92,8 +92,8 @@ $script:Text = @{
                         en = '(no mise.toml / .tool-versions declarations found)' }
     'no.mise'      = @{ zh = 'mise 未安装（PATH 上找不到）。'
                         en = 'mise is not installed (not found on PATH).' }
-    'no.managed'   = @{ zh = 'mise 已安装，但尚未纳管任何运行时。'
-                        en = 'mise is installed but manages no runtimes yet.' }
+    'no.managed'   = @{ zh = 'mise 已安装，但尚未纳管任何工具。'
+                        en = 'mise is installed but manages no tools yet.' }
     'no.conv'      = @{ zh = '（未发现）'; en = '(none found)' }
     'no.warn'      = @{ zh = '未发现问题。'; en = 'No problems found.' }
 
@@ -114,7 +114,7 @@ $script:Text = @{
                          en = '^ warning: cannot actually run (app-execution alias whose target app is missing; --version gives no output, exit 9009)' }
 
     # ---- 汇总 ----
-    'sum.runtimes' = @{ zh = '发现的运行时文件总数: {count}'; en = 'Runtime files found: {count}' }
+    'sum.runtimes' = @{ zh = '发现的运行时/工具条目数: {count}'; en = 'Runtime/tool entries found: {count}' }
     'sum.byTool'   = @{ zh = '{tool}  {count} 个版本: {versions}'
                         en = '{tool}  {count} versions: {versions}' }
     'sum.placement'= @{ zh = '位置分布: {text}'; en = 'Placement: {text}' }
@@ -215,8 +215,8 @@ $script:Text = @{
         en = 'Either unset the variable (recommended: the manifest lives in ~/.config/mise/config.toml) or move the manifest to {config}' }
 
     'warn.STRAY.message' = @{
-        zh = '有 {count} 个运行时放在非规范位置，且没有任何管理器纳管它们。它们只靠 PATH 被找到——PATH 一变就失传。建议登记到声明文件；今后新装的运行时请落在 {root}。'
-        en = '{count} runtime(s) sit outside the canonical root and are tracked by no manager. They are reachable only through PATH, so a PATH change loses them. Record them in a declaration file; install future runtimes under {root}.' }
+        zh = '有 {count} 个工具/运行时放在非规范位置，且没有任何管理器纳管它们。它们只靠 PATH 被找到——PATH 一变就失传。建议登记到声明文件；今后新装的工具请落在 {root}。'
+        en = '{count} tool(s)/runtime(s) sit outside the canonical root and are tracked by no manager. They are reachable only through PATH, so a PATH change loses them. Record them in a declaration file; install future tools under {root}.' }
     'warn.STRAY.action' = @{
         zh = '登记它们（不要搬动路径：路径可能被项目配置或 IDE 写死）'
         en = 'Record them — do not move the paths (project config or IDEs may hard-code them)' }
@@ -229,8 +229,8 @@ $script:Text = @{
         en = 'Add mise.toml ([tools] node = "22") or .tool-versions (nodejs 22) at the project root; from then on cd-ing in selects the right version' }
 
     'warn.MISSING.message' = @{
-        zh = "声明文件 '{file}' 要求 {tool} {wanted}，但本机未发现该运行时的任何安装。"
-        en = "'{file}' asks for {tool} {wanted}, but no installation of that runtime was found here." }
+        zh = "声明文件 '{file}' 要求 {tool} {wanted}，但本机没有发现它——既不在 PATH 上，也没有被任何管理器纳管。"
+        en = "'{file}' asks for {tool} {wanted}, but it was not found on this machine — not on PATH, and not managed by anything." }
     'warn.MISSING.action' = @{
         zh = '执行 mise install 把它装上（新机器可直接跑 scripts/bootstrap.ps1）'
         en = 'Install it with mise install (on a new machine, just run scripts/bootstrap.ps1)' }
@@ -1112,7 +1112,7 @@ function Resolve-CommandInPath {
 }
 
 function Get-Resolution {
-    param([hashtable]$PathIndex, [int]$DirCount)
+    param([hashtable]$PathIndex, [int]$DirCount, [string[]]$ExtraCommands = @())
 
     $probeList = @(
         'node', 'npm', 'npx', 'pnpm', 'yarn',
@@ -1124,6 +1124,13 @@ function Get-Resolution {
         # docker 决定 .sh 脚本在这台机器上能否被验证。
         'pwsh', 'winget', 'git', 'docker', 'conda'
     )
+
+    # 声明里点名的工具也要解析。这个套件面向的是【所有工具】，不是只认语言的运行时：
+    # 声明里写了 jadx / nmap / ffmpeg / jq，就应该能看到它们解析到哪、装了没有。
+    # 上面那张固定表只是"默认值得看一眼的常见命令"，不是能力边界。
+    foreach ($extra in $ExtraCommands) {
+        if ($extra -and ($probeList -notcontains $extra)) { $probeList += $extra }
+    }
 
     # PATHEXT 决定同一目录下各扩展名的尝试顺序，末尾补一个空串表示无扩展名的文件
     $exts = @($env:PATHEXT -split ';' | Where-Object { $_ } | ForEach-Object { $_.ToLowerInvariant() })
@@ -1229,7 +1236,11 @@ function Get-Warnings {
             $short  = ($tool -replace '^(nodejs|node)$', 'node') -replace '^python3$', 'python'
             $installed = @($Managed.records | Where-Object { $_.tool -eq $short }) +
                          @($Unmanaged | Where-Object { $_.tool -eq $short })
-            if ($installed.Count -eq 0) {
+            # 判断"装了没"不能只看运行时清单：这个套件面向所有工具，
+            # 声明里可能是 jadx / nmap / ffmpeg 这类不在清单里的东西。
+            # 只要 PATH 上能解析到、而且真的能执行，就算装了。
+            $resolvedOk = @($Resolution | Where-Object { $_.command -eq $short -and $_.usable }).Count -gt 0
+            if ($installed.Count -eq 0 -and -not $resolvedOk) {
                 $warnings.Add((New-Warning -Kind 'MISSING' -Tool $short -Facts @{
                     tool    = $tool
                     wanted  = $wanted
@@ -1429,7 +1440,9 @@ if ($Deep) {
 }
 
 $resolution = Measure-Phase '5. 解析层'                {
-    Get-Resolution -PathIndex $pathIndex.index -DirCount $pathIndex.dirCount
+    # 把声明里点名的工具并进解析列表：任何工具都能被盘点，不限于语言运行时
+    $declaredCommands = @($declarations | ForEach-Object { $_.tools.Keys } | Sort-Object -Unique)
+    Get-Resolution -PathIndex $pathIndex.index -DirCount $pathIndex.dirCount -ExtraCommands $declaredCommands
 }
 $warnings   = Measure-Phase '6. 汇总告警'               {
     Get-Warnings -Managed $managed -Conventions $conventions -Unmanaged $unmanaged `

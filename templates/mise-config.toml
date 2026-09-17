@@ -17,18 +17,33 @@
 # 只列出你确实需要的版本。每多一个版本就多一份磁盘占用和升级负担。
 
 [tools]
-# Node.js：保留旧版本是因为老项目锁死了版本；新版本给新项目用。
-# 具体某个项目用哪个，由项目自己的 .tool-versions 决定。
+# ---- 语言运行时（按需保留/增删，版本写你确实需要的）----
+# 同一个工具可以声明多个版本：项目用哪个由项目自己的 mise.toml / .tool-versions 决定。
 node = ["22", "20"]
 
 # Python：交给 uv 后端拉取官方预编译版本，比系统包管理器干净得多。
 python = ["3.12", "3.13"]
 
 # Java：用 Temurin 发行版。注意 IDE 自带的 JBR（JetBrains Runtime）不受这里管理，
-# 它属于 IDE 的一部分，census 会把它单独标为"IDE 内置"。
+# 它属于 IDE 的一部分，census 会把它单独标为「宿主内置」。
 java = ["temurin-21"]
 
-# 其它按需打开。开启后 `mise install` 会自动拉取。
+# ---- 非运行时的命令行工具（同样是"工具"，一样值得声明）----
+# mise 认很多后端：core、npm、pipx、cargo、go、ubi、aqua、github…
+# 只要能被声明，census 就会盘点它：解析到哪、什么版本、有没有漂移。
+#
+# jq     = "latest"
+# ripgrep = "latest"
+# fd     = "latest"
+# ffmpeg = "latest"
+# docker = "latest"
+#
+# 逆向 / 渗透工具也走同一条路（示例，按需打开）：
+# jadx   = "ubi:skylot/jadx"
+# frida  = "pipx:frida-tools"
+# nmap   = "latest"
+
+# ---- 其它语言运行时（按需打开）----
 # go     = ["1.23"]
 # rust   = ["stable"]
 # deno   = ["latest"]

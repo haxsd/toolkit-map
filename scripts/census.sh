@@ -67,14 +67,14 @@ title@@zh@@运行时普查报告 (census)
 title@@en@@runtime-census report
 meta@@zh@@生成时间: {time}   主机: {user}@{arch}   当前目录: {cwd}
 meta@@en@@generated {time}   host {user}@{arch}   cwd {cwd}
-sec.decl@@zh@@1. 声明层 —— 谁在要求什么版本
-sec.decl@@en@@1. Declarations — who asks for which version
-sec.managed@@zh@@2. 纳管层 —— mise 管理的运行时
-sec.managed@@en@@2. Managed — runtimes that mise manages
+sec.decl@@zh@@1. 声明层 —— 谁在要求哪些工具与版本
+sec.decl@@en@@1. Declarations — who asks for which tools and versions
+sec.managed@@zh@@2. 纳管层 —— mise 管理的工具
+sec.managed@@en@@2. Managed — tools that mise manages
 sec.conv@@zh@@3. 约定层 —— 带版本号的命名 shim（最容易失传的约定）
 sec.conv@@en@@3. Conventions — version-suffixed shims (the kind that gets lost)
-sec.inv@@zh@@4. 运行时清单 —— 磁盘上实际存在的运行时（含纳管与未纳管）
-sec.inv@@en@@4. Inventory — runtimes actually present on disk (managed or not)
+sec.inv@@zh@@4. 工具清单 —— 磁盘上实际存在的运行时与工具（含纳管与未纳管）
+sec.inv@@en@@4. Inventory — runtimes and tools actually present on disk (managed or not)
 sec.res@@zh@@5. 解析层 —— 命令实际解析到哪
 sec.res@@en@@5. Resolution — what each command actually resolves to
 sec.warn@@zh@@6. 告警 —— 需要人工确认的问题
@@ -87,8 +87,8 @@ no.decl@@zh@@（未发现任何 mise.toml / .tool-versions 声明）
 no.decl@@en@@(no mise.toml / .tool-versions declarations found)
 no.mise@@zh@@mise 未安装（PATH 上找不到）。
 no.mise@@en@@mise is not installed (not found on PATH).
-no.managed@@zh@@mise 已安装，但尚未纳管任何运行时。
-no.managed@@en@@mise is installed but manages no runtimes yet.
+no.managed@@zh@@mise 已安装，但尚未纳管任何工具。
+no.managed@@en@@mise is installed but manages no tools yet.
 no.conv@@zh@@（未发现）
 no.conv@@en@@(none found)
 no.warn@@zh@@未发现问题。
@@ -111,8 +111,8 @@ res.line@@zh@@{command} -> {path}  ({version})
 res.line@@en@@{command} -> {path}  ({version})
 res.stub@@zh@@^ 警告：实测无法执行（应用执行别名的目标未安装，运行 --version 无输出、退出码 9009）
 res.stub@@en@@^ warning: cannot actually run (app-execution alias whose target app is missing; --version gives no output, exit 9009)
-sum.runtimes@@zh@@发现的运行时条目数: {count}
-sum.runtimes@@en@@Runtime files found: {count}
+sum.runtimes@@zh@@发现的运行时/工具条目数: {count}
+sum.runtimes@@en@@Runtime/tool entries found: {count}
 sum.byTool@@zh@@{tool}  {count} 个版本: {versions}
 sum.byTool@@en@@{tool}  {count} versions: {versions}
 sum.placement@@zh@@位置分布: {text}
@@ -211,16 +211,16 @@ warn.XDG_SHIFT.message@@zh@@本机设置了 XDG_CONFIG_HOME={xdg}，mise 的全�
 warn.XDG_SHIFT.message@@en@@XDG_CONFIG_HOME={xdg} is set, so mise moves its global config directory to {config}. As a result ~/.config/mise/config.toml is no longer the global config: it becomes a config discovered by walking up from the working directory, and has no effect outside the home tree.
 warn.XDG_SHIFT.action@@zh@@要么去掉这个变量（推荐，机器声明就写在 ~/.config/mise/config.toml），要么把声明迁到 {config}
 warn.XDG_SHIFT.action@@en@@Either unset the variable (recommended: the manifest lives in ~/.config/mise/config.toml) or move the manifest to {config}
-warn.STRAY.message@@zh@@有 {count} 个运行时放在非规范位置，且没有任何管理器纳管它们。它们只靠 PATH 被找到——PATH 一变就失传。建议登记到声明文件；今后新装的运行时请落在 {root}。
-warn.STRAY.message@@en@@{count} runtime(s) sit outside the canonical root and are tracked by no manager. They are reachable only through PATH, so a PATH change loses them. Record them in a declaration file; install future runtimes under {root}.
+warn.STRAY.message@@zh@@有 {count} 个工具/运行时放在非规范位置，且没有任何管理器纳管它们。它们只靠 PATH 被找到——PATH 一变就失传。建议登记到声明文件；今后新装的工具请落在 {root}。
+warn.STRAY.message@@en@@{count} tool(s)/runtime(s) sit outside the canonical root and are tracked by no manager. They are reachable only through PATH, so a PATH change loses them. Record them in a declaration file; install future tools under {root}.
 warn.STRAY.action@@zh@@登记它们（不要搬动路径：路径可能被项目配置或 IDE 写死）
 warn.STRAY.action@@en@@Record them — do not move the paths (project config or IDEs may hard-code them)
 warn.UNDECLARED.message@@zh@@当前目录的 package.json 要求 node {wanted}，但没有任何工具读得到的声明文件。engines 只在版本不符时给警告，不会切换版本——这就是当初需要 node22.cmd 那类私有约定的原因。
 warn.UNDECLARED.message@@en@@This directory's package.json asks for node {wanted}, but no tool can read a declaration here. engines only warns on mismatch; it never switches versions — which is why private conventions like node22.cmd existed.
 warn.UNDECLARED.action@@zh@@在项目根目录建 mise.toml（[tools] node = "22"）或 .tool-versions（nodejs 22）；之后 cd 进项目会自动用对版本
 warn.UNDECLARED.action@@en@@Add mise.toml ([tools] node = "22") or .tool-versions (nodejs 22) at the project root; from then on cd-ing in selects the right version
-warn.MISSING.message@@zh@@声明文件 '{file}' 要求 {tool} {wanted}，但本机未发现该运行时的任何安装。
-warn.MISSING.message@@en@@'{file}' asks for {tool} {wanted}, but no installation of that runtime was found here.
+warn.MISSING.message@@zh@@声明文件 '{file}' 要求 {tool} {wanted}，但本机没有发现它——既不在 PATH 上，也没有被任何管理器纳管。
+warn.MISSING.message@@en@@'{file}' asks for {tool} {wanted}, but it was not found on this machine — not on PATH, and not managed by anything.
 warn.MISSING.action@@zh@@执行 mise install 把它装上（新机器可直接跑 scripts/bootstrap.sh）
 warn.MISSING.action@@en@@Install it with mise install (on a new machine, just run scripts/bootstrap.sh)
 warn.NO_MISE.message@@zh@@本机未安装 mise。运行时只能靠 PATH 解析，无法按项目自动切换版本。
@@ -696,14 +696,21 @@ probe_cmd() {
     java|javac) ver="$("$name" -version 2>&1 | head -n1 | sed -E 's/.*version "([^"]+)".*/\1/' || true)" ;;
     *)      ver="$("$name" --version 2>/dev/null | head -n1 || true)" ;;
   esac
-  RESOLVE_ROWS="${RESOLVE_ROWS}${name}|${resolved}|${ver}|${hitcount}
+  # usable 作为第 5 列一起记下来：判断"装没装"要用它，
+  # 而且 JSON 里与 census.ps1 的 resolution 记录对齐。
+  usable="yes"
+  is_real "$resolved" || usable="no"
+  RESOLVE_ROWS="${RESOLVE_ROWS}${name}|${resolved}|${ver}|${hitcount}|${usable}
 "
   # 解析到不可执行的文件 → 高危告警
-  if ! is_real "$resolved"; then
+  if [ "$usable" = "no" ]; then
     add_warn "STUB" "$name" "$resolved" "command=$name" "path=$resolved"
   fi
 }
-for c in node npm npx pnpm yarn python python3 py pip uv java javac mvn gradle go cargo rustc deno bun dotnet mise; do
+# 固定列表只是"默认值得看一眼的常见命令"；声明里点名的工具也一并解析，
+# 因为这个套件面向的是【所有工具】，不是只认语言的运行时。
+DECLARED_CMDS="$(declared_tools | awk -F'|' '{print $1}' | sort -u | tr '\n' ' ')"
+for c in node npm npx pnpm yarn python python3 py pip uv java javac mvn gradle go cargo rustc deno bun dotnet mise $DECLARED_CMDS; do
   probe_cmd "$c"
 done
 tick '5. 解析层'
@@ -822,6 +829,10 @@ while IFS='|' read -r d_tool d_ver d_src; do
   s_tool="$(short_tool "$d_tool")"
   [ -n "$(mise_version "$s_tool")" ] && continue
   runtime_installed "$s_tool" && continue
+  # PATH 上能解析到、而且真的能执行，就算装了——工具可能不在运行时清单里
+  # （声明里写 jadx / nmap / ffmpeg 就是这种情况）。
+  r_ok="$(printf '%s' "$RESOLVE_ROWS" | awk -F'|' -v c="$s_tool" '$1==c && $5!="no" {found=1} END{print (found ? "yes" : "no")}')"
+  [ "$r_ok" = "yes" ] && continue
   add_warn "MISSING" "$s_tool" "$d_src" \
     "tool=$d_tool" "wanted=$d_ver" "file=$d_src"
 done < <(declared_tools)
@@ -877,7 +888,7 @@ if [ "$JSON" -eq 1 ]; then
   printf '%s' "$RUNTIME_ROWS" | awk -F'|' "$AWK_ESC"' NF>=6 {printf "%s    {\"tool\": \"%s\", \"version\": \"%s\", \"path\": \"%s\", \"source\": \"%s\", \"placement\": \"%s\", \"managed\": %s, \"real\": %s}", (NR>1?",\n":""), esc($1), esc($2), esc($3), sk($4), sk($5), ($3 ~ /\/mise\// ? "true" : "false"), ($6 == "yes" ? "true" : "false")}'
   printf '\n  ],\n'
   printf '  "resolution": [\n'
-  printf '%s' "$RESOLVE_ROWS" | awk -F'|' "$AWK_ESC"' NF>=4 {printf "%s    {\"command\": \"%s\", \"resolvesTo\": \"%s\", \"version\": \"%s\", \"hitCount\": %s}", (NR>1?",\n":""), esc($1), esc($2), esc($3), $4}'
+  printf '%s' "$RESOLVE_ROWS" | awk -F'|' "$AWK_ESC"' NF>=4 {printf "%s    {\"command\": \"%s\", \"resolvesTo\": \"%s\", \"version\": \"%s\", \"hitCount\": %s, \"usable\": %s}", (NR>1?",\n":""), esc($1), esc($2), esc($3), $4, ($5 == "no" ? "false" : "true")}'
   printf '\n  ],\n'
   printf '  "warnings": [%s],\n' "$WARN_JSON_ITEMS"
   printf '  "timings": [%s],\n' "$TIMING_JSON_ITEMS"
@@ -960,7 +971,7 @@ while IFS='|' read -r r_tool r_ver r_path r_src r_place r_usable; do
 done < <(printf '%s\n' "$RUNTIME_ROWS" | sort -t'|' -k1,1)
 
 sec "$(T 'sec.res')"
-while IFS='|' read -r cmd resolved ver hits; do
+while IFS='|' read -r cmd resolved ver hits usable; do
   [ -n "$cmd" ] || continue
   if [ "${hits:-1}" -gt 1 ]; then
     echo "  $(T 'res.hits' "command=$cmd" "path=$resolved" "version=$ver" "hits=$hits")"
@@ -968,7 +979,7 @@ while IFS='|' read -r cmd resolved ver hits; do
     echo "  $(T 'res.line' "command=$cmd" "path=$resolved" "version=$ver")"
   fi
   # 解析到不可执行的文件 → 就地标出来
-  is_real "$resolved" || echo "             $(T 'res.stub')"
+  [ "$usable" = "no" ] && echo "             $(T 'res.stub')"
 done < <(printf '%s' "$RESOLVE_ROWS" | sort)
 
 sec "$(T 'sec.warn')"
