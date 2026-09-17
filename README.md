@@ -24,6 +24,10 @@ cd runtime-census
 ./scripts/census.sh
 ```
 
+> Downloaded the ZIP instead of cloning? Windows marks those files as coming from the
+> internet and PowerShell refuses to run them. Unblock once:
+> `Get-ChildItem -Recurse | Unblock-File`
+
 You get a full inventory in under ten seconds. Excerpt:
 
 ```
@@ -123,12 +127,15 @@ to be installed produces the nastiest class of bug — passes locally, fails in 
 
 ### census
 
+Both implementations take the same flags. `census.ps1` accepts one or two dashes
+(`-Json` or `--json`); `census.sh` uses two.
+
 | Flag | Description |
 |---|---|
 | *(none)* | Human-readable report |
-| `--json` | JSON output, for programs and agents |
-| `--deep` | Also scan common install roots across drives (slower) |
-| `--timing` / `-Timing` | Include per-stage timings |
+| `--json` | JSON output for programs and agents — includes `warnings` and `timings` arrays |
+| `--deep` | Also scan common install roots (slower) |
+| `--timing` | Per-stage timings |
 
 It inventories in five stages:
 
@@ -174,6 +181,30 @@ in project config, IDE settings, or CI scripts, and moving them breaks things da
 The fix is to *record* them — `census` lists them under `[STRAY]` — not to move them.
 A non-standard location is not the real problem; the real problem is that a runtime only
 reachable through PATH is lost the moment PATH changes.
+
+### bootstrap
+
+The one-time setup script. Flags are the same on both platforms, spelled with one dash on
+PowerShell and two on the shell script:
+
+| Flag | Description |
+|---|---|
+| `-DryRun` / `--dry-run` | Print what would change, touch nothing |
+| `-RefreshConfig` / `--refresh-config` | Overwrite the deployed machine manifest with the template (backing up first). Without it, drift is only reported |
+| `-SkipTools` / `--skip-tools` | Install mise and write the manifest, but do not run `mise install` |
+| `-NoProfile` / `--no-rc` | Do not touch shell startup files |
+| `-ToolsRoot` / `--tools-root` | Override the canonical root for hand-installed runtimes (default `~/toolchains`) |
+
+The five idempotent steps it performs — and what it deliberately leaves alone — are
+described under [Per-project version switching](#per-project-version-switching).
+
+### verify-shell.ps1
+
+Windows only. `bash` on PATH is usually the WSL relay; without a distro installed it fails
+with `execvpe(/bin/bash) failed: No such file or directory`, which looks like a syntax
+error in your script but is not. This script finds a real bash (Git Bash, otherwise a
+`bash` container) and runs `bash -n` over every `.sh` in `scripts/` — parse only, never
+execute.
 
 ## Install as a skill
 

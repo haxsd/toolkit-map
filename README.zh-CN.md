@@ -24,6 +24,9 @@ cd runtime-census
 ./scripts/census.sh
 ```
 
+> 用 ZIP 下载而不是 git clone 的：Windows 会给这些文件打上「来自网络」标记，
+> PowerShell 会拒绝执行。先解除一次即可：`Get-ChildItem -Recurse | Unblock-File`
+
 十秒以内输出一份清单。节选：
 
 ```
@@ -115,12 +118,14 @@ mise exec -- npm test        # 一次性激活，不改全局状态
 
 ### census
 
+两个实现接受同一套参数。`census.ps1` 单双横线都认（`-Json` 或 `--json`），`census.sh` 用双横线。
+
 | 参数 | 说明 |
 |---|---|
 | （无） | 人类可读报告 |
-| `--json` | JSON 输出，供程序消费 |
-| `--deep` | 追加扫描盘上的常见安装根目录（较慢） |
-| `--timing` / `-Timing` | 附各阶段耗时 |
+| `--json` | JSON 输出，供程序或 agent 消费——含 `warnings` 与 `timings` 两个数组 |
+| `--deep` | 额外扫描盘上的常见安装根目录（较慢） |
+| `--timing` | 附带各阶段耗时 |
 
 它分五步盘点：
 
@@ -165,6 +170,27 @@ mise exec -- npm test        # 一次性激活，不改全局状态
 写死，搬走会在几天后以难以排查的方式断掉。正确的做法是**登记**它们（`census`
 会以 `[STRAY]` 列出），而不是搬动它们。位置不规范不是真问题，真问题是只靠 PATH
 被找到的运行时——PATH 一变它就失传了。
+
+### bootstrap
+
+一次性配置脚本。两个平台参数相同，PowerShell 用单横线、shell 脚本用双横线：
+
+| 参数 | 说明 |
+|---|---|
+| `-DryRun` / `--dry-run` | 只打印将要执行的改动，不实际修改 |
+| `-RefreshConfig` / `--refresh-config` | 用模板覆盖已部署的机器声明（覆盖前备份）。不加这个参数时只报告漂移 |
+| `-SkipTools` / `--skip-tools` | 只装 mise 和写声明，不执行 `mise install` |
+| `-NoProfile` / `--no-rc` | 不修改 shell 启动文件 |
+| `-ToolsRoot` / `--tools-root` | 覆盖非托管运行时的规范根（默认 `~/toolchains`） |
+
+它执行的五个幂等步骤、以及刻意不做的事，写在上面「让版本按项目自动切换」一节。
+
+### verify-shell.ps1
+
+仅 Windows 需要。PATH 里的 `bash` 通常是 WSL 的转发壳，没装发行版时报
+`execvpe(/bin/bash) failed: No such file or directory`，看起来像脚本语法错误，其实不是。
+这个脚本会找一个真 bash（Git Bash，否则退回 `bash` 容器），对 `scripts/` 下所有 `.sh`
+执行 `bash -n`——只解析、不执行。
 
 ## 当成 skill 安装
 

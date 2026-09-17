@@ -9,6 +9,3 @@ desktop.ini
 # 临时文件
 *.tmp
 *.log
-
-# graphify 知识图谱：由代码解析生成，随代码改动重建，属于派生产物不入库
-graphify-out/

@@ -12,19 +12,25 @@
 #   ./census.sh              人类可读报告
 #   ./census.sh --json       JSON 输出，供 agent 消费
 #   ./census.sh --deep       额外扫描常见安装根目录（较慢）
+#   ./census.sh --timing     附带各阶段耗时
 #
 set -uo pipefail
 
 JSON=0
 DEEP=0
+TIMING=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --json) JSON=1; shift ;;
     --deep) DEEP=1; shift ;;
-    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --timing) TIMING=1; shift ;;
+    -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 2 ;;
   esac
 done
+
+# 仓库内的相对路径（机器声明模板等）靠它定位，不能用当前工作目录推
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ---------- 输出小工具 ----------
 # JSON 模式下所有人类可读输出都进 stderr，保证 stdout 只有合法的 JSON。
@@ -46,19 +52,90 @@ RUNTIME_ROWS=""      # tool|version|path|source|placement|usable
 CONV_ROWS=""         # shim|shimVersion|actualVersion|target|usable
 WARN_JSON="[]"
 WARN_TEXT=""
+WARN_JSON_ITEMS=""   # 逐条拼出来的 JSON 片段，供 --json 输出使用
 
 add_runtime() { RUNTIME_ROWS="${RUNTIME_ROWS}${1}|${2}|${3}|${4}|${5}
 "; }
 add_conv()    { CONV_ROWS="${CONV_ROWS}${1}|${2}|${3}|${4}|${5}
 "; }
-add_warn()    { WARN_TEXT="${WARN_TEXT}[$1] $2
+# 记一条告警：人类可读文本与 JSON 片段同时产出，保证 --json 里也能看到全部告警
+add_warn()    {
+  WARN_TEXT="${WARN_TEXT}[$1] $2
         $3
-"; }
+"
+  WARN_JSON_ITEMS="${WARN_JSON_ITEMS}${WARN_JSON_ITEMS:+,}{\"kind\":\"$1\",\"message\":\"$(json_escape "$2")\",\"detail\":\"$(json_escape "$3")\"}"
+}
 
 # 判断文件是否"真的可执行"：存在、非常规文件、非 0 字节。
 # 0 字节的假文件在 Windows 上很常见（商店应用别名），Unix 上少见但仍需防。
 is_real() {
   [ -f "$1" ] && [ -s "$1" ] && [ -x "$1" ]
+}
+
+# ---------- 声明文件读取（供漂移 / 缺失 / 遮罩三类告警共用）----------
+
+# 取出某个文件 [tools] 段的键名。极简扫描，不解析数组与嵌套表。
+# 开头先剥掉可能的 UTF-8 BOM，否则 /^\[tools\]/ 匹配不上、键会全部误判。
+tools_keys() {
+  awk 'NR==1{sub(/^\xef\xbb\xbf/,"")} /^\[tools\]/{f=1;next} /^\[/{f=0} f && /^[A-Za-z0-9_.-]+[ \t]*=/{sub(/[ \t]*=.*/,"");print}' "$1" 2>/dev/null | sort -u
+}
+
+# 读出所有声明文件里的"工具|期望版本|来源文件"。
+# toml 读 [tools] 段；.tool-versions 读每行的前两列。
+declared_tools() {
+  local f
+  for f in $DECL_FILES; do
+    case "$f" in
+      *.toml)
+        awk -v src="$f" 'NR==1{sub(/^\xef\xbb\xbf/,"")} /^\[tools\]/{f=1;next} /^\[/{f=0} f && /^[A-Za-z0-9_.-]+[ \t]*=/{
+              key=$0; sub(/[ \t]*=.*/,"",key);
+              val=$0; sub(/^[^=]*=[ \t]*/,"",val); gsub(/[\[\]"]/,"",val);
+              print key "|" val "|" src }' "$f"
+        ;;
+      *)
+        awk -v src="$f" '$1 ~ /^[A-Za-z0-9_.-]+$/ && $2 != "" && $0 !~ /^[[:space:]]*#/ { print $1 "|" $2 "|" src }' "$f"
+        ;;
+    esac
+  done
+}
+
+# mise 纳管的工具版本查询。
+# MISE_TOOLS 每行形如 "node  22.23.2  <配置文件>  22"，同一工具可能有多行（22 和 20 都在）。
+# 优先返回与期望版本前缀匹配的那个，否则回退到第一个——这样告警里显示的版本
+# 与声明要求的是同一个，而不是碰巧排在前面的那个。
+mise_version() {
+  printf '%s' "$MISE_TOOLS" | awk -v t="$1" -v want="${2:-}" '
+    $1==t {
+      if (want != "" && index($2, want) == 1) { print $2; found=1; exit }
+      if (first == "") first = $2
+    }
+    END { if (!found && first != "") print first }'
+}
+runtime_installed() { printf '%s' "$RUNTIME_ROWS" | awk -F'|' -v t="$1" '$1==t {found=1} END{exit !found}'; }
+
+# 声明里的工具名 → 运行时名（nodejs/python3 这些别名要归一化）
+short_tool() {
+  case "$1" in
+    nodejs|node)     echo node ;;
+    python3|python)  echo python ;;
+    *)               echo "$1" ;;
+  esac
+}
+
+# ---------- 阶段计时（--timing）----------
+# 用 date +%s 而不是 GNU 的 %N：macOS 的 date 不认 %N，粒度到秒对本脚本足够。
+TIMING_ROWS=""
+TIMING_JSON_ITEMS=""
+LAST_TICK="$(date +%s)"
+tick() {
+  [ "$TIMING" -eq 1 ] || return 0
+  local now elapsed
+  now="$(date +%s)"
+  elapsed=$((now - LAST_TICK))
+  TIMING_ROWS="${TIMING_ROWS}${1}|${elapsed}
+"
+  TIMING_JSON_ITEMS="${TIMING_JSON_ITEMS}${TIMING_JSON_ITEMS:+,}{\"phase\":\"$(json_escape "$1")\",\"seconds\":${elapsed}}"
+  LAST_TICK="$now"
 }
 
 # ---------- 规范根与位置基准 ----------
@@ -127,6 +204,7 @@ project_decl_files() {
   done
 }
 PROJECT_DECL_FILES="$(project_decl_files 2>/dev/null || true)"
+tick '1. 声明层'
 
 # ---------- 第 2 阶段：mise 纳管层 ----------
 MISE_AVAILABLE=0
@@ -135,6 +213,7 @@ if command -v mise >/dev/null 2>&1; then
   MISE_AVAILABLE=1
   MISE_TOOLS="$(mise ls 2>/dev/null || true)"
 fi
+tick '2. mise 纳管层'
 
 # ---------- 第 3 阶段：约定层（带版本号的命名 shim）----------
 # 形如 node22 / node-22 / python312 / java8。这类约定只保存在文件名里，
@@ -142,8 +221,25 @@ fi
 scan_conventions() {
   local dir base tool decl target actual
   local IFS_OLD="$IFS"
+  # 先给 PATH 去重：重复条目（PATH_DIRT 会单独报告）会让同一目录被扫两遍，
+  # 同一个约定就会重复上报一次。
+  local seen_dirs=""
+  local path_dirs=""
   IFS=':'
   for dir in $PATH; do
+    IFS="$IFS_OLD"
+    [ -n "$dir" ] || { IFS=':'; continue; }
+    case ":$seen_dirs:" in *":$dir:"*) IFS=':'; continue ;; esac
+    seen_dirs="${seen_dirs}:$dir"
+    path_dirs="${path_dirs}${path_dirs:+
+}${dir}"
+    IFS=':'
+  done
+  IFS="$IFS_OLD"
+
+  IFS='
+'
+  for dir in $path_dirs; do
     IFS="$IFS_OLD"
     [ -d "$dir" ] || continue
     for f in "$dir"/*; do
@@ -177,11 +273,13 @@ scan_conventions() {
         add_conv "$base" "$decl" "$actual" "$target" "yes"
       fi
     done
-    IFS=':'
   done
+  # 外层循环用换行分隔目录列表（去重后的 path_dirs 是换行拼的），
+  # 循环体内先恢复成原始 IFS，避免影响 basename/路径展开。
   IFS="$IFS_OLD"
 }
 scan_conventions
+tick '3. 约定层'
 
 # ---------- 第 4 阶段：定向探测已知安装位置 ----------
 # 只做存在性检查，不遍历目录树——一次 stat 比一次目录枚举便宜得多。
@@ -290,6 +388,7 @@ done
 
 # 去重：同一个真实路径只保留一条
 RUNTIME_ROWS="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' 'NF>=6 { key=tolower($3); if (!(key in seen)) { seen[key]=1; print } }')"
+tick '4. 定向探测'
 
 # ---------- 第 5 阶段：解析层 ----------
 RESOLVE_ROWS=""
@@ -318,6 +417,7 @@ probe_cmd() {
 for c in node npm npx pnpm yarn python python3 py pip uv java javac mvn gradle go cargo rustc deno bun dotnet mise; do
   probe_cmd "$c"
 done
+tick '5. 解析层'
 
 # ---------- 汇总告警 ----------
 # 1) 同一运行时多版本共存，但 PATH 只暴露一个
@@ -336,11 +436,14 @@ for tool in node python java; do
 done
 
 # 2) 自定义命名约定
-printf '%s' "$CONV_ROWS" | while IFS='|' read -r shim decl actual target ok; do
+#    这里必须用 < <(...) 而不是管道：管道里的循环跑在子 shell 里，add_warn 写进
+#    WARN_TEXT / WARN_JSON_ITEMS 的内容会随子 shell 一起丢掉。
+while IFS='|' read -r shim decl actual target ok; do
   [ -n "$shim" ] || continue
-  printf '[CONVENTION] 发现自定义命名约定 %s（文件名声明 %s，实际 %s）。这类约定必须写进声明文件否则会失传。\n        %s\n' \
-    "$shim" "$decl" "$actual" "$target" >&2
-done
+  add_warn "CONVENTION" \
+    "发现自定义命名约定 '${shim}'（文件名里声明版本 ${decl}，实际 ${actual}）。这类约定不在任何标准里，必须写进声明文件否则会失传。" \
+    "$target"
+done < <(printf '%s' "$CONV_ROWS")
 
 # 3) mise 未安装
 if [ "$MISE_AVAILABLE" -eq 0 ]; then
@@ -372,8 +475,79 @@ if [ -z "$PROJECT_DECL_FILES" ] && [ -f "$(pwd)/package.json" ]; then
   fi
 fi
 
+# 6) 声明与部署副本漂移：模板代表"这台机器想要的状态"，部署副本是"现在实际声明的状态"。
+#    两份文件之间没有同步机制，模板里新加的工具会永远装不上，而报告显示一切正常。
+DEPLOYED_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/mise/config.toml"
+TEMPLATE_CFG="$SCRIPT_DIR/../templates/mise-config.toml"
+if [ -f "$TEMPLATE_CFG" ] && [ -f "$DEPLOYED_CFG" ] && ! cmp -s "$TEMPLATE_CFG" "$DEPLOYED_CFG"; then
+  ONLY_TPL="$(comm -23 <(tools_keys "$TEMPLATE_CFG") <(tools_keys "$DEPLOYED_CFG") | grep -v '^$' | tr '\n' ' ' || true)"
+  ONLY_DEP="$(comm -13 <(tools_keys "$TEMPLATE_CFG") <(tools_keys "$DEPLOYED_CFG") | grep -v '^$' | tr '\n' ' ' || true)"
+  DRIFT_DETAIL=""
+  [ -n "$ONLY_TPL" ] && DRIFT_DETAIL="模板有而部署副本没有: ${ONLY_TPL}"
+  [ -n "$ONLY_DEP" ] && DRIFT_DETAIL="${DRIFT_DETAIL}${DRIFT_DETAIL:+；}部署副本有而模板没有: ${ONLY_DEP}"
+  [ -n "$DRIFT_DETAIL" ] || DRIFT_DETAIL="[tools] 的键相同，但内容有差异（版本或注释不同）"
+  add_warn "DRIFT" \
+    "部署的全局声明（${DEPLOYED_CFG}）与仓库模板（templates/mise-config.toml）不一致。模板代表这台机器想要的状态，漂移意味着模板里新加的工具永远不会被安装。" \
+    "${DRIFT_DETAIL} —— 刷新: scripts/bootstrap.sh --refresh-config（会先备份）"
+fi
+
+# 7) XDG_CONFIG_HOME 被设置：mise 的"全局"配置会搬家
+if [ -n "${XDG_CONFIG_HOME:-}" ]; then
+  add_warn "XDG_SHIFT" \
+    "本机设置了 XDG_CONFIG_HOME=${XDG_CONFIG_HOME}，mise 的全局配置目录会跟着搬到这里（${XDG_CONFIG_HOME}/mise/config.toml）。后果是 ~/.config/mise/config.toml 不再是全局配置，而是「从工作目录向上发现」的配置——工作目录不在用户目录之下时它不生效。" \
+    "要么去掉该变量，要么把机器声明迁到 ${XDG_CONFIG_HOME}/mise/config.toml"
+fi
+
+# 8) PATH 里的重复条目
+PATH_DUPES="$(printf '%s' "$PATH" | tr ':' '\n' | awk 'NF' | sort | uniq -d)"
+if [ -n "$PATH_DUPES" ]; then
+  add_warn "PATH_DIRT" \
+    "PATH 里有重复条目。它们不改变解析结果，但会让「改了却没生效」这类问题更难查。" \
+    "$(printf '%s' "$PATH_DUPES" | tr '\n' '|' | sed 's/|$//; s/|/ | /g')"
+fi
+
+# 9) 声明被 PATH 顺序遮蔽：声明要求某个版本、mise 也装了，但解析到别的副本。
+#    Unix 上同样成立——/usr/local/bin/node 之类排在 mise 的 shims 之前就会这样。
+#    用 < <(...) 而不是管道：管道里的循环是子 shell，add_warn 写进去的告警会丢掉。
+while IFS='|' read -r d_tool d_ver d_src; do
+  [ -n "$d_tool" ] || continue
+  s_tool="$(short_tool "$d_tool")"
+  m_ver="$(mise_version "$s_tool" "$d_ver")"
+  [ -n "$m_ver" ] || continue
+  case "$s_tool" in
+    node)   d_cmds="node npm npx pnpm yarn" ;;
+    python) d_cmds="python python3 py pip" ;;
+    *)      d_cmds="$s_tool" ;;
+  esac
+  for c in $d_cmds; do
+    r_path="$(printf '%s' "$RESOLVE_ROWS" | awk -F'|' -v c="$c" '$1==c {print $2; exit}')"
+    [ -n "$r_path" ] || continue
+    case "$r_path" in */mise/*) continue ;; esac
+    add_warn "PATH_ORDER" \
+      "声明要求 ${d_tool} ${d_ver}（${d_src}），mise 也装有 ${m_ver}，但 '${c}' 解析到 '${r_path}'。未激活 mise 的场景（脚本、图形程序、IDE 任务）会用到错版本；根因是 PATH 顺序，不是运行时本身有问题。" \
+      "交互式会话里 mise activate 会在会话内把 shims 前置来救场；要让所有场景都对，需要让 shims 排在那些直接目录之前"
+  done
+done < <(declared_tools)
+
+# 10) 声明了但没装
+while IFS='|' read -r d_tool d_ver d_src; do
+  [ -n "$d_tool" ] || continue
+  s_tool="$(short_tool "$d_tool")"
+  [ -n "$(mise_version "$s_tool")" ] && continue
+  runtime_installed "$s_tool" && continue
+  add_warn "MISSING" \
+    "声明文件 '${d_src}' 要求 ${d_tool} ${d_ver}，但本机未发现该运行时的任何安装。" \
+    "$d_src"
+done < <(declared_tools)
+tick '6. 汇总告警'
+
 # ---------- 输出 ----------
 if [ "$JSON" -eq 1 ]; then
+  # JSON 里的每个字符串字段都必须转义。实测踩过的坑：pip --version 会打印
+  # "...from C:\Users\...\site-packages\pip (python 3.12)"，里面的 \U 这种序列
+  # 会让整个 JSON 非法，ConvertFrom-Json / jq 直接报 "Unrecognized escape sequence"。
+  # awk 的 esc() 负责反斜杠、双引号和控制字符，三个数组块共用。
+  AWK_ESC='function esc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/[\r\n\t]/, " ", s); return s }'
   printf '{\n'
   printf '  "generatedAt": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf '  "host": {"os": "%s", "arch": "%s", "user": "%s", "cwd": "%s"},\n' \
@@ -381,14 +555,17 @@ if [ "$JSON" -eq 1 ]; then
   printf '  "miseAvailable": %s,\n' "$([ "$MISE_AVAILABLE" -eq 1 ] && echo true || echo false)"
   printf '  "toolsRoot": "%s",\n' "$(json_escape "$TOOLS_ROOT")"
   printf '  "runtimes": [\n'
-  printf '%s' "$RUNTIME_ROWS" | awk -F'|' 'NF>=6 {printf "%s    {\"tool\": \"%s\", \"version\": \"%s\", \"path\": \"%s\", \"source\": \"%s\", \"placement\": \"%s\"}", (NR>1?",\n":""), $1, $2, $3, $4, $5}'
+  printf '%s' "$RUNTIME_ROWS" | awk -F'|' "$AWK_ESC"' NF>=6 {printf "%s    {\"tool\": \"%s\", \"version\": \"%s\", \"path\": \"%s\", \"source\": \"%s\", \"placement\": \"%s\"}", (NR>1?",\n":""), esc($1), esc($2), esc($3), esc($4), esc($5)}'
   printf '\n  ],\n'
   printf '  "conventions": [\n'
-  printf '%s' "$CONV_ROWS" | awk -F'|' 'NF>=4 {printf "%s    {\"shim\": \"%s\", \"nameVersion\": \"%s\", \"actualVersion\": \"%s\", \"target\": \"%s\"}", (NR>1?",\n":""), $1, $2, $3, $4}'
+  printf '%s' "$CONV_ROWS" | awk -F'|' "$AWK_ESC"' NF>=4 {printf "%s    {\"shim\": \"%s\", \"nameVersion\": \"%s\", \"actualVersion\": \"%s\", \"target\": \"%s\"}", (NR>1?",\n":""), esc($1), esc($2), esc($3), esc($4)}'
   printf '\n  ],\n'
   printf '  "resolution": [\n'
-  printf '%s' "$RESOLVE_ROWS" | awk -F'|' 'NF>=4 {printf "%s    {\"command\": \"%s\", \"resolvesTo\": \"%s\", \"version\": \"%s\", \"hitCount\": %s}", (NR>1?",\n":""), $1, $2, $3, $4}'
-  printf '\n  ]\n}\n'
+  printf '%s' "$RESOLVE_ROWS" | awk -F'|' "$AWK_ESC"' NF>=4 {printf "%s    {\"command\": \"%s\", \"resolvesTo\": \"%s\", \"version\": \"%s\", \"hitCount\": %s}", (NR>1?",\n":""), esc($1), esc($2), esc($3), $4}'
+  printf '\n  ],\n'
+  printf '  "warnings": [%s],\n' "$WARN_JSON_ITEMS"
+  printf '  "timings": [%s]\n' "$TIMING_JSON_ITEMS"
+  printf '}\n'
   exit 0
 fi
 
@@ -468,4 +645,8 @@ PLACEMENT_TEXT="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' '$6=="yes" {c[$5]++} E
 note "位置分布: $PLACEMENT_TEXT"
 note "规范根:   $TOOLS_ROOT"
 note "告警数量: $(printf '%s\n' "$WARN_TEXT" | grep -c '^\[' || true)"
+if [ "$TIMING" -eq 1 ]; then
+  sec '性能分解 —— 各阶段耗时'
+  printf '%s' "$TIMING_ROWS" | awk -F'|' 'NF>=2 { printf "  %-24s %6s s\n", $1, $2 }'
+fi
 echo

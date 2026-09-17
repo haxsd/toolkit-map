@@ -54,6 +54,7 @@ metadata:
 ```bash
 <skill目录>/scripts/census.sh
 <skill目录>/scripts/census.sh --json
+<skill目录>/scripts/census.sh --timing
 ```
 
 输出六节：声明层 / mise 纳管层 / 命名约定层 / 运行时清单 / 解析层 / 告警。
