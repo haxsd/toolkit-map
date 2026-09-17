@@ -1,3 +1,5 @@
+**中文** ｜ [English](README.en.md)
+
 # runtime-census
 
 找出这台机器上**真正存在**的语言运行时，并用声明式方式管理它们。
@@ -196,6 +198,8 @@ mise 只能管到它自己装的东西，它永远不会知道 `<系统盘>:\nod
   环境，这类工具建议走 WSL 或容器。
 - Windows 上不能用 mise 的 `mise.run` 安装脚本（只支持 macOS/Linux），需要走
   winget / scoop / choco / npm / 手工下载。
+- 命令行输出目前只有中文。告警代码（`STUB` / `SHADOWED` / `CONVENTION` /
+  `MISSING`）与 `--json` 输出是语言无关的，可以据此做程序化判断。
 
 ## 许可
 
