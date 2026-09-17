@@ -9,3 +9,8 @@ desktop.ini
 # 临时文件
 *.tmp
 *.log
+
+# PowerShell 5.1 的模块分析缓存：当 USERPROFILE 被改写（测试沙箱会这么做）时，
+# 它会退化成相对路径，在当前目录下建出 Microsoft/Windows/PowerShell/ 这棵树。
+# 这属于测试残留，不该进仓库。
+Microsoft/Windows/PowerShell/

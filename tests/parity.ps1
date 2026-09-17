@@ -95,6 +95,13 @@ $env:USERPROFILE      = "$fx\home"                 # census.ps1 认这个
 $env:HOME             = ConvertTo-MsysPath "$fx\home"   # census.sh 认这个
 $env:XDG_CONFIG_HOME  = ''                         # 两边都不用 XDG，避免路径形式差异
 
+# LOCALAPPDATA / APPDATA 也指进沙箱：PowerShell 5.1 会往这里写模块分析缓存，
+# 而 USERPROFILE 被改写之后它可能退化成相对路径、把产物丢进当前目录——
+# 实测就这样在仓库里凭空多出过 Microsoft/Windows/PowerShell/ModuleAnalysisCache。
+New-Item -ItemType Directory -Force -Path "$fx\AppData\Local", "$fx\AppData\Roaming" | Out-Null
+$env:LOCALAPPDATA = "$fx\AppData\Local"
+$env:APPDATA      = "$fx\AppData\Roaming"
+
 # 用当前宿主的可执行文件跑子进程：沙箱 PATH 里刻意不含 System32
 $psExe = if ($PSVersionTable.PSEdition -eq 'Core') { Join-Path $PSHOME 'pwsh.exe' } else { Join-Path $PSHOME 'powershell.exe' }
 
@@ -113,19 +120,22 @@ function Check {
     }
 }
 
-# ---------- 跑两个实现 ----------
-$ps1Json = & $psExe -NoProfile -ExecutionPolicy Bypass -File $censusPs1 -Json 2>$null | Out-String
-$shJson  = & $bash $censusSh --json 2>$null | Out-String
+# 子进程一律在沙箱目录里跑：即使有工具想往"当前目录"写缓存，也只会写进沙箱。
+Push-Location $fx
+try {
+    # ---------- 跑两个实现 ----------
+    $ps1Json = & $psExe -NoProfile -ExecutionPolicy Bypass -File $censusPs1 -Json 2>$null | Out-String
+    $shJson  = & $bash $censusSh --json 2>$null | Out-String
 
-try { $ps1 = $ps1Json | ConvertFrom-Json } catch { $ps1 = $null }
-try { $sh  = $shJson  | ConvertFrom-Json } catch { $sh  = $null }
-Check 'census.ps1 输出了可解析的 JSON' ($null -ne $ps1)
-Check 'census.sh 输出了可解析的 JSON'  ($null -ne $sh)
-if ($null -eq $ps1 -or $null -eq $sh) {
-    Write-Host "`n census.ps1 原始输出片段: $($ps1Json.Substring(0, [Math]::Min(200, $ps1Json.Length)))" -ForegroundColor DarkGray
-    Write-Host " census.sh  原始输出片段: $($shJson.Substring(0, [Math]::Min(200, $shJson.Length)))" -ForegroundColor DarkGray
-    exit 1
-}
+    try { $ps1 = $ps1Json | ConvertFrom-Json } catch { $ps1 = $null }
+    try { $sh  = $shJson  | ConvertFrom-Json } catch { $sh  = $null }
+    Check 'census.ps1 输出了可解析的 JSON' ($null -ne $ps1)
+    Check 'census.sh 输出了可解析的 JSON'  ($null -ne $sh)
+    if ($null -eq $ps1 -or $null -eq $sh) {
+        Write-Host "`n census.ps1 原始输出片段: $($ps1Json.Substring(0, [Math]::Min(200, $ps1Json.Length)))" -ForegroundColor DarkGray
+        Write-Host " census.sh  原始输出片段: $($shJson.Substring(0, [Math]::Min(200, $shJson.Length)))" -ForegroundColor DarkGray
+        exit 1
+    }
 
 # 两个实现看到的世界不同，候选目录不同，所以按"沙箱里埋的雷"逐条断言，
 # 而不是比较告警种类集合是否完全相等。
@@ -149,20 +159,24 @@ foreach ($impl in @(@{ Name = 'census.ps1'; Data = $ps1 }, @{ Name = 'census.sh'
     Check "$name 发现游离运行时（STRAY）"            (Has-KindContaining $d 'STRAY'      'rt2')
 }
 
-# ---------- 双语与 JSON 契约 ----------
-$enOut = & $psExe -NoProfile -ExecutionPolicy Bypass -File $censusPs1 -Lang en 2>$null | Out-String
-Check 'census.ps1 -Lang en 输出英文标题' ($enOut -match '6\. Warnings — things that need a human decision')
-Check 'census.ps1 -Lang en 输出英文告警' ($enOut -match '\[(DRIFT|MISSING|CONVENTION|PATH_DIRT)\] \S')
-$enOutSh = & $bash $censusSh --lang en 2>$null | Out-String
-Check 'census.sh --lang en 输出英文标题' ($enOutSh -match '6\. Warnings — things that need a human decision')
+    # ---------- 双语与 JSON 契约 ----------
+    $enOut = & $psExe -NoProfile -ExecutionPolicy Bypass -File $censusPs1 -Lang en 2>$null | Out-String
+    Check 'census.ps1 -Lang en 输出英文标题' ($enOut -match '6\. Warnings — things that need a human decision')
+    Check 'census.ps1 -Lang en 输出英文告警' ($enOut -match '\[(DRIFT|MISSING|CONVENTION|PATH_DIRT)\] \S')
+    $enOutSh = & $bash $censusSh --lang en 2>$null | Out-String
+    Check 'census.sh --lang en 输出英文标题' ($enOutSh -match '6\. Warnings — things that need a human decision')
 
-# JSON 契约：两边都要有 schemaVersion 与同一组顶层字段（跨平台消费的前提）
-$sharedFields = @('schemaVersion', 'generatedAt', 'host', 'declarations', 'toolsRoot', 'mise', 'conventions', 'runtimes', 'resolution', 'warnings', 'timings', 'summary')
-$ps1Missing = @($sharedFields | Where-Object { $ps1.PSObject.Properties.Name -notcontains $_ })
-$shMissing  = @($sharedFields | Where-Object { $sh.PSObject.Properties.Name -notcontains $_ })
-Check 'census.ps1 的 JSON 字段齐全' ($ps1Missing.Count -eq 0) ("缺: " + ($ps1Missing -join ', '))
-Check 'census.sh 的 JSON 字段齐全'  ($shMissing.Count -eq 0)  ("缺: " + ($shMissing -join ', '))
-Check '两边 schemaVersion 相同' ($ps1.schemaVersion -and ($ps1.schemaVersion -eq $sh.schemaVersion)) ("ps1=$($ps1.schemaVersion) sh=$($sh.schemaVersion)")
+    # JSON 契约：两边都要有 schemaVersion 与同一组顶层字段（跨平台消费的前提）
+    $sharedFields = @('schemaVersion', 'generatedAt', 'host', 'declarations', 'toolsRoot', 'mise', 'conventions', 'runtimes', 'resolution', 'warnings', 'timings', 'summary')
+    $ps1Missing = @($sharedFields | Where-Object { $ps1.PSObject.Properties.Name -notcontains $_ })
+    $shMissing  = @($sharedFields | Where-Object { $sh.PSObject.Properties.Name -notcontains $_ })
+    Check 'census.ps1 的 JSON 字段齐全' ($ps1Missing.Count -eq 0) ("缺: " + ($ps1Missing -join ', '))
+    Check 'census.sh 的 JSON 字段齐全'  ($shMissing.Count -eq 0)  ("缺: " + ($shMissing -join ', '))
+    Check '两边 schemaVersion 相同' ($ps1.schemaVersion -and ($ps1.schemaVersion -eq $sh.schemaVersion)) ("ps1=$($ps1.schemaVersion) sh=$($sh.schemaVersion)")
+} finally {
+    # 先回到原目录再删沙箱：Windows 上不能删除"当前所在"的目录
+    Pop-Location
+}
 
 # ---------- 收尾 ----------
 if ($KeepSandbox) {
