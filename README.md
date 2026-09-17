@@ -146,7 +146,28 @@ Then it reports four kinds of warnings:
 | `STUB` | The command resolves to a 0-byte placeholder | The command does not work; use another |
 | `SHADOWED` | Multiple versions exist, PATH exposes only one | Use an absolute path or activate via a version manager |
 | `CONVENTION` | A version convention exists only in a filename | Record it in a declaration file, or it will be lost |
+| `STRAY` | Runtime sits in a non-standard location with no manager tracking it | Record it in a declaration file — **do not migrate** it (see below) |
 | `MISSING` | Declared but not installed | `mise install` |
+
+### Convention: where unmanaged runtimes live
+
+Runtimes you install by hand — a zip download, a side-by-side install kept for a legacy
+project — belong under one root, arranged as `<tool>/<version>/`:
+
+```
+~/toolchains/
+├── node/22.23.2/
+└── python/3.12.10/
+```
+
+Override the location with `TOOLCHAIN_ROOT`. This buys two things: a single place to
+look, and a predictable path so the next agent or teammate can find it without asking.
+
+**Runtimes that are already elsewhere are not migrated.** Their paths may be hard-coded
+in project config, IDE settings, or CI scripts, and moving them breaks things days later.
+The fix is to *record* them — `census` lists them under `[STRAY]` — not to move them.
+A non-standard location is not the real problem; the real problem is that a runtime only
+reachable through PATH is lost the moment PATH changes.
 
 ## Install as a skill
 

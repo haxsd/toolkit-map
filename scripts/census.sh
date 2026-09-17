@@ -42,7 +42,7 @@ json_escape() {
 }
 
 # ---------- 数据收集 ----------
-RUNTIME_ROWS=""      # tool|version|path|source|usable
+RUNTIME_ROWS=""      # tool|version|path|source|placement|usable
 CONV_ROWS=""         # shim|shimVersion|actualVersion|target|usable
 WARN_JSON="[]"
 WARN_TEXT=""
@@ -59,6 +59,40 @@ add_warn()    { WARN_TEXT="${WARN_TEXT}[$1] $2
 # 0 字节的假文件在 Windows 上很常见（商店应用别名），Unix 上少见但仍需防。
 is_real() {
   [ -f "$1" ] && [ -s "$1" ] && [ -x "$1" ]
+}
+
+# ---------- 规范根与位置基准 ----------
+# 规范根：非托管的手装运行时应该放在这里，按 <工具>/<版本>/ 排列。
+# 它不是一个强制约束，而是给 census 一个判断"位置是否规范"的基准。
+# 新机器由 bootstrap 建立；存量机器只检查、不迁移——搬动已有运行时的风险
+# （路径被项目配置、IDE 设置、CI 脚本写死）远大于收益。
+TOOLS_ROOT="${TOOLCHAIN_ROOT:-$HOME/toolchains}"
+
+# 操作系统与发行版的公认安装位置。落在这些位置下的运行时不算游离。
+STANDARD_ROOTS="/usr /usr/local /opt /Library /Applications /System $HOME/Applications"
+
+# 判断一个运行时安装的位置属于哪一类：
+#   宿主   —— IDE 捆绑的运行时（jbr 等），由 IDE 自己管理
+#   托管   —— mise / nvm / fnm / volta / asdf / pyenv / conda / scoop / homebrew
+#   公认   —— 操作系统或发行版的标准安装目录
+#   规范根 —— 本套件约定的 <工具>/<版本>/ 根
+#   游离   —— 以上都不是：手工放在某处，且没有任何机制记得它
+placement_of() {
+  local p="$1" r
+  # 先判宿主：IDE 捆绑的 JBR 里有完整 JDK，但记进"游离"会把真正需要登记的东西淹没
+  case "$p" in
+    */jbr/*|*[Pp]y[Cc]harm*|*[Ii]ntelli[Jj]*|*[Jj]et[Bb]rains*|*Android\ Studio*) echo "宿主"; return ;;
+  esac
+  # 各种版本管理器与 conda 的安装根
+  case "$p" in
+    */mise/*|*/nvm/*|*/fnm/*|*/volta/*|*/asdf/*|*/pyenv/*|*/scoop/*|*/Cellar/*|*homebrew*|*/envs/*|*miniconda*|*anaconda*)
+      echo "托管"; return ;;
+  esac
+  for r in $STANDARD_ROOTS; do
+    case "$p" in "$r"/*) echo "公认"; return ;; esac
+  done
+  case "$p" in "$TOOLS_ROOT"/*) echo "规范根"; return ;; esac
+  echo "游离"
 }
 
 # ---------- 第 1 阶段：声明层 ----------
@@ -158,7 +192,7 @@ probe_path() {
     python) ver="$("$p" --version 2>/dev/null | head -n1 | sed -E 's/^Python //' || true)" ;;
     java)   ver="$("$p" -version 2>&1 | head -n1 | sed -E 's/.*version "([^"]+)".*/\1/' || true)" ;;
   esac
-  add_runtime "$tool" "$ver" "$p" "$src" "yes"
+  add_runtime "$tool" "$ver" "$p" "$src" "$(placement_of "$p")" "yes"
 }
 
 probe_root() {
@@ -240,7 +274,7 @@ for d in "$HOME"/.local/share/JetBrains/Toolbox/apps/*/*/; do
 done
 
 # 去重：同一个真实路径只保留一条
-RUNTIME_ROWS="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' 'NF>=5 { key=tolower($3); if (!(key in seen)) { seen[key]=1; print } }')"
+RUNTIME_ROWS="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' 'NF>=6 { key=tolower($3); if (!(key in seen)) { seen[key]=1; print } }')"
 
 # ---------- 第 5 阶段：解析层 ----------
 RESOLVE_ROWS=""
@@ -298,6 +332,18 @@ if [ "$MISE_AVAILABLE" -eq 0 ]; then
   add_warn "NO_MISE" "本机未安装 mise。运行时只能靠 PATH 解析，无法按项目自动切换版本。执行 scripts/bootstrap.sh 可一键建立。" ""
 fi
 
+# 4) 游离运行时：没有任何管理器纳管，也不在公认位置或规范根下
+#    只报告不迁移。搬动已有运行时的风险（路径被项目配置、IDE 设置、CI 脚本写死）
+#    远大于收益，而"登记到声明文件"能用接近零的成本解决真正的问题——
+#    它们目前只靠 PATH 被找到，PATH 一变就没人知道它们在哪儿。
+STRAY_ROWS="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' '$5=="游离" && $6=="yes" {print $1" "$2" @ "$3}')"
+STRAY_COUNT="$(printf '%s\n' "$STRAY_ROWS" | grep -c . || true)"
+if [ "${STRAY_COUNT:-0}" -gt 0 ]; then
+  add_warn "STRAY" \
+    "有 ${STRAY_COUNT} 个运行时放在非规范位置，且没有任何管理器纳管它们。它们只靠 PATH 被找到——PATH 一变就失传。建议登记到声明文件；今后新装的运行时请落在 ${TOOLS_ROOT}。" \
+    "$(printf '%s' "$STRAY_ROWS" | tr '\n' '|' | sed 's/|$//; s/|/ | /g')"
+fi
+
 # ---------- 输出 ----------
 if [ "$JSON" -eq 1 ]; then
   printf '{\n'
@@ -305,8 +351,9 @@ if [ "$JSON" -eq 1 ]; then
   printf '  "host": {"os": "%s", "arch": "%s", "user": "%s", "cwd": "%s"},\n' \
     "$(uname -s)" "$(uname -m)" "$(whoami)" "$(json_escape "$(pwd)")"
   printf '  "miseAvailable": %s,\n' "$([ "$MISE_AVAILABLE" -eq 1 ] && echo true || echo false)"
+  printf '  "toolsRoot": "%s",\n' "$(json_escape "$TOOLS_ROOT")"
   printf '  "runtimes": [\n'
-  printf '%s' "$RUNTIME_ROWS" | awk -F'|' 'NF>=5 {printf "%s    {\"tool\": \"%s\", \"version\": \"%s\", \"path\": \"%s\", \"source\": \"%s\"}", (NR>1?",\n":""), $1, $2, $3, $4}'
+  printf '%s' "$RUNTIME_ROWS" | awk -F'|' 'NF>=6 {printf "%s    {\"tool\": \"%s\", \"version\": \"%s\", \"path\": \"%s\", \"source\": \"%s\", \"placement\": \"%s\"}", (NR>1?",\n":""), $1, $2, $3, $4, $5}'
   printf '\n  ],\n'
   printf '  "conventions": [\n'
   printf '%s' "$CONV_ROWS" | awk -F'|' 'NF>=4 {printf "%s    {\"shim\": \"%s\", \"nameVersion\": \"%s\", \"actualVersion\": \"%s\", \"target\": \"%s\"}", (NR>1?",\n":""), $1, $2, $3, $4}'
@@ -355,7 +402,13 @@ for tool in node python java; do
   cnt="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' -v t="$tool" '$1==t' | grep -c . || true)"
   [ "${cnt:-0}" -eq 0 ] && continue
   echo "  $(printf '%s' "$tool" | tr 'a-z' 'A-Z')  共 ${cnt} 个"
-  printf '%s' "$RUNTIME_ROWS" | awk -F'|' -v t="$tool" '$1==t {printf "    %-16s %s\n                   [%s]\n", $2, $3, $4}'
+  printf '%s' "$RUNTIME_ROWS" | awk -F'|' -v t="$tool" '$1==t {
+      extra = "";
+      if ($6 == "yes" && $5 == "游离")   extra = " | 游离位置";
+      if ($6 == "yes" && $5 == "规范根") extra = " | 规范根";
+      if ($6 != "yes")                   extra = " | 不可用";
+      printf "    %-16s %s\n                   [%s%s]\n", $2, $3, $4, extra
+    }'
 done
 
 sec '5. 解析层 —— 命令实际解析到哪'
@@ -377,5 +430,14 @@ fi
 
 sec '汇总'
 note "发现的运行时条目数: $(printf '%s\n' "$RUNTIME_ROWS" | grep -c . || true)"
+# 位置分布：一眼看出有多少运行时是"只靠 PATH 被记住"的
+PLACEMENT_TEXT="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' '$6=="yes" {c[$5]++} END {
+  split("托管 宿主 公认 规范根 游离", order, " ")
+  out = ""
+  for (i = 1; i <= 5; i++) { k = order[i]; if (c[k] > 0) out = out (out == "" ? "" : "  /  ") k " " c[k] }
+  print out
+}')"
+note "位置分布: $PLACEMENT_TEXT"
+note "规范根:   $TOOLS_ROOT"
 note "告警数量: $(printf '%s\n' "$WARN_TEXT" | grep -c '^\[' || true)"
 echo

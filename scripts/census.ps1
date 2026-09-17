@@ -282,14 +282,15 @@ function ConvertTo-RuntimeRecord {
     if (-not $tool) { return $null }
 
     return [pscustomobject]@{
-        tool    = $tool
-        version = (Get-RuntimeVersion -Tool $tool -ExePath $real)
-        path    = $real
-        root    = $Root
-        source  = (Get-InstallSource $real)
-        managed = (Test-IsMiseManaged $real)
-        real    = (Test-RealExecutable $real)
-        pattern = $Pattern
+        tool      = $tool
+        version   = (Get-RuntimeVersion -Tool $tool -ExePath $real)
+        path      = $real
+        root      = $Root
+        source    = (Get-InstallSource $real)
+        placement = (Get-Placement $real)   # 托管 / 公认 / 规范根 / 游离
+        managed   = (Test-IsMiseManaged $real)
+        real      = (Test-RealExecutable $real)
+        pattern   = $Pattern
     }
 }
 
@@ -345,6 +346,74 @@ function Get-ToolFromExe {
 function Test-IsMiseManaged {
     param([string]$Path)
     return ($Path -match '\\mise\\(installs|shims)\\' -or $Path -match '/mise/(installs|shims)/')
+}
+
+# ---------- 规范根与位置基准 ----------
+# 规范根：非托管的手装运行时应该放在这里，按 <工具>/<版本>/ 排列。
+# 它不是一个强制约束，而是给 census 一个判断"位置是否规范"的基准。
+# 新机器由 bootstrap 建立；存量机器只检查、不迁移——搬动已有运行时的风险
+# （路径被项目配置、IDE 设置、CI 脚本写死）远大于收益。
+
+$script:ToolsRoot = if ($env:TOOLCHAIN_ROOT) { $env:TOOLCHAIN_ROOT }
+                    elseif ($env:USERPROFILE)  { Join-Path $env:USERPROFILE 'toolchains' }
+                    else                       { Join-Path $HOME 'toolchains' }
+
+# 操作系统与发行版的公认安装位置。落在这些位置下的运行时不算游离。
+$script:StandardRoots = @()
+if ($env:USERPROFILE) {
+    $script:StandardRoots += 'C:\Program Files'
+    $script:StandardRoots += 'C:\Program Files (x86)'
+    $script:StandardRoots += 'C:\ProgramData'
+    $script:StandardRoots += (Join-Path $env:LOCALAPPDATA 'Programs')
+}
+if ($env:WINDIR) { $script:StandardRoots += $env:WINDIR }
+$script:StandardRoots += @('/usr', '/usr/local', '/opt', '/Library', '/Applications', "$HOME/Applications")
+$script:StandardRoots = @($script:StandardRoots | Where-Object { $_ })
+
+# 把路径规范化成统一形式再比较，避免斜杠方向和大小写造成误判。
+function Get-NormalizedPath {
+    param([string]$Path)
+    $n = ($Path -replace '/', '\')
+    return $n.TrimEnd('\').ToLowerInvariant()
+}
+
+# 判断 $Path 是否位于 $Root 之下。加尾部分隔符，避免 /opt 误匹配 /optional。
+function Test-UnderRoot {
+    param([string]$Path, [string]$Root)
+    if (-not $Root) { return $false }
+    $p = Get-NormalizedPath $Path
+    $r = (Get-NormalizedPath $Root) + '\'
+    return $p.StartsWith($r)
+}
+
+# 判断一个运行时安装的位置属于哪一类：
+#   宿主   —— IDE 捆绑的运行时（jbr 等），由 IDE 自己管理，不是用户手工放的
+#   托管   —— mise / nvm / fnm / volta / asdf / pyenv / conda / scoop / chocolatey / homebrew
+#   公认   —— 操作系统或发行版的标准安装目录
+#   规范根 —— 本套件约定的 <工具>/<版本>/ 根
+#   游离   —— 以上都不是：手工放在某处，且没有任何机制记得它
+#             位置不规范本身不致命，真正的问题是它只靠 PATH 被找到，
+#             PATH 一变就没人知道它在哪里了。
+function Get-Placement {
+    param([string]$Path)
+    $p = Get-NormalizedPath $Path
+
+    # 先判宿主：IDE 捆绑的 JBR 里有完整 JDK，但它属于 IDE 的一部分，
+    # 记进"游离"会把真正需要登记的东西淹没在噪音里。
+    if ($p -match '\\jbr\\' -or
+        $p -match '\\(pycharm|intellij|webstorm|goland|jetbrains|android[\\ ]studio|idea)\\') { return '宿主' }
+
+    if (Test-IsMiseManaged $Path) { return '托管' }
+    if ($p -match '\\(nvm|fnm|nvs|volta|asdf|pyenv|scoop|chocolatey|homebrew|cellar)\\' -or
+        $p -match '\\envs\\' -or
+        $p -match '\\(mini|ana)conda') { return '托管' }
+
+    foreach ($r in $script:StandardRoots) {
+        if (Test-UnderRoot $Path $r) { return '公认' }
+    }
+    if (Test-UnderRoot $Path $script:ToolsRoot) { return '规范根' }
+
+    return '游离'
 }
 
 # ============================================================
@@ -573,7 +642,6 @@ function Get-InstallSource {
     if ($p -match '\\scoop\\')                                                    { return 'scoop' }
     if ($p -match '\\chocolatey\\')                                               { return 'chocolatey' }
     if ($p -match '^c:\\program files')                                           { return '系统安装' }
-    if ($p -match '\\nodejs\\')                                                   { return '系统安装' }
     return '自定义位置'
 }
 
@@ -865,6 +933,23 @@ function Get-Warnings {
         })
     }
 
+    # --- 6) 游离运行时：没有任何管理器纳管，也不在公认位置或规范根下 ---
+    # 只报告不迁移。搬动已有运行时的风险（路径被项目配置、IDE 设置、CI 脚本写死）
+    # 远大于收益，而"登记到声明文件"能用接近零的成本解决真正的问题——
+    # 它们目前只靠 PATH 被找到，PATH 一变就没人知道它们在哪儿。
+    $stray = @($Unmanaged | Where-Object { $_.real -and $_.placement -eq '游离' })
+    if ($stray.Count -gt 0) {
+        $toolNames = (($stray | ForEach-Object { $_.tool }) | Sort-Object -Unique) -join '/'
+        $strayDetail = ($stray | Sort-Object tool, version |
+                        ForEach-Object { "$($_.tool) $($_.version) @ $($_.path)" }) -join ' | '
+        $warnings.Add([pscustomobject]@{
+            kind    = 'STRAY'
+            tool    = $toolNames
+            message = "有 $($stray.Count) 个运行时放在非规范位置，且没有任何管理器纳管它们。它们只靠 PATH 被找到——PATH 一变就失传。建议登记到声明文件；今后新装的运行时请落在 $($script:ToolsRoot)。"
+            detail  = $strayDetail
+        })
+    }
+
     return $warnings
 }
 
@@ -947,6 +1032,7 @@ Add-ReportField $report 'host'         {
     }
 }
 Add-ReportField $report 'declarations' { ,@($declarations) }
+Add-ReportField $report 'toolsRoot'    { $script:ToolsRoot }
 Add-ReportField $report 'mise'         { [pscustomobject]@{ available = $managed.available; tools = $managed.records.ToArray() } }
 Add-ReportField $report 'conventions'  { ,@($conventions) }
 Add-ReportField $report 'runtimes'     { ,@($unmanaged) }
@@ -1032,8 +1118,13 @@ foreach ($g in $grouped) {
     Write-Host "  $($g.Name.ToUpperInvariant())  共 $($g.Count) 个" -ForegroundColor White
     foreach ($r in ($g.Group | Sort-Object version)) {
         $flags = @($r.source)
-        if ($r.managed) { $flags += 'mise 纳管' }
-        if (-not $r.real) { $flags += '不可用' }
+        if ($r.real) {
+            # 只有真正可执行的运行时才谈"位置是否规范"；存根不参与这个判断
+            if ($r.placement -eq '游离')   { $flags += '游离位置' }
+            if ($r.placement -eq '规范根') { $flags += '规范根' }
+        } else {
+            $flags += '不可用'
+        }
         Write-Host ("    {0,-14} {1}" -f $r.version, $r.path) -ForegroundColor Gray
         Write-Host ("                   [{0}]" -f ($flags -join ' | ')) -ForegroundColor DarkGray
     }
@@ -1055,13 +1146,14 @@ Write-Section '6. 告警 —— 需要人工确认的问题'
 if ($warnings.Count -eq 0) {
     Write-Host '  未发现问题。' -ForegroundColor Green
 } else {
-    $order = @('STUB', 'SHADOWED', 'CONVENTION', 'MISSING', 'NO_MISE')
+    $order = @('STUB', 'SHADOWED', 'CONVENTION', 'STRAY', 'MISSING', 'NO_MISE')
     foreach ($kind in $order) {
         foreach ($w in ($warnings | Where-Object { $_.kind -eq $kind })) {
             $color = switch ($kind) {
                 'STUB'       { 'Red' }
                 'SHADOWED'   { 'Yellow' }
                 'CONVENTION' { 'Magenta' }
+                'STRAY'      { 'Cyan' }
                 'MISSING'    { 'Red' }
                 default      { 'DarkYellow' }
             }
@@ -1076,6 +1168,19 @@ Write-Host "  发现的运行时文件总数: $(@($unmanaged).Count)" -Foregroun
 foreach ($k in ($stats.Keys | Sort-Object)) {
     Write-Host ("    {0,-10} {1} 个版本: {2}" -f $k, $stats[$k].Count, ($stats[$k] -join ', ')) -ForegroundColor Gray
 }
+
+# 位置分布：一眼看出有多少运行时是"只靠 PATH 被记住"的
+$placementCounts = @{}
+foreach ($r in $unmanaged) {
+    if (-not $r.real) { continue }
+    $placementCounts[$r.placement] = 1 + $placementCounts[$r.placement]
+}
+$placementText = @(@('托管', '宿主', '公认', '规范根', '游离') |
+    Where-Object { $placementCounts.ContainsKey($_) } |
+    ForEach-Object { "$_ $($placementCounts[$_])" })
+Write-Host "  位置分布: $($placementText -join '  /  ')" -ForegroundColor Gray
+Write-Host "  规范根:   $($script:ToolsRoot)" -ForegroundColor DarkGray
+
 Write-Host "  告警数量: $($warnings.Count)" -ForegroundColor $(if ($warnings.Count -gt 0) { 'Yellow' } else { 'Green' })
 
 if ($Timing) {
