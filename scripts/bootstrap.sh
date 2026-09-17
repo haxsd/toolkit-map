@@ -181,23 +181,26 @@ step '配置 shell 激活'
 if [ "$NO_RC" -eq 1 ]; then
   skip '按参数要求跳过（--no-rc）'
 else
-  # 根据当前 shell 选择激活写法
+  # 根据当前 shell 选择激活写法。
+  # 全部都要带存在性判断：否则在 mise 还不可解析的会话里（PATH 尚未刷新的新终端、
+  # 用户卸载了 mise）每次启动 shell 都会报 command not found。
+  # 用 if 形式而不是 && 形式，避免在某些 rc 文件设了 set -e 时中途退出。
   case "${SHELL:-}" in
     */zsh)
       RC_FILE="${ZDOTDIR:-$HOME}/.zshrc"
-      ACTIVATION='eval "$(mise activate zsh)"'
+      ACTIVATION='if command -v mise >/dev/null 2>&1; then eval "$(mise activate zsh)"; fi'
       ;;
     */bash)
       RC_FILE="$HOME/.bashrc"
-      ACTIVATION='eval "$(mise activate bash)"'
+      ACTIVATION='if command -v mise >/dev/null 2>&1; then eval "$(mise activate bash)"; fi'
       ;;
     */fish)
       RC_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish"
-      ACTIVATION='mise activate fish | source'
+      ACTIVATION='if command -q mise; mise activate fish | source; end'
       ;;
     *)
       RC_FILE="$HOME/.profile"
-      ACTIVATION='eval "$(mise activate bash)"'
+      ACTIVATION='if command -v mise >/dev/null 2>&1; then eval "$(mise activate bash)"; fi'
       warn "无法识别 shell ($SHELL)，将写入 $RC_FILE"
       ;;
   esac

@@ -254,7 +254,10 @@ if ($NoProfile) {
 } else {
     # 激活行让 cd 进项目时自动按 .tool-versions 切换版本。
     # 不写的话，仍然可以用 mise exec -- <命令> 一次性激活，只是少了自动切换。
-    $activation = '(&mise activate pwsh) | Out-String | Invoke-Expression'
+    # 激活行必须带存在性判断。
+    # 否则在任何 mise 还不可解析的会话里（PATH 尚未刷新的新终端、用户卸载了 mise），
+    # 每次启动 shell 都会抛 CommandNotFoundException——实测确实会这样。
+    $activation = 'if (Get-Command mise -ErrorAction SilentlyContinue) { (&mise activate pwsh) | Out-String | Invoke-Expression }'
 
     if (-not (Test-Path -LiteralPath $PROFILE)) {
         Invoke-Action "创建 PowerShell 配置文件 $PROFILE" {
