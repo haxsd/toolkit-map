@@ -149,8 +149,8 @@ function Get-FirstLine {
 }
 
 # 判断文件是不是"真的可执行"。
-# Windows 的商店应用别名（WindowsApps\python3.exe）是 0 字节存根：
-# 存在、能被 Get-Command 找到、但执行时静默失败（退出码 9009）。
+# 这里只做静态判断（存在、不是目录、长度大于 0），用于筛选"运行时二进制"这类文件。
+# 注意它不能用来判断 WindowsApps 下的商店应用别名——见 Test-AliasExecutable。
 function Test-RealExecutable {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
@@ -159,6 +159,20 @@ function Test-RealExecutable {
     if ($item.PSIsContainer) { return $false }
     if ($item.Length -eq 0) { return $false }
     return $true
+}
+
+# 判断 0 字节文件是不是"能用的应用执行别名"。
+# 实测（本机 Windows 11，2026-09）：WindowsApps 下的别名统一是 0 字节的 ReparsePoint，
+# 能不能用完全取决于目标应用装没装：
+#     pwsh.exe    -> 输出 7.6.6，可用
+#     winget.exe  -> 输出 v1.29.290，可用
+#     python3.exe -> 无输出、退出码 9009（没装商店版 Python），不可用
+# 所以"0 字节 ⇒ 不可用"是错的判据，只能真的执行一次版本来确认。
+function Test-AliasExecutable {
+    param([string]$Path)
+    if (-not (Test-FileQuick $Path)) { return $false }
+    if (Get-FirstLine $Path @('--version')) { return $true }
+    return [bool](Get-FirstLine $Path @('-version'))
 }
 
 # 把各种工具输出版本号的形式统一成裸版本号。
@@ -423,12 +437,17 @@ function Get-Placement {
 function Get-Declarations {
     $decls = New-Object System.Collections.Generic.List[object]
 
-    # 全局声明
+    # 全局声明。注意 XDG_CONFIG_HOME：一旦它被设置，mise 的全局配置目录就跟着搬家，
+    # 下面那个 ~/.config/mise/config.toml 会降级成"从工作目录向上发现的"配置，
+    # 只有工作目录在用户目录之下时才生效（census 的 [XDG_SHIFT] 告警专门盯这个）。
     $globalCandidates = @(
         (Join-Path $env:USERPROFILE '.config\mise\config.toml'),
         (Join-Path $env:APPDATA     'mise\config.toml'),
         (Join-Path $env:USERPROFILE '.tool-versions')
     )
+    if ($env:XDG_CONFIG_HOME) {
+        $globalCandidates = @((Join-Path $env:XDG_CONFIG_HOME 'mise\config.toml')) + $globalCandidates
+    }
     foreach ($p in $globalCandidates) {
         if (Test-Path -LiteralPath $p) {
             $decls.Add([pscustomobject]@{ scope = 'global'; path = $p; tools = (Read-DeclaredTools $p) })
@@ -490,6 +509,23 @@ function Read-DeclaredTools {
         }
     }
     return $result
+}
+
+# 取出某个 [section] 里的键名列表（极简扫描，够用来比较"声明了哪些工具"）。
+# 只认 section 内的 "键 = 值" 行，跳过注释；不解析数组/表的嵌套，不追求 TOML 完备。
+function Get-TomlSectionKeys {
+    param([string]$Path, [string]$Section)
+    $keys = New-Object System.Collections.Generic.List[string]
+    $inSection = $false
+    foreach ($line in (Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)) {
+        $t = "$line".Trim()
+        if ($t -match '^\[') { $inSection = ($t -eq "[$Section]"); continue }
+        if (-not $inSection) { continue }
+        if ($t -eq '' -or $t.StartsWith('#')) { continue }
+        $m = [regex]::Match($t, '^([A-Za-z0-9_\-\.]+)\s*=')
+        if ($m.Success) { $keys.Add($m.Groups[1].Value) }
+    }
+    return $keys
 }
 
 # ============================================================
@@ -806,7 +842,11 @@ function Get-Resolution {
         'node', 'npm', 'npx', 'pnpm', 'yarn',
         'python', 'python3', 'py', 'pip', 'uv',
         'java', 'javac', 'mvn', 'gradle',
-        'go', 'cargo', 'rustc', 'deno', 'bun', 'dotnet', 'mise'
+        'go', 'cargo', 'rustc', 'deno', 'bun', 'dotnet', 'mise',
+        # 环境能力类命令：它们本身不是"运行时"，但决定这台机器能做什么——
+        # pwsh 决定 mise 能不能按项目自动切换版本，winget 是 bootstrap 的首选安装来源，
+        # docker 决定 .sh 脚本在这台机器上能否被验证。
+        'pwsh', 'winget', 'git', 'docker', 'conda'
     )
 
     # PATHEXT 决定同一目录下各扩展名的尝试顺序，末尾补一个空串表示无扩展名的文件
@@ -821,8 +861,13 @@ function Get-Resolution {
         if ($pathList.Count -eq 0) { continue }
 
         $first = $pathList[0]
-        # 0 字节的文件是 Windows 商店的应用执行别名存根：能被找到，但执行时静默失败
-        $usable = ((Get-FileLength $first) -gt 0)
+        # 0 字节在这里只意味着"可疑"，不能直接判死：pwsh / winget 这类应用执行别名也是
+        # 0 字节，但目标应用已安装时能正常执行；真正坏的存根（未安装的商店版 Python）
+        # 会在探测时无输出、退出码 9009。所以对 0 字节文件补一次实测。
+        $usable = $true
+        if ((Get-FileLength $first) -eq 0) {
+            $usable = Test-AliasExecutable -Path $first
+        }
 
         # 把命令名映射到它的"宿主运行时"，这样才能问出版本号。
         # 例如 npm 的版本必须问 node，javac 必须问 java。
@@ -862,7 +907,7 @@ function Get-Warnings {
             $warnings.Add([pscustomobject]@{
                 kind    = 'STUB'
                 tool    = $r.command
-                message = "命令 '$($r.command)' 解析到 '$($r.resolvesTo)'，但该文件不可执行（0 字节的商店别名存根，常见于 WindowsApps\python3.exe）。执行会静默失败。"
+                message = "命令 '$($r.command)' 解析到 '$($r.resolvesTo)'，实测无法执行（运行 --version 无输出、退出码 9009）。这类文件是 Windows 应用执行别名，目标应用没装时执行会静默失败，而 Get-Command / where.exe 都会把它当成可用命令。"
                 detail  = $r.resolvesTo
             })
         }
@@ -975,6 +1020,109 @@ function Get-Warnings {
                 })
             }
         }
+    }
+
+    # --- 8) 声明被 PATH 顺序遮蔽：声明要求某个版本，mise 也确实装了，但解析到别的副本 ---
+    # 根因不在运行时，而在 Windows 组合 PATH 的规则：机器级 PATH 在前、用户级在后，
+    # 于是 legacy 的直接工具目录（D:\nodejs、C:\ProgramData\Oracle\Java\javapath）
+    # 永远排在 mise 的 shims 之前。交互式会话靠 `mise activate` 在会话内临时把 shims
+    # 前置来救场，但 cmd、图形程序、IDE 任务、带 -NoProfile 的脚本拿不到这个前置，
+    # 它们会用错版本——"声明式"的承诺正是在这些场景里失效的。
+    $seenInert = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($d in $Declarations) {
+        foreach ($tool in $d.tools.Keys) {
+            $short = ($tool -replace '^(nodejs|node)$', 'node') -replace '^python3$', 'python'
+            $managedForTool = @($Managed.records | Where-Object { $_.tool -eq $short })
+            if ($managedForTool.Count -eq 0) { continue }
+
+            $resolved = @($Resolution | Where-Object {
+                if ($short -eq 'node')        { $_.command -in @('node', 'npm', 'npx', 'pnpm', 'yarn') }
+                elseif ($short -eq 'python')  { $_.command -eq 'python' -or $_.command -eq 'py' }
+                else                          { $_.command -eq $short }
+            })
+            foreach ($r in $resolved) {
+                if (-not $r.usable) { continue }
+                # 已经解析到 mise 的 shims / installs 就不是问题
+                if ($r.resolvesTo -match '\\mise\\(shims|installs)\\') { continue }
+                if (-not $seenInert.Add("$($r.command)|$($r.resolvesTo)")) { continue }
+
+                $warnings.Add([pscustomobject]@{
+                    kind    = 'PATH_ORDER'
+                    tool    = $r.command
+                    message = "声明要求 $tool $($d.tools[$tool])（$($d.path)），mise 也装有 $($managedForTool[0].version)，但 '$($r.command)' 解析到 '$($r.resolvesTo)'（$($r.version)）。未激活 mise 的场景（cmd、图形程序、IDE 任务、-NoProfile 脚本）会用到错版本；根因是 PATH 组合顺序，不是运行时本身有问题。"
+                    detail  = "交互式会话里 mise activate 会在会话内把 shims 前置来救场；要让所有场景都对，需要把 shims 放到用户级 PATH 首位（scripts/bootstrap.ps1 会做），机器级条目（如 Oracle 的 javapath）则需要管理员权限调整或让位"
+                })
+            }
+        }
+    }
+
+    # --- 9) PATH 里的脏数据：重复条目、带引号的条目 ---
+    # Get-PathDirs 会静默去重以免影响其它判断，但脏数据本身值得报告：
+    # PATH 有长度上限，重复条目会挤占空间，而且会让"改了却没生效"难以排查。
+    $userRaw = @([Environment]::GetEnvironmentVariable('PATH', 'User') -split ';' | Where-Object { $_ })
+    $seenEntry = @{}
+    $dupes = New-Object System.Collections.Generic.List[string]
+    foreach ($e in $userRaw) {
+        $k = "$e".Trim().Trim('"').TrimEnd('\').ToLowerInvariant()
+        if ($seenEntry.ContainsKey($k)) { $dupes.Add("$e") } else { $seenEntry[$k] = $true }
+    }
+    $quoted = @($userRaw | Where-Object { "$_" -match '"' })
+
+    $dirt = New-Object System.Collections.Generic.List[string]
+    if ($dupes.Count -gt 0)  { $dirt.Add("重复条目 $($dupes.Count) 条") }
+    if ($quoted.Count -gt 0) { $dirt.Add("带引号的条目 $($quoted.Count) 条") }
+    if ($dirt.Count -gt 0) {
+        $dirtDetail = @()
+        if ($dupes.Count -gt 0)  { $dirtDetail += ($dupes | Sort-Object -Unique) -join ' | ' }
+        if ($quoted.Count -gt 0) { $dirtDetail += ($quoted | Sort-Object -Unique) -join ' | ' }
+        $warnings.Add([pscustomobject]@{
+            kind    = 'PATH_DIRT'
+            tool    = 'PATH'
+            message = "用户级 PATH 里有$($dirt -join '、')。它们不改变解析结果，但会挤占 PATH 长度上限，并让'改了却没生效'这类问题更难查。"
+            detail  = ($dirtDetail -join ' || ')
+        })
+    }
+
+    # --- 10) 部署的全局声明与仓库模板漂移 ---
+    # 模板是"这台机器想要的状态"，部署副本是"现在实际声明的状态"。两者是两份独立文件，
+    # 没有任何机制保证同步——模板里新加的工具会永远装不上，这正是最容易被忽视的一类失效：
+    # census 只说"声明要求什么"，看不出声明本身已经落后于意图。
+    $templatePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'templates\mise-config.toml'
+    $deployedPath = Join-Path $env:USERPROFILE '.config\mise\config.toml'
+    if ((Test-FileQuick $templatePath) -and (Test-FileQuick $deployedPath)) {
+        $tplText = ((Get-Content -LiteralPath $templatePath -Raw) -replace "`r`n", "`n")
+        $depText = ((Get-Content -LiteralPath $deployedPath -Raw) -replace "`r`n", "`n")
+        if ($tplText.Trim() -ne $depText.Trim()) {
+            $tplKeys = @(Get-TomlSectionKeys -Path $templatePath -Section 'tools')
+            $depKeys = @(Get-TomlSectionKeys -Path $deployedPath -Section 'tools')
+            $onlyTpl = @($tplKeys | Where-Object { $depKeys -notcontains $_ })
+            $onlyDep = @($depKeys | Where-Object { $tplKeys -notcontains $_ })
+            $diff = New-Object System.Collections.Generic.List[string]
+            if ($onlyTpl.Count -gt 0) { $diff.Add("模板有而部署副本没有: $($onlyTpl -join ', ')") }
+            if ($onlyDep.Count -gt 0) { $diff.Add("部署副本有而模板没有: $($onlyDep -join ', ')") }
+            if ($diff.Count -eq 0)   { $diff.Add('[tools] 的键相同，但内容有差异（版本或注释不同）') }
+            $warnings.Add([pscustomobject]@{
+                kind    = 'DRIFT'
+                tool    = 'mise 全局声明'
+                message = "部署的全局声明与仓库模板不一致。模板代表这台机器想要的状态，漂移意味着模板里新加的工具永远不会被安装。"
+                detail  = ($diff -join '；') + " —— 刷新: scripts/bootstrap.ps1 -RefreshConfig（会先备份）"
+            })
+        }
+    }
+
+    # --- 11) XDG_CONFIG_HOME 被设置：mise 的"全局"配置会搬家 ---
+    # 这是实测踩到的坑：设置了 XDG_CONFIG_HOME 后，mise 把 $XDG_CONFIG_HOME/mise/config.toml
+    # 当作真正的全局配置，而 ~/.config/mise/config.toml 降级为"向上遍历发现"的配置——
+    # 于是它在 D:\ 之类的工作目录下完全不生效，同时 auto_update 这类只允许写在全局配置里的
+    # 设置会被忽略（mise 会打印 "auto_update in non-global config ... is ignored"）。
+    if ($env:XDG_CONFIG_HOME) {
+        $xdgConfig = Join-Path $env:XDG_CONFIG_HOME 'mise\config.toml'
+        $warnings.Add([pscustomobject]@{
+            kind    = 'XDG_SHIFT'
+            tool    = 'mise 全局声明'
+            message = "本机设置了 XDG_CONFIG_HOME=$($env:XDG_CONFIG_HOME)，mise 的全局配置目录会跟着搬到这里（$xdgConfig）。后果是 ~/.config/mise/config.toml 不再是全局配置，而是「从工作目录向上发现」的配置——工作目录不在用户目录之下时它不生效。"
+            detail  = "要么把这个变量去掉（推荐，本机的机器声明就写在 ~/.config/mise/config.toml），要么把声明迁到 $xdgConfig"
+        })
     }
 
     return $warnings
@@ -1165,7 +1313,7 @@ foreach ($r in ($resolution | Sort-Object command)) {
         Write-Host ("  {0,-9} -> {1}  ({2})" -f $r.command, $r.resolvesTo, $r.version) -ForegroundColor Gray
     }
     if ($r.stub) {
-        Write-Host "             ^ 警告：该文件不可执行（0 字节存根）" -ForegroundColor Red
+        Write-Host "             ^ 警告：实测无法执行（应用执行别名的目标未安装，运行 --version 无输出、退出码 9009）" -ForegroundColor Red
     }
 }
 
@@ -1173,13 +1321,17 @@ Write-Section '6. 告警 —— 需要人工确认的问题'
 if ($warnings.Count -eq 0) {
     Write-Host '  未发现问题。' -ForegroundColor Green
 } else {
-    $order = @('STUB', 'SHADOWED', 'CONVENTION', 'STRAY', 'UNDECLARED', 'MISSING', 'NO_MISE')
+    $order = @('STUB', 'PATH_ORDER', 'SHADOWED', 'CONVENTION', 'PATH_DIRT', 'DRIFT', 'XDG_SHIFT', 'STRAY', 'UNDECLARED', 'MISSING', 'NO_MISE')
     foreach ($kind in $order) {
         foreach ($w in ($warnings | Where-Object { $_.kind -eq $kind })) {
             $color = switch ($kind) {
                 'STUB'       { 'Red' }
+                'PATH_ORDER' { 'Red' }
                 'SHADOWED'   { 'Yellow' }
                 'CONVENTION' { 'Magenta' }
+                'PATH_DIRT'  { 'DarkYellow' }
+                'DRIFT'      { 'Red' }
+                'XDG_SHIFT'  { 'Red' }
                 'STRAY'      { 'Cyan' }
                 'UNDECLARED' { 'Yellow' }
                 'MISSING'    { 'Red' }
@@ -1210,6 +1362,23 @@ Write-Host "  位置分布: $($placementText -join '  /  ')" -ForegroundColor Gr
 Write-Host "  规范根:   $($script:ToolsRoot)" -ForegroundColor DarkGray
 
 Write-Host "  告警数量: $($warnings.Count)" -ForegroundColor $(if ($warnings.Count -gt 0) { 'Yellow' } else { 'Green' })
+
+# 脚本可验证性：.ps1 在本机就能跑；.sh 需要一个真正的 bash（Git Bash / WSL 发行版 / 容器）。
+# 常见的坑是 PATH 上的 bash 其实是 C:\WINDOWS\system32\bash.exe——WSL 的转发壳，
+# 没装发行版时它报的是 WSL 自己的错（"execvpe(/bin/bash) failed"），
+# 看起来像脚本有语法错误，其实和脚本无关。
+$bashExe    = (Get-Command bash -ErrorAction SilentlyContinue).Source
+$gitBashExe = @('C:\Program Files\Git\bin\bash.exe', 'C:\Program Files (x86)\Git\bin\bash.exe') |
+              Where-Object { Test-FileQuick $_ } | Select-Object -First 1
+$bashState = '无'
+if ($gitBashExe)                                { $bashState = "Git Bash ($gitBashExe)" }
+elseif ($bashExe -match 'System32\\bash\.exe$') { $bashState = '只有 WSL 转发壳（未装发行版则不可用）' }
+elseif ($bashExe)                               { $bashState = $bashExe }
+$dockerCmd = Get-Command docker -ErrorAction SilentlyContinue
+Write-Host "  脚本可验证性: .ps1 可运行 ; bash = $bashState ; docker = $(if ($dockerCmd) { '可用' } else { '无' })" -ForegroundColor Gray
+if ($bashState -notmatch '^Git Bash' -and $dockerCmd) {
+    Write-Host '       .sh 语法校验: docker run --rm -v "${PWD}:/w" -w /w bash:latest sh -c "bash -n scripts/*.sh"' -ForegroundColor DarkGray
+}
 
 if ($Timing) {
     Write-Section '性能分解 —— 各阶段耗时'

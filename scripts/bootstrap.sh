@@ -5,16 +5,18 @@
 # 与 scripts/bootstrap.ps1 是同一套设计的 Unix 实现。
 #
 # 用法:
-#   ./bootstrap.sh --dry-run      只打印将要执行的改动
-#   ./bootstrap.sh                实际执行
-#   ./bootstrap.sh --no-rc        不修改 shell 启动文件
-#   ./bootstrap.sh --skip-tools   只装 mise 和配置，不拉取运行时
+#   ./bootstrap.sh --dry-run        只打印将要执行的改动
+#   ./bootstrap.sh                  实际执行
+#   ./bootstrap.sh --no-rc          不修改 shell 启动文件
+#   ./bootstrap.sh --skip-tools     只装 mise 和配置，不拉取运行时
+#   ./bootstrap.sh --refresh-config 用模板覆盖已部署的全局声明（覆盖前先备份）
 #
 set -uo pipefail
 
 DRY_RUN=0
 NO_RC=0
 SKIP_TOOLS=0
+REFRESH_CONFIG=0
 TOOLS_ROOT=""
 # 模板刻意不放在 mise/ 目录下：mise 会把 <任意目录>/mise/config.toml 当成项目配置自动读取，
 # 放那里会让仓库本身被当成一个"未授权的 mise 项目"。
@@ -25,9 +27,10 @@ while [ $# -gt 0 ]; do
     --dry-run)    DRY_RUN=1; shift ;;
     --no-rc)      NO_RC=1; shift ;;
     --skip-tools) SKIP_TOOLS=1; shift ;;
+    --refresh-config) REFRESH_CONFIG=1; shift ;;
     --config)     CONFIG_SOURCE="$2"; shift 2 ;;
     --tools-root) TOOLS_ROOT="$2"; shift 2 ;;
-    -h|--help)    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 2 ;;
   esac
 done
@@ -117,13 +120,40 @@ else
   ok "模板: $CONFIG_SOURCE"
   ok "目标: $MISE_CONFIG_FILE"
 
-  if [ -f "$MISE_CONFIG_FILE" ]; then
-    backup="$MISE_CONFIG_FILE.bak-$(date +%Y%m%d-%H%M%S)"
-    run_action "备份已有配置到 $backup" cp "$MISE_CONFIG_FILE" "$backup"
-    warn '检测到已有配置，已备份。脚本会写入新模板，你之后可以对比合并。'
-  fi
+  # 取出 [tools] 段的键名。用 awk 而不是解析 TOML：这里只需要知道"声明了哪些工具"，
+  # 不关心数组、嵌套表这些细节，够用且零依赖。
+  # 开头先剥掉可能存在的 UTF-8 BOM（PowerShell 5.1 的 Set-Content -Encoding utf8 会写 BOM，
+  # 带 BOM 时 /^\[tools\]/ 匹配不上，会把所有键都误报成"模板独有"）。
+  tools_keys() {
+    awk 'NR==1{sub(/^\xef\xbb\xbf/,"")} /^\[tools\]/{f=1;next} /^\[/{f=0} f && /^[A-Za-z0-9_.-]+[ \t]*=/{sub(/[ \t]*=.*/,"");print}' "$1" | sort -u
+  }
 
-  if [ "$DRY_RUN" -eq 1 ]; then
+  # 声明漂移检测：模板是"这台机器想要的状态"，部署副本是"现在实际声明的状态"。
+  # 两份文件之间没有任何同步机制，模板里新加的工具会永远装不上——这是最容易被
+  # 忽视的一类失效，因为 census 只看部署副本，会报告一切正常。
+  if [ -f "$MISE_CONFIG_FILE" ] && cmp -s "$CONFIG_SOURCE" "$MISE_CONFIG_FILE"; then
+    skip '部署副本与模板一致，无需改写'
+  elif [ -f "$MISE_CONFIG_FILE" ]; then
+    warn '检测到漂移：部署的配置与模板不一致'
+    tpl_keys="$(tools_keys "$CONFIG_SOURCE")"
+    dep_keys="$(tools_keys "$MISE_CONFIG_FILE")"
+    missing="$(comm -23 <(printf '%s\n' "$tpl_keys") <(printf '%s\n' "$dep_keys") | grep -v '^$' || true)"
+    extra="$(comm -13 <(printf '%s\n' "$tpl_keys") <(printf '%s\n' "$dep_keys") | grep -v '^$' || true)"
+    [ -n "$missing" ] && printf '      模板有而部署副本没有: %s\n' "$(printf '%s' "$missing" | tr '\n' ' ')"
+    [ -n "$extra" ]   && printf '      部署副本有而模板没有: %s\n' "$(printf '%s' "$extra" | tr '\n' ' ')"
+    if [ -z "$missing$extra" ]; then
+      printf '      [tools] 的键相同，但内容有差异（版本或注释不同）\n'
+    fi
+
+    if [ "$REFRESH_CONFIG" -eq 1 ]; then
+      backup="$MISE_CONFIG_FILE.bak-$(date +%Y%m%d-%H%M%S)"
+      run_action "备份到 $backup" cp "$MISE_CONFIG_FILE" "$backup"
+      run_action "按模板写入 $MISE_CONFIG_FILE" cp "$CONFIG_SOURCE" "$MISE_CONFIG_FILE"
+      done_msg '已按模板刷新（备份保留，可对比合并）'
+    else
+      skip '保持现状（要按模板覆盖请加 --refresh-config，覆盖前会自动备份）'
+    fi
+  elif [ "$DRY_RUN" -eq 1 ]; then
     plan "创建 $MISE_CONFIG_FILE 并写入模板内容"
   else
     mkdir -p "$(dirname "$MISE_CONFIG_FILE")"

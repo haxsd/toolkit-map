@@ -155,13 +155,22 @@ PATH 一变就失传。`census` 的 `[STRAY]` 告警会把这些列出来。
 
 ## 最容易踩的坑
 
-### 坑 1：存在 ≠ 可用
+### 坑 1：存在 ≠ 可用（但 0 字节也不等于一定坏）
 
-Windows 上 `WindowsApps\python3.exe` 是 **0 字节的商店应用别名存根**。
+Windows 上 `WindowsApps\python3.exe` 是 **0 字节的商店应用执行别名**。
 `Get-Command python3` 会成功返回它，`where.exe python3` 也会列出它，
 但真正执行时无输出、退出码 9009。
 
-**判断标准**：不要只检查"文件存在"，要检查"文件非空且能执行"。
+**但不要把"0 字节"当成不可用的判据**——实测同一个目录下：
+
+| 别名 | 大小 | 实测结果 |
+|---|---|---|
+| `python3.exe` | 0 字节 | 无输出、退出码 9009（没装商店版 Python） |
+| `pwsh.exe` | 0 字节 | 正常输出 7.6.6（装了 PowerShell 7） |
+| `winget.exe` | 0 字节 | 正常输出 v1.29.290 |
+
+**判断标准**：文件长度只能说"可疑"，要下结论必须真跑一次版本命令、看有没有输出。
+`census` 就是这么做的——`[STUB]` 只在实测失败时才出现。
 
 ### 坑 2：PATH 是单值命名空间
 
@@ -173,6 +182,13 @@ PATH 是有序列表，同名命令只有第一个生效。所以：
 **PATH 单值不是缺陷，是它的本性**。正确做法是让 PATH 里的那一个位置指向
 **间接层**（shim 目录或版本管理器的激活机制），由间接层按目录、按项目、
 按命令决定用哪个版本。不要试图把多个具体版本都塞进 PATH 去争同一个名字。
+
+**Windows 上还多一条组合规则**：PATH 是「机器级条目在前 + 用户级条目在后」拼起来的。
+所以机器级的直接工具目录（如 `C:\ProgramData\Oracle\Java\javapath`）排在所有用户级
+条目之前，把 shims 加进用户级 PATH 也抢不过它；而 `mise activate` 只在当前会话内
+前置 shims，于是 cmd、图形程序、IDE 任务、`-NoProfile` 脚本仍然用旧版本。
+判断"声明到底生效没有"必须区分"激活的会话"和"未激活的场景"，
+`census` 的 `[PATH_ORDER]` 告警专门报这个。
 
 ### 坑 3：自定义命名约定会失传
 
@@ -198,6 +214,21 @@ JetBrains 系 IDE（PyCharm / IntelliJ）的安装目录里有 `jbr/`，
 
 `@($list)` 作用于 `List[object]` 会抛 `Argument types do not match`。
 要用 `$list.ToArray()`。写 PowerShell 脚本处理运行时清单时会碰到。
+
+### 坑 6：声明会漂移（模板 ≠ 部署副本）
+
+`templates/mise-config.toml` 是"这台机器**想要**的状态"，`~/.config/mise/config.toml`
+是"现在**实际声明**的状态"。它们是两份独立文件：克隆到新机器、手工改过、或者模板
+后来加了工具，两边就不再一致。而 `census` 只能读到部署副本——于是"模板里新加的工具"
+永远不会被安装，报告却显示一切正常。
+
+**判断标准**：把"模板与部署副本是否一致"当成必查项（`census` 的 `[DRIFT]` 告警负责报），
+刷新用 `bootstrap -RefreshConfig`（`--refresh-config`），覆盖前会自动备份。
+
+顺带一条相关的坑：如果设置了 `XDG_CONFIG_HOME`，mise 的全局配置会跟着搬家，
+`~/.config/mise/config.toml` 就降级成"从工作目录向上发现"的配置——工作目录不在用户
+目录之下时它不生效，`auto_update` 这类只允许写在全局配置里的设置也会被忽略
+（`census` 的 `[XDG_SHIFT]` 告警会指出）。
 
 ---
 

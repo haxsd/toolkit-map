@@ -83,9 +83,9 @@ version manager on top:
 bootstrap does five things, all idempotent:
 
 1. Installs [mise](https://mise.jdx.dev) (winget → scoop → choco → npm; `mise.run` → brew on Unix)
-2. Writes `templates/mise-config.toml` as the global machine manifest (backing up any existing file)
+2. Writes `templates/mise-config.toml` as the global machine manifest. If nothing is deployed yet it copies the template; if the deployed copy differs, it reports the drift (which `[tools]` keys differ) and **leaves your file alone** — add `-RefreshConfig` / `--refresh-config` to overwrite it, backing up first
 3. Creates the canonical root for hand-installed runtimes (`~/toolchains`, override with `TOOLCHAIN_ROOT` or `-ToolsRoot` / `--tools-root`)
-4. Adds mise's shims directory to the **user-level** PATH
+4. Puts mise's shims directory at the **front** of the user-level PATH (appended, it loses to every pre-existing direct tool dir) and lists machine-level dirs that still shadow it
 5. Runs `mise install` to fetch the declared runtimes
 
 What it deliberately does **not** do: touch machine-level environment variables, delete
@@ -140,13 +140,17 @@ It inventories in five stages:
 | 4. Inventory | Version manager dirs, system installs, IDE-bundled JBRs, conda envs |
 | 5. Resolution | What common commands actually resolve to, their version, and whether they run |
 
-Then it reports four kinds of warnings:
+Then it reports these warnings:
 
 | Warning | Meaning | What to do |
 |---|---|---|
-| `STUB` | The command resolves to a 0-byte placeholder | The command does not work; use another |
+| `STUB` | The command resolves to a Store app-execution alias whose target app is not installed — probing it gives no output and exit code 9009 | The command does not work; use another |
+| `PATH_ORDER` | Declaration and mise agree on a version, but PATH resolves the command to a different copy | Put mise's shims first in the user PATH (bootstrap does); machine-level dirs need admin rights |
 | `SHADOWED` | Multiple versions exist, PATH exposes only one | Use an absolute path or activate via a version manager |
 | `CONVENTION` | A version convention exists only in a filename | Record it in a declaration file, or it will be lost |
+| `PATH_DIRT` | The user PATH has duplicate or quoted entries | Clean them up — they eat into the PATH length limit and hide "I changed it but nothing took effect" bugs |
+| `DRIFT` | The deployed global declaration differs from `templates/mise-config.toml` | `bootstrap.ps1 -RefreshConfig` / `bootstrap.sh --refresh-config` (backs up first) |
+| `XDG_SHIFT` | `XDG_CONFIG_HOME` is set, so mise's global config moved and `~/.config/mise/config.toml` became a path-dependent config | Unset the variable, or move the declaration |
 | `STRAY` | Runtime sits in a non-standard location with no manager tracking it | Record it in a declaration file — **do not migrate** it (see below) |
 | `UNDECLARED` | The current project has an `engines` constraint but no readable declaration | Add `mise.toml` / `.tool-versions` — see "Taking over a legacy project" below |
 | `MISSING` | Declared but not installed | `mise install` |
@@ -201,13 +205,32 @@ standalone.
 - **`mise activate` cannot auto-switch directories on PowerShell 5.1**: its `chpwd` hook
   requires PowerShell 7 or newer. On 5.1, activation only prepends mise's versions as the
   global default — `cd`-ing into a project does not switch anything, which is the only
-  reason to use `activate` in the first place. Also note PowerShell profiles are
-  **per-host** (5.1 reads `WindowsPowerShell`, 7 reads `PowerShell`); after installing
-  PowerShell 7, run bootstrap once more under `pwsh`.
-- **Exists ≠ usable (Windows)**: `WindowsApps\python3.exe` is a 0-byte Microsoft Store
-  app-execution-alias stub. `Get-Command` finds it, `where.exe` lists it, but running it
-  produces no output and exits with code 9009. Always check file length, not just
-  existence.
+  reason to use `activate` in the first place. PowerShell profiles are **per-host**
+  (5.1 reads `WindowsPowerShell`, 7 reads `PowerShell`), so bootstrap writes the
+  activation line into **both** hosts' profiles when PowerShell 7 is available, and tells
+  you to open `pwsh` instead. Detect it with a probe, not by looking for the file: the
+  `pwsh.exe` in `WindowsApps` is a 0-byte alias.
+- **Windows composes PATH as machine entries first, user entries second.** Commands are
+  resolved by walking that combined list, so a machine-level direct tool directory
+  (`C:\ProgramData\Oracle\Java\javapath`) or a legacy directory early in the user PATH
+  always beats mise's shims, which scripts usually append at the end. `mise activate`
+  prepends the shims **inside the session only**: interactive shells get the declared
+  version, while cmd, GUI apps, IDE tasks and `-NoProfile` scripts silently get the old
+  one. That gap is what `[PATH_ORDER]` reports. bootstrap now moves the shims to the
+  *front* of the user PATH and lists the machine-level directories, which need admin
+  rights to change.
+- **Exists ≠ usable (Windows), refined**: `WindowsApps\python3.exe` is a 0-byte Microsoft
+  Store app-execution alias; `Get-Command` finds it, `where.exe` lists it, and running it
+  produces no output and exits with code 9009. But a 0-byte alias is not automatically
+  broken — `pwsh.exe` and `winget.exe` are 0-byte aliases that work, because their target
+  apps are installed. File length means "suspect", not "unusable": confirm by running a
+  version command and checking for output.
+- **Verifying the shell scripts on Windows**: `bash` on PATH is usually
+  `C:\WINDOWS\system32\bash.exe`, the WSL relay. Without a distro installed it fails with
+  `execvpe(/bin/bash) failed: No such file or directory`, which looks like a syntax error
+  in your script but is not. Run `.\scripts\verify-shell.ps1`: it finds a real bash (Git
+  Bash, otherwise a `bash` container) and runs `bash -n` over every `.sh` — parse only,
+  never execute.
 - **The PowerShell 5.1 `@()` trap**: `@($list)` on a `List[object]` throws
   `Argument types do not match` — use `$list.ToArray()`. If the script also sets
   `$ErrorActionPreference = 'SilentlyContinue'`, the error is swallowed entirely and only

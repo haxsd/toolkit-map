@@ -78,9 +78,9 @@ census 逐类盘点，把「用哪个」和「有哪些」两个问题分开回�
 bootstrap 做五件事，全部幂等：
 
 1. 安装 [mise](https://mise.jdx.dev)（winget → scoop → choco → npm，Unix 上是 `mise.run` → brew）
-2. 把 `templates/mise-config.toml` 写成全局机器声明（覆盖前自动备份）
+2. 把 `templates/mise-config.toml` 写成全局机器声明。还没部署就照抄模板；已经部署且与模板不一致时，**只报告漂移**（差在哪些 `[tools]` 键）并保持你的文件不动——要覆盖请加 `-RefreshConfig` / `--refresh-config`，覆盖前自动备份
 3. 建立非托管运行时的规范根（`~/toolchains`，可用 `TOOLCHAIN_ROOT` 或 `-ToolsRoot` / `--tools-root` 覆盖）
-4. 把 mise 的 shims 目录加入**用户级** PATH
+4. 把 mise 的 shims 目录放到**用户级** PATH 的**首位**（追加在尾部会输给所有既有的直接工具目录），并列出仍然遮蔽它的机器级目录
 5. 执行 `mise install` 拉取声明的运行时
 
 它刻意不做：不动机器级环境变量、不删你已有的 PATH 条目、不碰 IDE 自带的运行时。
@@ -132,13 +132,17 @@ mise exec -- npm test        # 一次性激活，不改全局状态
 | 4. 清单层 | 版本管理器目录、系统安装目录、IDE 内置 JBR、conda 环境 |
 | 5. 解析层 | 常见命令实际解析到哪个文件、什么版本、能否执行 |
 
-最后给四类告警：
+最后给这些告警：
 
 | 告警 | 含义 | 该做什么 |
 |---|---|---|
-| `STUB` | 命令解析到 0 字节的假文件 | 这个命令不能用，换一个 |
+| `STUB` | 命令解析到商店应用执行别名，而目标应用没装——实测无输出、退出码 9009 | 这个命令不能用，换一个 |
+| `PATH_ORDER` | 声明和 mise 都指向同一个版本，但 PATH 解析到别的副本 | 把 shims 放到用户级 PATH 首位（bootstrap 已做）；机器级目录要管理员权限 |
 | `SHADOWED` | 有多个版本，但 PATH 只暴露一个 | 用绝对路径或版本管理器激活 |
 | `CONVENTION` | 存在只写在文件名里的版本约定 | 写进声明文件，否则会失传 |
+| `PATH_DIRT` | 用户级 PATH 里有重复或带引号的条目 | 清理掉——它们挤占 PATH 长度上限，还会掩盖「改了却没生效」这类问题 |
+| `DRIFT` | 部署的全局声明与 `templates/mise-config.toml` 不一致 | `bootstrap.ps1 -RefreshConfig` / `bootstrap.sh --refresh-config`（会先备份） |
+| `XDG_SHIFT` | 设置了 `XDG_CONFIG_HOME`，mise 的全局配置搬了家，`~/.config/mise/config.toml` 变成路径相关配置 | 去掉该变量，或把声明迁过去 |
 | `STRAY` | 运行时放在非规范位置，且没有管理器纳管 | 登记到声明文件，**不要迁移**（见下） |
 | `UNDECLARED` | 当前项目有 `engines` 约束，但找不到可读的声明文件 | 补 `mise.toml` / `.tool-versions`，见下方「接手锁旧版本的老项目」 |
 | `MISSING` | 声明要求了但没装 | `mise install` |
@@ -190,12 +194,28 @@ agent 会自动加载它。
 
 - **PowerShell 5.1 上 `mise activate` 不能自动切换目录**：它的 `chpwd` 钩子需要
   PowerShell 7 及以上。在 5.1 下激活只会把 mise 的版本前置为全局默认，`cd` 进项目
-  不会切换版本——而后者才是用 `activate` 的唯一理由。另外 PowerShell 的 profile 是
-  **分宿主**的（5.1 读 `WindowsPowerShell`，7 读 `PowerShell`），装完 PowerShell 7
-  需要用 `pwsh` 再跑一次 bootstrap。
-- **存在 ≠ 可用（Windows）**：`WindowsApps\python3.exe` 是 0 字节的商店应用别名
-  存根。`Get-Command` 能找到它，`where.exe` 会列出它，但执行时无输出、退出码
-  9009。判断可用性必须检查文件长度。
+  不会切换版本——而后者才是用 `activate` 的唯一理由。PowerShell 的 profile 是
+  **分宿主**的（5.1 读 `WindowsPowerShell`，7 读 `PowerShell`），所以只要本机装了
+  PowerShell 7，bootstrap 会把激活行**两个宿主都写上**，并直接告诉你改用 `pwsh`。
+  判断"有没有装 7"必须实测，不能看文件存不存在：`WindowsApps` 里的 `pwsh.exe` 是
+  0 字节的应用执行别名。
+- **Windows 组合 PATH 的规则是机器级在前、用户级在后。** 解析命令时按组合后的顺序
+  逐个目录找，所以机器级的直接工具目录（`C:\ProgramData\Oracle\Java\javapath`）
+  或用户级里排在靠前的旧目录，永远赢过通常被追加在尾部的 mise shims。
+  `mise activate` 只在**当前会话内**把 shims 前置：交互式 shell 用对版本，
+  而 cmd、图形程序、IDE 任务、`-NoProfile` 脚本都悄悄用旧版本——这个缺口就是
+  `[PATH_ORDER]` 告警要指出的东西。bootstrap 现在把 shims 放到用户级 PATH 的**首位**
+  （解决用户级的旧目录），并单独列出机器级的目录（改它们需要管理员权限）。
+- **存在 ≠ 可用（Windows），要点更精确**：`WindowsApps\python3.exe` 是 0 字节的
+  商店应用执行别名，`Get-Command` 能找到、`where.exe` 会列出，执行时无输出、退出码
+  9009。但 0 字节**不等于一定坏**：`pwsh.exe` 和 `winget.exe` 同样是 0 字节别名，
+  却能正常执行，因为目标应用装了。文件长度只说明"可疑"，要确认必须真跑一次版本
+  命令看有没有输出。
+- **在 Windows 上验证 .sh 脚本**：PATH 里的 `bash` 通常是
+  `C:\WINDOWS\system32\bash.exe`，也就是 WSL 的转发壳；没装发行版时它会报
+  `execvpe(/bin/bash) failed: No such file or directory`，看起来像脚本语法错误，
+  其实不是。跑 `.\scripts\verify-shell.ps1`：它会自动找一个真 bash（Git Bash，
+  否则退回 bash 容器）对所有 `.sh` 执行 `bash -n`——只解析、不执行。
 - **PowerShell 5.1 的 `@()` 陷阱**：`@($list)` 作用于 `List[object]` 会抛
   `Argument types do not match`，要用 `$list.ToArray()`。如果脚本里同时设了
   `$ErrorActionPreference = 'SilentlyContinue'`，这个错误会被完全吞掉，只在

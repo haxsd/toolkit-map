@@ -57,13 +57,17 @@ metadata:
 ```
 
 输出六节：声明层 / mise 纳管层 / 命名约定层 / 运行时清单 / 解析层 / 告警。
-告警有四种，每一种都能直接转成行动：
+告警有这些，每一种都能直接转成行动：
 
 | 告警 | 含义 | 该做什么 |
 |---|---|---|
-| `STUB` | 命令解析到 0 字节的假文件 | 这个命令不能用，换一个 |
+| `STUB` | 命令解析到商店应用执行别名，而目标应用没装（实测退出码 9009） | 这个命令不能用，换一个 |
+| `PATH_ORDER` | 声明与 mise 一致，但 PATH 解析到别的副本（未激活的场景会用错版本） | 把 shims 放到用户级 PATH 首位；机器级目录需管理员权限 |
 | `SHADOWED` | 有多个版本，但 PATH 只暴露一个 | 用 `mise exec` 或显式路径 |
 | `CONVENTION` | 存在只写在文件名里的版本约定 | 必须写进声明文件，否则会失传 |
+| `PATH_DIRT` | 用户级 PATH 有重复或带引号的条目 | 清理掉，否则挤占 PATH 长度并掩盖"改了没生效" |
+| `DRIFT` | 部署的全局声明与 `templates/mise-config.toml` 不一致 | `bootstrap -RefreshConfig`（会先备份） |
+| `XDG_SHIFT` | 设置了 `XDG_CONFIG_HOME`，全局声明搬了家、原位置变成路径相关配置 | 去掉该变量，或把声明迁过去 |
 | `STRAY` | 运行时放在非规范位置，且没有管理器纳管 | 登记到声明文件（**不要迁移**，见铁律 6） |
 | `UNDECLARED` | 当前项目有 `engines` 约束但无可读的声明文件 | 补 `mise.toml` / `.tool-versions`，见 `AGENTS.md`「接手一个锁旧版本的老项目」 |
 | `MISSING` | 声明要求了但没装 | `mise install` |
@@ -80,8 +84,15 @@ metadata:
 <skill目录>/scripts/bootstrap.sh
 ```
 
-它会装 mise、写入机器声明、把 shims 目录加入用户级 PATH、拉取运行时。
+它会装 mise、写入机器声明、把 shims 放到用户级 PATH 首位、拉取运行时。
 刻意不做：不动机器级环境变量、不删已有的 PATH 条目、不碰 IDE 自带的运行时。
+
+两个值得知道的开关：
+
+- 声明漂移时默认**只报告、不覆盖**（部署副本里可能有你手工加的工具）。要覆盖请加
+  `-RefreshConfig` / `--refresh-config`，覆盖前自动备份。
+- `scripts/verify-shell.ps1` 用真 bash（Git Bash，否则退回容器）对所有 `.sh` 执行
+  `bash -n`——Windows 上 PATH 里的 `bash` 往往是 WSL 转发壳，导致 `.sh` 从来没被验证过。
 
 ### 场景三：项目里锁定运行时版本
 
@@ -97,13 +108,20 @@ mise trust && mise install
 mise exec -- npm test        # 一次性激活，零全局状态
 ```
 
-## 两个平台陷阱
+## 三个平台陷阱
 
-写脚本或判断运行时可用性时会踩到，遇到诡异现象先想到这两条。
+写脚本或判断运行时可用性时会踩到，遇到诡异现象先想到这几条。
 
 **存在 ≠ 可用（Windows）。** `WindowsApps\python3.exe` 是 **0 字节的商店应用
-别名存根**：`Get-Command` 能找到它，`where.exe` 也会列出它，但执行时无输出、
-退出码 9009。判断时必须检查文件长度，不能只检查是否存在。
+别名**：`Get-Command` 能找到它，`where.exe` 也会列出它，但执行时无输出、退出码
+9009。反过来也不成立——0 字节不等于坏，`pwsh.exe`、`winget.exe` 同样是 0 字节却
+能正常执行。文件长度只说明"可疑"，下结论要靠真跑一次版本命令。
+
+**Windows 的 PATH 是「机器级在前、用户级在后」拼起来的。** 机器级的直接工具目录
+（如 `C:\ProgramData\Oracle\Java\javapath`）永远排在 mise 的 shims 之前，把 shims
+加进用户级 PATH 也抢不过它；而 `mise activate` 只在当前会话内前置 shims。于是交互式
+shell 用对版本，cmd、图形程序、IDE 任务、`-NoProfile` 脚本用旧版本——判断"声明生效
+没有"必须区分这两种场景。
 
 **PowerShell 5.1 的 `@()` 陷阱。** `@($list)` 作用于 `List[object]` 会抛出
 `Argument types do not match`，必须用 `$list.ToArray()`。而且如果脚本里设了

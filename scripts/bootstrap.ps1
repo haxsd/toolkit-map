@@ -32,6 +32,11 @@
   模板刻意不放 mise/ 目录下：mise 会把 <任意目录>/mise/config.toml 当作项目配置自动读取，
   放那里会让仓库自己变成一个"未授权的 mise 项目"并报错。
 
+.PARAMETER RefreshConfig
+  用模板覆盖已部署的全局声明（覆盖前自动备份）。
+  默认【不覆盖】：部署副本里可能有手工加的工具、registry 镜像或代理设置，
+  无脑覆盖会把这些悄悄丢掉。所以默认只报告漂移，由你决定是否刷新。
+
 .EXAMPLE
   .\bootstrap.ps1 -DryRun
   先看看会做哪些改动。
@@ -45,6 +50,7 @@ param(
     [switch]$DryRun,
     [switch]$SkipTools,
     [switch]$NoProfile,
+    [switch]$RefreshConfig,
     [string]$ConfigSource = '',
     [string]$ToolsRoot = ''
 )
@@ -70,6 +76,35 @@ function Invoke-Action {
         return
     }
     & $Action
+}
+
+# 取出声明文件里 [tools] 段的工具名，用于说清"漂移"到底差在哪。
+# 极简扫描：只认 section 内的 "键 = 值" 行，跳过注释，不解析数组与嵌套表
+# （census.ps1 里有同样的实现，两处都刻意保持"够用就好"）。
+function Get-ToolsSectionKeys {
+    param([string]$Path)
+    $keys = New-Object System.Collections.Generic.List[string]
+    $inTools = $false
+    foreach ($line in (Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)) {
+        $t = "$line".Trim()
+        if ($t -match '^\[') { $inTools = ($t -eq '[tools]'); continue }
+        if (-not $inTools -or $t -eq '' -or $t.StartsWith('#')) { continue }
+        $m = [regex]::Match($t, '^([A-Za-z0-9_\-\.]+)\s*=')
+        if ($m.Success) { $keys.Add($m.Groups[1].Value) }
+    }
+    return $keys
+}
+
+# 探测 PowerShell 7 是否真的能用，返回版本号；不可用返回空串。
+# 不能只看文件存不存在：WindowsApps 下的 pwsh.exe 是 0 字节的应用执行别名，
+# 没装 Store 版 PowerShell 时它照样能被 Get-Command 找到，但执行会以 9009 退出。
+# 所以必须真的跑一次——这也是 census 判断可用性的同一套办法。
+function Get-PwshVersion {
+    if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) { return '' }
+    try {
+        $v = (& pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' 2>$null | Select-Object -First 1)
+        return "$v".Trim()
+    } catch { return '' }
 }
 
 # ============================================================
@@ -166,21 +201,50 @@ if (-not (Test-Path -LiteralPath $ConfigSource)) {
     Write-Ok "模板: $ConfigSource"
     Write-Ok "目标: $MiseConfigFile"
 
+    # 先判断部署副本与模板是否一致。这一步解决的是"声明漂移"：
+    # 模板是这台机器想要的状态，部署副本是现在实际声明的状态，两者是两份独立文件，
+    # 没有任何机制保证同步——模板里新加的工具会永远装不上，而 census 只能看到部署副本，
+    # 于是报告一切正常。
+    $same = $false
     if (Test-Path -LiteralPath $MiseConfigFile) {
-        # 已有配置不直接覆盖：先备份，再由用户决定是否采用新模板
-        $stamp  = Get-Date -Format 'yyyyMMdd-HHmmss'
-        $backup = "$MiseConfigFile.bak-$stamp"
-        Invoke-Action "备份已有配置到 $backup" {
-            Copy-Item -LiteralPath $MiseConfigFile -Destination $backup -Force
-        }
-        if (-not $DryRun) { Write-Warn2 "检测到已有配置，已备份。脚本会写入新模板，你之后可以对比合并。" }
+        try {
+            $a = (Get-Content -LiteralPath $MiseConfigFile -Raw) -replace "`r`n", "`n"
+            $b = (Get-Content -LiteralPath $ConfigSource  -Raw) -replace "`r`n", "`n"
+            $same = ($a.Trim() -eq $b.Trim())
+        } catch { $same = $false }
     }
 
-    Invoke-Action "创建目录并写入配置" {
-        New-Item -ItemType Directory -Force -Path $MiseConfigDir | Out-Null
-        Copy-Item -LiteralPath $ConfigSource -Destination $MiseConfigFile -Force
+    if ((Test-Path -LiteralPath $MiseConfigFile) -and $same) {
+        Write-Skip '部署副本与模板一致，无需改写'
+    } elseif (Test-Path -LiteralPath $MiseConfigFile) {
+        # 漂移。默认不覆盖：部署副本里可能有手工加的工具、registry 镜像、代理设置。
+        Write-Warn2 '检测到漂移：部署的配置与模板不一致'
+        $tplKeys = @(Get-ToolsSectionKeys -Path $ConfigSource)
+        $depKeys = @(Get-ToolsSectionKeys -Path $MiseConfigFile)
+        $onlyTpl = @($tplKeys | Where-Object { $depKeys -notcontains $_ })
+        $onlyDep = @($depKeys | Where-Object { $tplKeys -notcontains $_ })
+        if ($onlyTpl.Count -gt 0) { Write-Host "      模板有而部署副本没有: $($onlyTpl -join ', ')" -ForegroundColor DarkYellow }
+        if ($onlyDep.Count -gt 0) { Write-Host "      部署副本有而模板没有: $($onlyDep -join ', ')" -ForegroundColor DarkYellow }
+        if ($onlyTpl.Count -eq 0 -and $onlyDep.Count -eq 0) { Write-Host '      [tools] 的键相同，但内容有差异（版本或注释不同）' -ForegroundColor DarkYellow }
+
+        if ($RefreshConfig) {
+            $stamp  = Get-Date -Format 'yyyyMMdd-HHmmss'
+            $backup = "$MiseConfigFile.bak-$stamp"
+            Invoke-Action "备份到 $backup 并按模板刷新" {
+                Copy-Item -LiteralPath $MiseConfigFile -Destination $backup -Force
+                Copy-Item -LiteralPath $ConfigSource  -Destination $MiseConfigFile -Force
+            }
+            Write-Done '已按模板刷新（备份保留，可对比合并）'
+        } else {
+            Write-Skip '保持现状（要按模板覆盖请加 -RefreshConfig，覆盖前会自动备份）'
+        }
+    } else {
+        Invoke-Action "创建目录并写入配置" {
+            New-Item -ItemType Directory -Force -Path $MiseConfigDir | Out-Null
+            Copy-Item -LiteralPath $ConfigSource -Destination $MiseConfigFile -Force
+        }
+        Write-Done '机器声明已就位'
     }
-    Write-Done '机器声明已就位'
 }
 
 # ============================================================
@@ -214,19 +278,35 @@ Write-Step '配置 PATH（核心步骤）'
 Write-Host '    原则：PATH 里只应该出现 mise 的 shims 目录这一个工具链条目，' -ForegroundColor DarkGray
 Write-Host '    而不是每个运行时各自一条（<系统盘>:\nodejs、Python312、jdk\bin ...）。' -ForegroundColor DarkGray
 
-# 3a. 把 shims 目录加入用户级 PATH
+# 3a. 把 shims 目录放到用户级 PATH 的【首位】
+#     为什么必须是首位而不是"加进去就行"：Windows 组合 PATH 的规则是
+#     机器级在前、用户级在后，而解析命令时按组合后的顺序逐个目录找。
+#     历史上手工装的直接目录（<系统盘>:\nodejs、Python312 ...）都排在前面，
+#     shims 追加在尾部等于永远轮不到它——声明看起来生效了，实际没有。
 $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
 if ($null -eq $userPath) { $userPath = '' }
-$userEntries = @($userPath -split ';' | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') })
+$shims = $MiseShimsDir.TrimEnd('\')
 
-if ($userEntries -contains $MiseShimsDir.TrimEnd('\')) {
-    Write-Skip "shims 目录已在用户级 PATH 中: $MiseShimsDir"
+# 重建用户级条目：顺手去掉重复项（PATH 有长度上限），并把 shims 摘出来单独放最前
+$userEntries = New-Object System.Collections.Generic.List[string]
+$seenEntry   = New-Object System.Collections.Generic.HashSet[string]
+foreach ($raw in ($userPath -split ';')) {
+    $e = "$raw".Trim().Trim('"').TrimEnd('\')
+    if ([string]::IsNullOrWhiteSpace($e)) { continue }
+    if ($e -ieq $shims) { continue }
+    if (-not $seenEntry.Add($e.ToLowerInvariant())) { continue }
+    $userEntries.Add($e)
+}
+
+$userFirst = if ($userEntries.Count -gt 0) { $userEntries[0] } else { '' }
+if ($userFirst -ieq $shims) {
+    Write-Skip "shims 已位于用户级 PATH 首位: $shims"
 } else {
-    Invoke-Action "把 $MiseShimsDir 加入用户级 PATH" {
-        $newPath = (@($userEntries) + $MiseShimsDir) -join ';'
+    Invoke-Action "把 $shims 放到用户级 PATH 首位（并去掉重复条目）" {
+        $newPath = (@($shims) + $userEntries.ToArray()) -join ';'
         [Environment]::SetEnvironmentVariable('PATH', $newPath, 'User')
     }
-    Write-Done 'shims 目录已加入用户级 PATH'
+    Write-Done 'shims 目录已置于用户级 PATH 首位'
     if (-not $DryRun) { Write-Warn2 '需要重开终端才生效' }
 }
 
@@ -246,6 +326,31 @@ if ($suspicious.Count -eq 0) {
     Write-Warn2 '脚本不会自动删除它们。确认 mise 工作正常后，可以手工清理。'
 }
 
+# 3c. 报告机器级 PATH 里的"直接工具目录"——这是改用户 PATH 解决不了的一类遮蔽。
+#     Windows 组合 PATH 的规则是机器级在前、用户级在后，所以机器级里的
+#     C:\ProgramData\Oracle\Java\javapath 这类目录会一直赢过 shims（实测 java 就是这样）。
+#     修它需要管理员权限，脚本刻意不提权，只把事实和可选做法摆出来。
+Write-Host ''
+$machineEntries = @([Environment]::GetEnvironmentVariable('PATH', 'Machine') -split ';' | Where-Object { $_ })
+$shadowers = New-Object System.Collections.Generic.List[string]
+foreach ($raw in $machineEntries) {
+    $d = "$raw".Trim().Trim('"').TrimEnd('\')
+    if ([string]::IsNullOrWhiteSpace($d) -or -not (Test-Path -LiteralPath $d)) { continue }
+    $hits = New-Object System.Collections.Generic.List[string]
+    foreach ($exe in @('node.exe', 'java.exe', 'javac.exe', 'python.exe', 'npm.cmd', 'go.exe', 'cargo.exe', 'dotnet.exe')) {
+        if (Test-Path -LiteralPath (Join-Path $d $exe)) { $hits.Add(($exe -replace '\.(exe|cmd)$', '')) }
+    }
+    if ($hits.Count -gt 0) { $shadowers.Add("$d（$($hits -join ', ')）") }
+}
+if ($shadowers.Count -eq 0) {
+    Write-Ok '机器级 PATH 里没有会抢在 shims 前面的直接工具目录'
+} else {
+    Write-Warn2 "机器级 PATH 里有 $($shadowers.Count) 个直接工具目录，它们排在任何用户级条目之前，shims 抢不过："
+    foreach ($s in $shadowers) { Write-Host "      - $s" -ForegroundColor Yellow }
+    Write-Warn2 '这一类只能靠管理员权限把这些目录移出机器级 PATH，或接受"只有激活 mise 的会话才用对版本"'
+    Write-Warn2 '（cmd、图形程序、IDE 任务、-NoProfile 脚本拿不到激活，会用到这里的旧版本）'
+}
+
 # ============================================================
 # 步骤 4：配置 shell 激活（可选）
 # ============================================================
@@ -261,41 +366,63 @@ if ($NoProfile) {
     # 每次启动 shell 都会抛 CommandNotFoundException——实测确实会这样。
     $activation = 'if (Get-Command mise -ErrorAction SilentlyContinue) { (&mise activate pwsh) | Out-String | Invoke-Expression }'
 
-    if (-not (Test-Path -LiteralPath $PROFILE)) {
-        Invoke-Action "创建 PowerShell 配置文件 $PROFILE" {
-            New-Item -ItemType Directory -Force (Split-Path -Parent $PROFILE) | Out-Null
-            New-Item -ItemType File -Path $PROFILE -Force | Out-Null
+    # PowerShell 的 profile 是【分宿主】的：5.1 读 WindowsPowerShell 目录，7 读 PowerShell
+    # 目录，两者互不加载。只写当前宿主的话，用户换到 pwsh 之后还得再跑一次脚本，
+    # 所以两边都写。路径问各自的宿主要，这样 OneDrive 重定向过的 Documents 也不会写错地方。
+    $pwshVersion = Get-PwshVersion
+    $pwshProfile = ''
+    if ($pwshVersion) {
+        try { $pwshProfile = (& pwsh -NoProfile -Command '$PROFILE' 2>$null | Select-Object -First 1) } catch { }
+        if ($pwshProfile) { $pwshProfile = "$pwshProfile".Trim() }
+    }
+
+    $targets = New-Object System.Collections.Generic.List[object]
+    $targets.Add([pscustomobject]@{ host = "当前宿主 PowerShell $($PSVersionTable.PSVersion)"; path = $PROFILE })
+    if ($pwshProfile -and ($pwshProfile -ne $PROFILE)) {
+        $targets.Add([pscustomobject]@{ host = "PowerShell $pwshVersion (pwsh)"; path = $pwshProfile })
+    }
+
+    foreach ($t in $targets) {
+        if (-not (Test-Path -LiteralPath $t.path)) {
+            Invoke-Action "创建 $($t.path)" {
+                New-Item -ItemType Directory -Force (Split-Path -Parent $t.path) | Out-Null
+                New-Item -ItemType File -Path $t.path -Force | Out-Null
+            }
+        }
+
+        $already = $false
+        if (Test-Path -LiteralPath $t.path) {
+            $already = [bool](Select-String -Path $t.path -SimpleMatch $activation -Quiet -ErrorAction SilentlyContinue)
+        }
+
+        if ($already) {
+            Write-Skip "$($t.host): 激活行已存在"
+        } else {
+            Invoke-Action "向 $($t.path) 追加激活行" {
+                Add-Content -Path $t.path -Value ''
+                Add-Content -Path $t.path -Value '# 由 runtime-census 的 bootstrap.ps1 添加：让 mise 按项目声明自动切换运行时版本'
+                Add-Content -Path $t.path -Value $activation
+            }
+            Write-Done "$($t.host): 激活行已写入 $($t.path)"
         }
     }
+    if (-not $DryRun) { Write-Warn2 '想撤销就删掉 profile 里带 "runtime-census" 注释的那两行' }
 
-    $already = $false
-    if (Test-Path -LiteralPath $PROFILE) {
-        $already = [bool](Select-String -Path $PROFILE -SimpleMatch $activation -Quiet -ErrorAction SilentlyContinue)
-    }
-
-    if ($already) {
-        Write-Skip "激活行已存在于 $PROFILE"
+    # 宿主结论。实测：5.1 下 mise activate 会打印
+    #   "chpwd functionality requires PowerShell version 7 or higher"
+    # 也就是说它只把 shims 前置到 PATH（等于把 mise 的版本设成全局默认），
+    # 并不能在 cd 进项目时自动切换版本——而后者才是用 activate 的唯一理由。
+    # 注意判断"有没有 PowerShell 7"不能看文件存不存在：WindowsApps 里的 pwsh.exe
+    # 是 0 字节的应用执行别名，没装 Store 版时它照样存在但不可用，必须真的跑一次。
+    if ($PSVersionTable.PSVersion.Major -ge 7) {
+        Write-Ok "当前宿主是 PowerShell $($PSVersionTable.PSVersion)，按项目自动切换可用"
+    } elseif ($pwshVersion) {
+        Write-Warn2 "当前宿主是 Windows PowerShell $($PSVersionTable.PSVersion)：它不支持 mise 的自动切换目录（chpwd 需要 PowerShell 7）"
+        Write-Warn2 "本机已装 PowerShell $pwshVersion，两个宿主的 profile 都已写好——直接用 pwsh 打开终端即可"
     } else {
-        Invoke-Action "向 $PROFILE 追加激活行" {
-            Add-Content -Path $PROFILE -Value ''
-            Add-Content -Path $PROFILE -Value '# 由 runtime-census 的 bootstrap.ps1 添加：让 mise 按项目声明自动切换运行时版本'
-            Add-Content -Path $PROFILE -Value $activation
-        }
-        Write-Done "激活行已写入 $PROFILE"
-        if (-not $DryRun) { Write-Warn2 '想撤销就删掉该文件里带 "runtime-census" 注释的那两行' }
-    }
-
-    # PowerShell 的 profile 是分宿主的：5.1 读 WindowsPowerShell 目录，7 读 PowerShell
-    # 目录，两者互不加载。所以这里写下的激活行只对"当前宿主"生效。
-    Write-Host "    当前宿主: PowerShell $($PSVersionTable.PSVersion)" -ForegroundColor DarkGray
-    if ($PSVersionTable.PSVersion.Major -lt 7) {
-        # 实测：5.1 下 mise activate 会打印
-        #   "chpwd functionality requires PowerShell version 7 or higher"
-        # 也就是说它只把 shims 前置到 PATH（等于把 mise 的版本设成全局默认），
-        # 并不能在 cd 进项目时自动切换版本——而后者才是用 activate 的唯一理由。
-        Write-Warn2 'Windows PowerShell 5.1 不支持 mise 的自动切换目录（chpwd 需要 PowerShell 7）'
-        Write-Warn2 '在 5.1 下激活只相当于把 mise 的版本设成全局默认；要按项目自动切换，'
-        Write-Warn2 '请安装 PowerShell 7 后再用 pwsh 跑一次本脚本（profile 是分宿主的）'
+        Write-Warn2 "当前宿主是 Windows PowerShell $($PSVersionTable.PSVersion)：它不支持 mise 的自动切换目录（chpwd 需要 PowerShell 7）"
+        Write-Warn2 '在 5.1 下激活只相当于把 mise 的版本设成全局默认；要按项目自动切换，请安装 PowerShell 7'
+        Write-Warn2 '安装命令： winget install --id Microsoft.PowerShell -e'
     }
 }
 
@@ -321,10 +448,20 @@ Write-Step '自检'
 
 if (Get-Command mise -ErrorAction SilentlyContinue) {
     Write-Host ''
-    & mise doctor 2>&1 | ForEach-Object { "    $_" }
-    Write-Host ''
-    Write-Host '    当前 mise 管理的运行时：' -ForegroundColor DarkGray
-    & mise ls 2>&1 | ForEach-Object { "      $_" }
+    # mise 会把告警写到 stderr（例如"非全局配置里的 auto_update 被忽略"）。
+    # 本脚本全局启用了 $ErrorActionPreference='Stop'，而 2>&1 会把原生命令的 stderr
+    # 变成终止性错误——实测会让脚本在最后一步直接退出，连收尾提示都打不出来。
+    # 所以展示类调用在这里临时放开错误策略。
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & mise doctor 2>&1 | ForEach-Object { "    $_" }
+        Write-Host ''
+        Write-Host '    当前 mise 管理的运行时：' -ForegroundColor DarkGray
+        & mise ls 2>&1 | ForEach-Object { "      $_" }
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
 } else {
     Write-Warn2 'mise 尚未在当前会话可用，跳过自检。重开终端后执行 mise doctor。'
 }
