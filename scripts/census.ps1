@@ -950,6 +950,33 @@ function Get-Warnings {
         })
     }
 
+    # --- 7) 项目有版本约束，但没有工具读得到的声明文件 ---
+    # package.json 的 engines 只在版本不符时给一条警告，它不会切换版本。
+    # 于是"这个项目需要 Node 22"这个事实只存在于 engines 里，用上 22 得靠人
+    # 记住某个路径——这正是当初需要 node22.cmd 那类私有约定的原因。
+    $hasProjectDeclaration = @($Declarations | Where-Object { $_.scope -eq 'project' }).Count -gt 0
+    if (-not $hasProjectDeclaration) {
+        $pkgPath = Join-Path (Get-Location).Path 'package.json'
+        if (Test-Path -LiteralPath $pkgPath) {
+            $wantNode = ''
+            try {
+                $pkg = Get-Content -LiteralPath $pkgPath -Raw | ConvertFrom-Json
+                if ($pkg.PSObject.Properties.Name -contains 'engines' -and
+                    $pkg.engines.PSObject.Properties.Name -contains 'node') {
+                    $wantNode = "$($pkg.engines.node)"
+                }
+            } catch { }
+            if ($wantNode) {
+                $warnings.Add([pscustomobject]@{
+                    kind    = 'UNDECLARED'
+                    tool    = 'node'
+                    message = "当前目录的 package.json 要求 node $wantNode，但没有任何工具读得到的声明文件。engines 只在版本不符时给警告，不会切换版本——这就是当初需要 node22.cmd 那类私有约定的原因。"
+                    detail  = "在项目根目录建 mise.toml（[tools] node = `"22`"）或 .tool-versions（nodejs 22）；之后 cd 进项目会自动用对版本"
+                })
+            }
+        }
+    }
+
     return $warnings
 }
 
@@ -1146,7 +1173,7 @@ Write-Section '6. 告警 —— 需要人工确认的问题'
 if ($warnings.Count -eq 0) {
     Write-Host '  未发现问题。' -ForegroundColor Green
 } else {
-    $order = @('STUB', 'SHADOWED', 'CONVENTION', 'STRAY', 'MISSING', 'NO_MISE')
+    $order = @('STUB', 'SHADOWED', 'CONVENTION', 'STRAY', 'UNDECLARED', 'MISSING', 'NO_MISE')
     foreach ($kind in $order) {
         foreach ($w in ($warnings | Where-Object { $_.kind -eq $kind })) {
             $color = switch ($kind) {
@@ -1154,6 +1181,7 @@ if ($warnings.Count -eq 0) {
                 'SHADOWED'   { 'Yellow' }
                 'CONVENTION' { 'Magenta' }
                 'STRAY'      { 'Cyan' }
+                'UNDECLARED' { 'Yellow' }
                 'MISSING'    { 'Red' }
                 default      { 'DarkYellow' }
             }

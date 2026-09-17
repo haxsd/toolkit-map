@@ -113,6 +113,21 @@ declare_mise_files() {
 
 DECL_FILES="$(declare_mise_files 2>/dev/null || true)"
 
+# 只列项目作用域的声明文件（当前目录向上），不含全局配置。
+# 用于判断"这个项目有没有声明"——全局配置存在不代表项目声明过。
+project_decl_files() {
+  local dir
+  dir="$(pwd)"
+  while [ -n "$dir" ]; do
+    for f in mise.toml .mise.toml .tool-versions; do
+      [ -f "$dir/$f" ] && printf '%s\n' "$dir/$f"
+    done
+    [ "$dir" = "/" ] && break
+    dir="$(dirname "$dir")"
+  done
+}
+PROJECT_DECL_FILES="$(project_decl_files 2>/dev/null || true)"
+
 # ---------- 第 2 阶段：mise 纳管层 ----------
 MISE_AVAILABLE=0
 MISE_TOOLS=""
@@ -342,6 +357,19 @@ if [ "${STRAY_COUNT:-0}" -gt 0 ]; then
   add_warn "STRAY" \
     "有 ${STRAY_COUNT} 个运行时放在非规范位置，且没有任何管理器纳管它们。它们只靠 PATH 被找到——PATH 一变就失传。建议登记到声明文件；今后新装的运行时请落在 ${TOOLS_ROOT}。" \
     "$(printf '%s' "$STRAY_ROWS" | tr '\n' '|' | sed 's/|$//; s/|/ | /g')"
+fi
+
+# 5) 项目有版本约束，但没有工具读得到的声明文件
+#    package.json 的 engines 只在版本不符时给一条警告，它不会切换版本。
+#    于是"这个项目需要某个版本"这个事实只存在于 engines 里，用上它得靠人记住某个路径。
+if [ -z "$PROJECT_DECL_FILES" ] && [ -f "$(pwd)/package.json" ]; then
+  WANT_NODE="$(grep -oE '"node"[[:space:]]*:[[:space:]]*"[^"]*"' "$(pwd)/package.json" 2>/dev/null \
+    | head -n1 | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/')"
+  if [ -n "$WANT_NODE" ]; then
+    add_warn "UNDECLARED" \
+      "当前目录的 package.json 要求 node ${WANT_NODE}，但没有任何工具读得到的声明文件。engines 只在版本不符时给警告，不会切换版本——这就是当初需要私有命名约定（如 node22）的原因。" \
+      "在项目根目录创建 mise.toml（[tools] node = \"22\"）或 .tool-versions（nodejs 22）"
+  fi
 fi
 
 # ---------- 输出 ----------

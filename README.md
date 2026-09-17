@@ -148,6 +148,7 @@ Then it reports four kinds of warnings:
 | `SHADOWED` | Multiple versions exist, PATH exposes only one | Use an absolute path or activate via a version manager |
 | `CONVENTION` | A version convention exists only in a filename | Record it in a declaration file, or it will be lost |
 | `STRAY` | Runtime sits in a non-standard location with no manager tracking it | Record it in a declaration file — **do not migrate** it (see below) |
+| `UNDECLARED` | The current project has an `engines` constraint but no readable declaration | Add `mise.toml` / `.tool-versions` — see "Taking over a legacy project" below |
 | `MISSING` | Declared but not installed | `mise install` |
 
 ### Convention: where unmanaged runtimes live

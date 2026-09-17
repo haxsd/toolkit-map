@@ -140,6 +140,7 @@ mise exec -- npm test        # 一次性激活，不改全局状态
 | `SHADOWED` | 有多个版本，但 PATH 只暴露一个 | 用绝对路径或版本管理器激活 |
 | `CONVENTION` | 存在只写在文件名里的版本约定 | 写进声明文件，否则会失传 |
 | `STRAY` | 运行时放在非规范位置，且没有管理器纳管 | 登记到声明文件，**不要迁移**（见下） |
+| `UNDECLARED` | 当前项目有 `engines` 约束，但找不到可读的声明文件 | 补 `mise.toml` / `.tool-versions`，见下方「接手锁旧版本的老项目」 |
 | `MISSING` | 声明要求了但没装 | `mise install` |
 
 ### 约定：非托管运行时的落脚点
