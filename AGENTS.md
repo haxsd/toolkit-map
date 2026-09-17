@@ -235,49 +235,26 @@ JetBrains 系 IDE（PyCharm / IntelliJ）的安装目录里有 `jbr/`，
 
 ---
 
-## 开工前的环境预检
+## 开工前的工具预检
 
-接手"跑不起来 / 行为不对"的任务时，**先把环境排除掉，再动应用代码**——
-把项目当成无辜的，直到环境被证明有问题。下面这套清单里，脚本能自动化的部分由
-`census` 负责，其余是必须逐项走一遍的取证动作。
-
-**脚本能替你做的**（只读，不改机器）：
+动手之前先确认一件事：**你将要调用的命令，实际会是哪个版本**。整套契约里只有这件事
+由本套件负责，而且它是只读的：
 
 ```powershell
-.\scripts\census.ps1 -Json -Timing        # 工具/运行时盘点：装了几份、在哪、解析到哪、有没有漂移
+.\scripts\census.ps1 -Json -Timing
 ```
 
 ```bash
 ./scripts/census.sh --json --timing
 ```
 
-重点看这几类告警：`[MISSING]`（声明要求了但没装）、`[PATH_ORDER]`（装了却不是它在生效）、
-`[STUB]`（命令解析到一个跑不起来的文件）、`[DRIFT]`（声明与模板/项目要求不一致）、
+看这几类告警就够了：`[MISSING]`（声明要求了但没装）、`[PATH_ORDER]`（装了却不是它在生效）、
+`[STUB]`（命令指向一个跑不起来的文件）、`[DRIFT]`（声明与实际不一致）、
 `[UNDECLARED]`（项目有版本约束却没有可读的声明文件）。
 
-**需要人工取证的部分**（逐条走，别跳）：
-
-1. **项目类型与声明的版本**：看 `mise.toml` / `.tool-versions` / `package.json engines`
-   / `go.mod` / `pyproject.toml` 等，先读需求，再与 `census` 的现状对照。
-2. **依赖目录是否就位**：`node_modules/`、`.venv/`、`vendor/` 这类目录缺失是"跑不起来"
-   的高频原因；报告里要直接给出对应的安装命令。
-3. **端口占用**：先取证再动手——查出监听者的 PID 与可执行文件路径，把证据摆出来。
-   Windows 用 `Get-NetTCPConnection -LocalPort <端口>` + `Get-Process -Id <PID>`，
-   macOS/Linux 用 `lsof -nP -iTCP:<端口> -sTCP:LISTEN` + `ps -p <PID>`。
-   **未经用户对"那一个进程"的明确同意，不得结束任何进程**；不要默认 `kill -9` 或
-   `Stop-Process -Force`，也不要按进程名批量杀。
-4. **`.env` 只比键名**：如果存在 `.env.example`，只比较**键名**与"值是否为空"。
-   第一个 `=` 之后的一切都当密钥处理——**绝不打印、引用、转述或写进日志**，
-   也不要用 `cat .env` / `Get-Content .env` 这种原样输出。缺失项只以键名引用
-   （例如 `DATABASE_URL: 缺失`）。
-5. **服务依赖是否在跑**：`DATABASE_URL` / `REDIS_URL` / MySQL DSN 出现时，
-   先做非破坏性的状态检查（如 `docker compose ps`），确认它是什么服务之后再建议启动。
-6. **权限**：确认项目目录可写；被 `package.json` / `Makefile` 引用的脚本在 Unix 上
-   可能需要执行位（`chmod +x`）。
-
-**输出形状**：按影响排序（High / Medium / …），每条都给「证据 + 修法」，
-命令按当前系统给（Windows 用 `powershell` 代码块，macOS/Linux 用 `bash` 代码块，
-只给匹配的那一份），最后附一条最可能的启动命令与"我检查了什么"。
+**边界**：本套件只管"工具与版本"这一层。应用为什么起不来——端口占用、`.env` 缺失或
+不对、依赖目录没装、后台服务没跑、脚本没有执行位——是另一类问题（应用环境诊断），
+不在本套件范围内，也不要用这里的结论去替代那边的检查。
 
 ---
 
