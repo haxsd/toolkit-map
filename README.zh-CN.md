@@ -78,7 +78,7 @@ census 逐类盘点，把「用哪个」和「有哪些」两个问题分开回�
 bootstrap 做五件事，全部幂等：
 
 1. 安装 [mise](https://mise.jdx.dev)（winget → scoop → choco → npm，Unix 上是 `mise.run` → brew）
-2. 把 `mise/config.toml` 写成全局机器声明（覆盖前自动备份）
+2. 把 `templates/mise-config.toml` 写成全局机器声明（覆盖前自动备份）
 3. 建立非托管运行时的规范根（`~/toolchains`，可用 `TOOLCHAIN_ROOT` 或 `-ToolsRoot` / `--tools-root` 覆盖）
 4. 把 mise 的 shims 目录加入**用户级** PATH
 5. 执行 `mise install` 拉取声明的运行时
@@ -188,6 +188,11 @@ agent 会自动加载它。
 
 ## 平台注意事项
 
+- **PowerShell 5.1 上 `mise activate` 不能自动切换目录**：它的 `chpwd` 钩子需要
+  PowerShell 7 及以上。在 5.1 下激活只会把 mise 的版本前置为全局默认，`cd` 进项目
+  不会切换版本——而后者才是用 `activate` 的唯一理由。另外 PowerShell 的 profile 是
+  **分宿主**的（5.1 读 `WindowsPowerShell`，7 读 `PowerShell`），装完 PowerShell 7
+  需要用 `pwsh` 再跑一次 bootstrap。
 - **存在 ≠ 可用（Windows）**：`WindowsApps\python3.exe` 是 0 字节的商店应用别名
   存根。`Get-Command` 能找到它，`where.exe` 会列出它，但执行时无输出、退出码
   9009。判断可用性必须检查文件长度。

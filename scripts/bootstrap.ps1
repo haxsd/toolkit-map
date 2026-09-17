@@ -8,7 +8,7 @@
 
   这个脚本只做四件事，且每件都是幂等的（重复执行结果相同）：
     1. 安装 mise（按 winget → scoop → choco → npm → 手工下载 的顺序尝试）
-    2. 把仓库里的 mise/config.toml 写成全局机器声明（覆盖前会备份）
+    2. 把仓库里的 templates/mise-config.toml 写成全局机器声明（覆盖前会备份）
     3. 把 mise 的 shims 目录加入【用户级】PATH —— 这是唯一应该进 PATH 的工具链目录
     4. 执行 mise install，把声明的运行时拉取到位
 
@@ -28,7 +28,9 @@
   但会修改你的 shell 启动文件，所以默认通过开关控制而不是强加。
 
 .PARAMETER ConfigSource
-  机器声明模板的路径。默认为本仓库的 mise/config.toml。
+  机器声明模板的路径。默认为本仓库的 templates/mise-config.toml。
+  模板刻意不放 mise/ 目录下：mise 会把 <任意目录>/mise/config.toml 当作项目配置自动读取，
+  放那里会让仓库自己变成一个"未授权的 mise 项目"并报错。
 
 .EXAMPLE
   .\bootstrap.ps1 -DryRun
@@ -81,7 +83,7 @@ $MiseConfigDir  = Join-Path $env:USERPROFILE '.config\mise'
 $MiseConfigFile = Join-Path $MiseConfigDir 'config.toml'
 
 if (-not $ConfigSource) {
-    $ConfigSource = Join-Path (Split-Path $PSScriptRoot -Parent) 'mise\config.toml'
+    $ConfigSource = Join-Path (Split-Path $PSScriptRoot -Parent) 'templates\mise-config.toml'
 }
 
 # 规范根：非托管的手装运行时的落脚点，按 <工具>/<版本>/ 排列。
@@ -159,7 +161,7 @@ Write-Step '写入全局机器声明'
 
 if (-not (Test-Path -LiteralPath $ConfigSource)) {
     Write-Warn2 "找不到配置模板: $ConfigSource"
-    Write-Warn2 '跳过这一步。请手工把 mise/config.toml 复制到 ' + $MiseConfigFile
+    Write-Warn2 '跳过这一步。请手工把 templates/mise-config.toml 复制到 ' + $MiseConfigFile
 } else {
     Write-Ok "模板: $ConfigSource"
     Write-Ok "目标: $MiseConfigFile"
@@ -281,6 +283,19 @@ if ($NoProfile) {
         }
         Write-Done "激活行已写入 $PROFILE"
         if (-not $DryRun) { Write-Warn2 '想撤销就删掉该文件里带 "runtime-census" 注释的那两行' }
+    }
+
+    # PowerShell 的 profile 是分宿主的：5.1 读 WindowsPowerShell 目录，7 读 PowerShell
+    # 目录，两者互不加载。所以这里写下的激活行只对"当前宿主"生效。
+    Write-Host "    当前宿主: PowerShell $($PSVersionTable.PSVersion)" -ForegroundColor DarkGray
+    if ($PSVersionTable.PSVersion.Major -lt 7) {
+        # 实测：5.1 下 mise activate 会打印
+        #   "chpwd functionality requires PowerShell version 7 or higher"
+        # 也就是说它只把 shims 前置到 PATH（等于把 mise 的版本设成全局默认），
+        # 并不能在 cd 进项目时自动切换版本——而后者才是用 activate 的唯一理由。
+        Write-Warn2 'Windows PowerShell 5.1 不支持 mise 的自动切换目录（chpwd 需要 PowerShell 7）'
+        Write-Warn2 '在 5.1 下激活只相当于把 mise 的版本设成全局默认；要按项目自动切换，'
+        Write-Warn2 '请安装 PowerShell 7 后再用 pwsh 跑一次本脚本（profile 是分宿主的）'
     }
 }
 

@@ -83,7 +83,7 @@ version manager on top:
 bootstrap does five things, all idempotent:
 
 1. Installs [mise](https://mise.jdx.dev) (winget → scoop → choco → npm; `mise.run` → brew on Unix)
-2. Writes `mise/config.toml` as the global machine manifest (backing up any existing file)
+2. Writes `templates/mise-config.toml` as the global machine manifest (backing up any existing file)
 3. Creates the canonical root for hand-installed runtimes (`~/toolchains`, override with `TOOLCHAIN_ROOT` or `-ToolsRoot` / `--tools-root`)
 4. Adds mise's shims directory to the **user-level** PATH
 5. Runs `mise install` to fetch the declared runtimes
@@ -198,6 +198,12 @@ standalone.
 
 ## Platform notes
 
+- **`mise activate` cannot auto-switch directories on PowerShell 5.1**: its `chpwd` hook
+  requires PowerShell 7 or newer. On 5.1, activation only prepends mise's versions as the
+  global default — `cd`-ing into a project does not switch anything, which is the only
+  reason to use `activate` in the first place. Also note PowerShell profiles are
+  **per-host** (5.1 reads `WindowsPowerShell`, 7 reads `PowerShell`); after installing
+  PowerShell 7, run bootstrap once more under `pwsh`.
 - **Exists ≠ usable (Windows)**: `WindowsApps\python3.exe` is a 0-byte Microsoft Store
   app-execution-alias stub. `Get-Command` finds it, `where.exe` lists it, but running it
   produces no output and exits with code 9009. Always check file length, not just

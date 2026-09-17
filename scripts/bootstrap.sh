@@ -16,7 +16,9 @@ DRY_RUN=0
 NO_RC=0
 SKIP_TOOLS=0
 TOOLS_ROOT=""
-CONFIG_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/mise/config.toml"
+# 模板刻意不放在 mise/ 目录下：mise 会把 <任意目录>/mise/config.toml 当成项目配置自动读取，
+# 放那里会让仓库本身被当成一个"未授权的 mise 项目"。
+CONFIG_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/templates/mise-config.toml"
 
 while [ $# -gt 0 ]; do
   case "$1" in
