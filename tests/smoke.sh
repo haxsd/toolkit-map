@@ -89,9 +89,11 @@ else
   fail "英文模式的告警正文仍是中文"
 fi
 
-# JSON 模式：结构完整 + 可被机器解析
+# JSON 模式：结构完整 + 可被机器解析。
+# 先确认 python3 真的能跑：有些环境里 `command -v python3` 成功，但它指向一个失效的
+# shim（实测踩过），那属于环境问题，不该被算成 JSON 校验失败。
 "$CENSUS" --json --lang en > "$FX/out.json" 2>/dev/null
-if command -v python3 >/dev/null 2>&1; then
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys' >/dev/null 2>&1; then
   python3 - "$FX/out.json" <<'PY' || FAIL=$((FAIL + 1))
 import json, sys
 d = json.load(open(sys.argv[1], encoding='utf-8'))
@@ -101,7 +103,7 @@ assert all({"kind", "message", "action"} <= set(w) for w in d["warnings"]), "告
 print("  [通过] JSON 可解析，且 warnings 带 kind/message/action")
 PY
 else
-  printf '  [跳过] 没有 python3，未校验 JSON 结构\n'
+  printf '  [跳过] 没有可用的 python3，未校验 JSON 结构\n'
 fi
 
 printf '\n'

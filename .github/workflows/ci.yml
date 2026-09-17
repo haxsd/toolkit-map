@@ -5,6 +5,13 @@ name: CI
 #              断言两边都发现了沙箱里埋的同一批雷（tests/parity.ps1）
 #   ubuntu  —— 在真 bash 下跑 census.sh 的冒烟测试，并给所有 .sh 做 bash -n
 # 不做的：不跑 bootstrap（它会真的改机器：写 PATH、写 profile、下载运行时）。
+#
+# 失败时把测试输出转发成 GitHub 注解（::error::）：注解可以匿名从 API 读到，
+# 而 job 日志需要鉴权——无人值守时这是唯一能自己看到失败原因的通道。
+#
+# 注意 .sh 的可执行位：Windows 上创建的脚本默认是 100644，克隆到 Linux 后
+# ./xxx.sh 会 Permission denied。仓库里必须用 `git update-index --chmod=+x` 钉住，
+# 而 CI 的冒烟测试直接执行脚本，正好能拦住这类"在 Windows 上感觉没问题"的问题。
 on:
   push:
     branches: [main]
@@ -15,21 +22,41 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # 用 Windows PowerShell 5.1（系统自带）跑，因为这是 Windows 上最常见的宿主；
       # parity.ps1 自己会去找 Git Bash（windows-latest 自带）来跑 shell 版。
       - name: 一致性测试（census.ps1 vs census.sh）
         shell: powershell
-        run: .\tests\parity.ps1
+        run: |
+          $out = & .\tests\parity.ps1 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $out
+          if ($code -ne 0) {
+            # 只把尾部若干行转成注解，避免刷屏
+            ($out -split "`n" | Where-Object { $_.Trim() } | Select-Object -Last 35) |
+              ForEach-Object { Write-Host "::error::$($_.Trim())" }
+          }
+          exit $code
 
   ubuntu:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: shell 语法检查
         run: |
           for f in scripts/*.sh tests/*.sh; do
             bash -n "$f" || exit 1
           done
       - name: 冒烟测试（census.sh）
-        run: bash tests/smoke.sh
+        shell: bash
+        run: |
+          set +e
+          bash tests/smoke.sh 2>&1 | tee "$RUNNER_TEMP/smoke.log"
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            # 把失败输出转成注解：日志需要鉴权，注解不需要
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done < <(tail -n 35 "$RUNNER_TEMP/smoke.log")
+          fi
+          exit "$code"

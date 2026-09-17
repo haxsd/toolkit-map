@@ -327,10 +327,16 @@ is_real() {
 
 # ---------- 声明文件读取（供漂移 / 缺失 / 遮罩三类告警共用）----------
 
+# 去掉可能的 UTF-8 BOM。用 tr 而不是 awk 的 \x 转义：
+# \x 是 gawk 扩展，ubuntu 上默认的 mawk 不认（有的版本还会直接报错），
+# 而 \357\273\277 是 POSIX 的八进制写法，到处都能用。
+strip_bom() {
+  tr -d '\357\273\277' < "$1" 2>/dev/null || cat "$1" 2>/dev/null
+}
+
 # 取出某个文件 [tools] 段的键名。极简扫描，不解析数组与嵌套表。
-# 开头先剥掉可能的 UTF-8 BOM，否则 /^\[tools\]/ 匹配不上、键会全部误判。
 tools_keys() {
-  awk 'NR==1{sub(/^\xef\xbb\xbf/,"")} /^\[tools\]/{f=1;next} /^\[/{f=0} f && /^[A-Za-z0-9_.-]+[ \t]*=/{sub(/[ \t]*=.*/,"");print}' "$1" 2>/dev/null | sort -u
+  strip_bom "$1" | awk '/^\[tools\]/{f=1;next} /^\[/{f=0} f && /^[A-Za-z0-9_.-]+[ \t]*=/{sub(/[ \t]*=.*/,"");print}' | sort -u
 }
 
 # 读出所有声明文件里的"工具|期望版本|来源文件"。
@@ -340,13 +346,13 @@ declared_tools() {
   for f in $DECL_FILES; do
     case "$f" in
       *.toml)
-        awk -v src="$f" 'NR==1{sub(/^\xef\xbb\xbf/,"")} /^\[tools\]/{f=1;next} /^\[/{f=0} f && /^[A-Za-z0-9_.-]+[ \t]*=/{
+        strip_bom "$f" | awk -v src="$f" '/^\[tools\]/{f=1;next} /^\[/{f=0} f && /^[A-Za-z0-9_.-]+[ \t]*=/{
               key=$0; sub(/[ \t]*=.*/,"",key);
               val=$0; sub(/^[^=]*=[ \t]*/,"",val); gsub(/[\[\]"]/,"",val);
-              print key "|" val "|" src }' "$f"
+              print key "|" val "|" src }'
         ;;
       *)
-        awk -v src="$f" '$1 ~ /^[A-Za-z0-9_.-]+$/ && $2 != "" && $0 !~ /^[[:space:]]*#/ { print $1 "|" $2 "|" src }' "$f"
+        strip_bom "$f" | awk -v src="$f" '$1 ~ /^[A-Za-z0-9_.-]+$/ && $2 != "" && $0 !~ /^[[:space:]]*#/ { print $1 "|" $2 "|" src }'
         ;;
     esac
   done
