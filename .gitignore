@@ -1,16 +1,11 @@
-# 运行时产物与临时文件
-.census-test.txt
-.census-test.err.txt
-.probe.txt
-*.tmp
-
 # 编辑器与系统文件
 .vscode/
 .idea/
+*.swp
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# 本地实验，不入库
-scratch/
-sandbox/
+# 临时文件
+*.tmp
+*.log

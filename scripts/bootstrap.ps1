@@ -181,7 +181,7 @@ if (-not (Test-Path -LiteralPath $ConfigSource)) {
 Write-Step '配置 PATH（核心步骤）'
 
 Write-Host '    原则：PATH 里只应该出现 mise 的 shims 目录这一个工具链条目，' -ForegroundColor DarkGray
-Write-Host '    而不是每个运行时各自一条（D:\nodejs、Python312、jdk\bin ...）。' -ForegroundColor DarkGray
+Write-Host '    而不是每个运行时各自一条（<系统盘>:\nodejs、Python312、jdk\bin ...）。' -ForegroundColor DarkGray
 
 # 3a. 把 shims 目录加入用户级 PATH
 $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')

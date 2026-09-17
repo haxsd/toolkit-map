@@ -18,15 +18,15 @@ Agent（以及人）判断"这台机器上有什么运行时"，默认用的命�
 
 在一个真实案例里，`node --version` 报告 16.20.2，而磁盘上实际有：
 
-| 运行时 | 磁盘上真实存在 | agent 探测到 |
+| 运行时 | 磁盘上实际存在 | 直接探测能得到吗 |
 |---|---|---|
-| Node | `D:\nodejs` 16.20.2 | 能 |
-| Node | `~/tools/node22` **22.23.2** | **不能**，被 `node22` 这个名字藏了 |
-| Python | `Python312` 3.12.10 | 能 |
-| Python | `miniconda3` **3.14.7** | **不能**，conda 完全没进 PATH |
-| Java | `jdk1.8.0_144` | 能 |
-| Java | PyCharm 内置 JBR **OpenJDK 25.0.3** | **不能**，藏在 IDE 里 |
-| Java | IntelliJ 内置 JBR **OpenJDK 11.0.6** | **不能**，同上 |
+| Node | `<系统盘>:\nodejs` 16.20.2 | 能 —— 它是 PATH 上的赢家 |
+| Node | `~/tools/node22` **22.23.2** | **不能** —— 被 `node22` 这个文件名藏了 |
+| Python | `~/AppData/.../Python312` 3.12.10 | 能 |
+| Python | `~/miniconda3` **3.14.7** | **不能** —— conda 完全没进 PATH |
+| Java | `Program Files/Java/jdk1.8.0_144` | 能 |
+| Java | `PyCharm/jbr` **OpenJDK 25.0.3** | **不能** —— 藏在 IDE 里 |
+| Java | `IntelliJ/jbr` **OpenJDK 11.0.6** | **不能** —— 同上 |
 
 2 个 Node、3 个 Python、3 个 JVM —— 探测只看见其中 1 个 Node、1 个 Python、1 个 Java。
 
@@ -140,8 +140,8 @@ bootstrap 只做四件事，且每件都是幂等的：
 然后给出六类告警：`STUB`（解析到假文件）、`SHADOWED`（多版本被遮蔽）、
 `CONVENTION`（自定义约定待文档化）、`MISSING`（声明了没装）、`NO_MISE`。
 
-在实测的机器上，它用 7.7 秒挖出了全部 2 个 Node、3 个 Python、3 个 JVM，
-以及用户自己发明但没记录的 `node22` 约定。
+在一次实测中，它用不到 10 秒挖出了全部 2 个 Node、3 个 Python、3 个 JVM，
+以及一个只存在于文件名里、从未被记录过的版本约定。
 
 ### 项目里声明所需版本
 
@@ -192,8 +192,9 @@ mise exec -- npm test            # 一次性激活执行
 
 ```
 toolchain-kit/
-├── README.md                本文件
-├── AGENTS.md                给 AI agent 的运行时发现契约
+├── SKILL.md                 agent 入口（本仓库同时是一个 Cursor / Claude skill）
+├── README.md                本文件，给人看
+├── AGENTS.md                运行时发现契约 —— 拷进你自己项目的规则文件里
 ├── mise/
 │   └── config.toml          全局机器声明模板
 ├── examples/
@@ -206,6 +207,30 @@ toolchain-kit/
     └── bootstrap.sh         Unix 一键引导
 ```
 
+## 当成 skill 安装
+
+本仓库根目录有 `SKILL.md`，所以它本身就是一个 skill。装法是把 skills 目录
+链接到这份克隆上，而不是复制一份——这样以后 `git pull` 就等于升级 skill。
+
+```powershell
+# Windows：目录联接，不需要管理员权限
+git clone <本仓库> $env:USERPROFILE\Projects\toolchain-kit
+New-Item -ItemType Junction `
+  -Path "$env:USERPROFILE\.cursor\skills\toolchain-kit" `
+  -Target "$env:USERPROFILE\Projects\toolchain-kit"
+```
+
+```bash
+# macOS / Linux：符号链接
+git clone <本仓库> ~/Projects/toolchain-kit
+ln -s ~/Projects/toolchain-kit ~/.cursor/skills/toolchain-kit
+```
+
+装好之后，当你在会话里提到"这台机器上有哪些 Node / Python / Java 版本"
+或遇到版本不符预期的情况，agent 会自动加载 `SKILL.md`。
+
+不想用 skill 也没关系：整个仓库就是一个普通项目，照着下面的流程手工跑脚本即可。
+
 ---
 
 ## 设计取舍
@@ -216,14 +241,14 @@ mise 的价值在于它的约定是**公开的**：`mise ls`、`mise exec`、`.t
 这些名字任何 agent 都认识，不需要先读文档。
 
 **为什么还要保留 census。**
-mise 只能管到它自己装的东西。它永远不会知道 `D:\nodejs`、conda 的 Python、
-或者 PyCharm 里的 JDK。**纳管层和存量层必须分开看**，只做前者会让人误以为
+mise 只能管到它自己装的东西。它永远不会知道 `<系统盘>:\nodejs`、conda 的 Python、
+或者 IDE 自带的 JDK。**纳管层和存量层必须分开看**，只做前者会让人误以为
 盘点已经完整了。
 
 **为什么 census 用定向探测而不是全盘遍历。**
-早期版本用带通配符的目录遍历，实测耗时 116 秒（其中 101 秒花在目录枚举上）。
-改成"枚举一层子目录 + 对每个目录做存在性检查"之后降到 7.7 秒。
-一次 `stat` 比一次目录枚举便宜一到两个数量级。
+一次 `stat` 比一次目录枚举便宜一到两个数量级。改成"枚举一层子目录 + 对每个位置做
+存在性检查"之后，实测从两分钟级别降到十秒以内。代价是只能覆盖已知的安装布局，
+装在完全非标准位置的运行时需要靠 `-Deep` 兜底。
 
 **为什么 bootstrap 默认不写 shell 启动文件。**
 写激活行能让 `cd` 进项目时自动切版本，体验更好，但那是在改用户的 shell 配置。

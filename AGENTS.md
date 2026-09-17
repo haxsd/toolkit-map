@@ -93,7 +93,7 @@ Windows 上 `WindowsApps\python3.exe` 是 **0 字节的商店应用别名存根*
 
 PATH 是有序列表，同名命令只有第一个生效。所以：
 
-- `D:\nodejs` 排在前面 → 装在别处的 Node 22 永远不会被 `node` 找到
+- `<系统盘>:\nodejs` 排在前面 → 装在别处的 Node 22 永远不会被 `node` 找到
 - 装了 7 个 JDK → `java` 只会是其中 1 个
 
 **PATH 单值不是缺陷，是它的本性**。正确做法是让 PATH 里的那一个位置指向

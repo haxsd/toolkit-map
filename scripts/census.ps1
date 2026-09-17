@@ -627,7 +627,7 @@ function Get-CandidateRoots {
     }
 
     # --- 自定义目录：PATH 上的目录及其父目录 ---
-    # PATH 目录本身可能就是一个运行时安装（如 D:\nodejs）；
+    # PATH 目录本身可能就是一个运行时安装（如 <系统盘>:\nodejs）；
     # 它的父目录则能捕捉 "tools\bin 在 PATH 上、运行时实际在 tools\node22" 这类自定义约定。
     # 刻意排除盘符根目录，否则会退化成全盘扫描（实测慢上百倍）。
     foreach ($dir in (Get-PathDirs)) {
@@ -665,8 +665,8 @@ function Get-UnmanagedRecords {
         }
 
         # 第 2 层：直接子目录。覆盖两类布局——
-        #     nvm\v20.11.0\node.exe        版本号目录
-        #     D:\pycharm\PyCharm 2026.2\jbr\bin\java.exe    IDE 安装目录
+        #     nvm\v20.11.0\node.exe                       版本号目录
+        #     <安装位置>\PyCharm 2026.2\jbr\bin\java.exe    IDE 安装目录
         foreach ($sub in (Get-SubDirectories $root)) {
             foreach ($rel in $script:ProbeRelatives) {
                 & $tryAdd (Join-Path $sub $rel) $root
