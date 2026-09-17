@@ -15,6 +15,7 @@ set -uo pipefail
 DRY_RUN=0
 NO_RC=0
 SKIP_TOOLS=0
+TOOLS_ROOT=""
 CONFIG_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/mise/config.toml"
 
 while [ $# -gt 0 ]; do
@@ -23,10 +24,15 @@ while [ $# -gt 0 ]; do
     --no-rc)      NO_RC=1; shift ;;
     --skip-tools) SKIP_TOOLS=1; shift ;;
     --config)     CONFIG_SOURCE="$2"; shift 2 ;;
+    --tools-root) TOOLS_ROOT="$2"; shift 2 ;;
     -h|--help)    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 2 ;;
   esac
 done
+
+# 规范根：非托管的手装运行时的落脚点，按 <工具>/<版本>/ 排列。
+# 优先级：命令行参数 > 环境变量 TOOLCHAIN_ROOT > 默认 ~/toolchains。
+[ -n "$TOOLS_ROOT" ] || TOOLS_ROOT="${TOOLCHAIN_ROOT:-$HOME/toolchains}"
 
 step()    { printf '\n==> %s\n' "$1"; }
 ok()      { printf '    [完成] %s\n' "$1"; }
@@ -122,6 +128,27 @@ else
     cp "$CONFIG_SOURCE" "$MISE_CONFIG_FILE"
     ok '机器声明已就位'
   fi
+fi
+
+# ============================================================
+# 步骤：建立规范根
+# ============================================================
+step '建立规范根'
+
+# 规范根是非托管运行时的落脚点。它刻意不进 PATH——PATH 里只应该有 mise 的
+# shims 那一个工具链条目，加多了就会回到"多个版本争同一个名字"的老问题。
+# 约定本身写在 AGENTS.md 规则 5 与 SKILL.md 里，census 的 [STRAY] 告警负责检查。
+ok "规范根: $TOOLS_ROOT"
+
+if [ -d "$TOOLS_ROOT" ]; then
+  skip '目录已存在'
+else
+  run_action "创建 $TOOLS_ROOT" mkdir -p "$TOOLS_ROOT"
+  done_msg '已创建'
+fi
+if [ "$DRY_RUN" -eq 0 ]; then
+  warn '今后手工安装的运行时请放在 <工具>/<版本>/ 子目录下（如 node/22.23.2）'
+  warn '已经装在别处的运行时不要迁移——路径可能被项目配置写死，改成登记到声明文件'
 fi
 
 # ============================================================

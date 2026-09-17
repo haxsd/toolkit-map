@@ -80,12 +80,13 @@ version manager on top:
 ./scripts/bootstrap.sh
 ```
 
-bootstrap does four things, all idempotent:
+bootstrap does five things, all idempotent:
 
 1. Installs [mise](https://mise.jdx.dev) (winget → scoop → choco → npm; `mise.run` → brew on Unix)
 2. Writes `mise/config.toml` as the global machine manifest (backing up any existing file)
-3. Adds mise's shims directory to the **user-level** PATH
-4. Runs `mise install` to fetch the declared runtimes
+3. Creates the canonical root for hand-installed runtimes (`~/toolchains`, override with `TOOLCHAIN_ROOT` or `-ToolsRoot` / `--tools-root`)
+4. Adds mise's shims directory to the **user-level** PATH
+5. Runs `mise install` to fetch the declared runtimes
 
 What it deliberately does **not** do: touch machine-level environment variables, delete
 existing PATH entries, or modify runtimes bundled with your IDE.

@@ -75,12 +75,13 @@ census 逐类盘点，把「用哪个」和「有哪些」两个问题分开回�
 ./scripts/bootstrap.sh
 ```
 
-bootstrap 做四件事，全部幂等：
+bootstrap 做五件事，全部幂等：
 
 1. 安装 [mise](https://mise.jdx.dev)（winget → scoop → choco → npm，Unix 上是 `mise.run` → brew）
 2. 把 `mise/config.toml` 写成全局机器声明（覆盖前自动备份）
-3. 把 mise 的 shims 目录加入**用户级** PATH
-4. 执行 `mise install` 拉取声明的运行时
+3. 建立非托管运行时的规范根（`~/toolchains`，可用 `TOOLCHAIN_ROOT` 或 `-ToolsRoot` / `--tools-root` 覆盖）
+4. 把 mise 的 shims 目录加入**用户级** PATH
+5. 执行 `mise install` 拉取声明的运行时
 
 它刻意不做：不动机器级环境变量、不删你已有的 PATH 条目、不碰 IDE 自带的运行时。
 

@@ -43,7 +43,8 @@ param(
     [switch]$DryRun,
     [switch]$SkipTools,
     [switch]$NoProfile,
-    [string]$ConfigSource = ''
+    [string]$ConfigSource = '',
+    [string]$ToolsRoot = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -82,6 +83,11 @@ $MiseConfigFile = Join-Path $MiseConfigDir 'config.toml'
 if (-not $ConfigSource) {
     $ConfigSource = Join-Path (Split-Path $PSScriptRoot -Parent) 'mise\config.toml'
 }
+
+# 规范根：非托管的手装运行时的落脚点，按 <工具>/<版本>/ 排列。
+# 优先级：命令行参数 > 环境变量 TOOLCHAIN_ROOT > 默认 ~/toolchains。
+if (-not $ToolsRoot) { $ToolsRoot = $env:TOOLCHAIN_ROOT }
+if (-not $ToolsRoot) { $ToolsRoot = Join-Path $env:USERPROFILE 'toolchains' }
 
 Write-Host ''
 Write-Host ' 工具链引导脚本 bootstrap.ps1' -ForegroundColor White
@@ -173,6 +179,29 @@ if (-not (Test-Path -LiteralPath $ConfigSource)) {
         Copy-Item -LiteralPath $ConfigSource -Destination $MiseConfigFile -Force
     }
     Write-Done '机器声明已就位'
+}
+
+# ============================================================
+# 步骤：建立规范根
+# ============================================================
+Write-Step '建立规范根'
+
+# 规范根是非托管运行时的落脚点。它刻意不进 PATH——PATH 里只应该有 mise 的
+# shims 那一个工具链条目，加多了就会回到"多个版本争同一个名字"的老问题。
+# 约定本身写在 AGENTS.md 规则 5 与 SKILL.md 里，census 的 [STRAY] 告警负责检查。
+Write-Ok "规范根: $ToolsRoot"
+
+if (Test-Path -LiteralPath $ToolsRoot) {
+    Write-Skip '目录已存在'
+} else {
+    Invoke-Action "创建 $ToolsRoot" {
+        New-Item -ItemType Directory -Force -Path $ToolsRoot | Out-Null
+    }
+    Write-Done '已创建'
+}
+if (-not $DryRun) {
+    Write-Warn2 '今后手工安装的运行时请放在 <工具>/<版本>/ 子目录下（如 node/22.23.2）'
+    Write-Warn2 '已经装在别处的运行时不要迁移——路径可能被项目配置写死，改成登记到声明文件'
 }
 
 # ============================================================
