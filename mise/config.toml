@@ -1,0 +1,44 @@
+# ============================================================================
+# 全局机器声明 —— 这台机器想要哪些工具链
+# ============================================================================
+#
+# 放置位置：
+#   Windows : %USERPROFILE%\.config\mise\config.toml
+#   macOS   : ~/.config/mise/config.toml
+#   Linux   : ~/.config/mise/config.toml
+#
+# 作用：这是"机器层"的声明。新机器上装好 mise 后执行一次 `mise install`，
+#       这里列出的全部运行时都会被拉取到位，不需要手工一个个装。
+#
+# 与项目声明的分工：
+#   本文件     —— 这台机器上"想要有哪些版本可用"（可用集合）
+#   项目 mise.toml / .tool-versions —— 某个项目"必须用哪一个"（选择结果）
+#
+# 只列出你确实需要的版本。每多一个版本就多一份磁盘占用和升级负担。
+
+[tools]
+# Node.js：保留旧版本是因为老项目锁死了版本；新版本给新项目用。
+# 具体某个项目用哪个，由项目自己的 .tool-versions 决定。
+node = ["22", "20"]
+
+# Python：交给 uv 后端拉取官方预编译版本，比系统包管理器干净得多。
+python = ["3.12", "3.13"]
+
+# Java：用 Temurin 发行版。注意 IDE 自带的 JBR（JetBrains Runtime）不受这里管理，
+# 它属于 IDE 的一部分，census 会把它单独标为"IDE 内置"。
+java = ["temurin-21"]
+
+# 其它按需打开。开启后 `mise install` 会自动拉取。
+# go     = ["1.23"]
+# rust   = ["stable"]
+# deno   = ["latest"]
+# bun    = ["latest"]
+
+[settings]
+# 允许 mise 在执行命令前自动检查自身更新，保持解析规则与上游仓库同步。
+# mise 需要连接大量外部 registry，长期不更新容易遇到安装失败。
+auto_update = true
+
+# 让 mise 在切换目录时打印变更信息，便于确认"以为切了其实没切"这类问题。
+# 如果觉得吵，改成 false。
+not_found_auto_install = false

@@ -1,0 +1,42 @@
+# ============================================================================
+# 项目级工具链声明（推荐格式）
+# ============================================================================
+#
+# 放在项目根目录，文件名 mise.toml 或 .mise.toml。
+#
+# 为什么用这个而不是各语言自己的文件：
+#   mise.toml 一个文件就能覆盖 Node / Python / Java / Go / Rust 全部语言，
+#   而 .nvmrc 只管 Node、.python-version 只管 Python，语言一多就要维护一堆文件。
+#   更重要的是：它的语义是公开约定，任何 agent、任何 harness 都读得懂，
+#   不需要先探测"这台机器上有什么"就能知道"这个项目要什么"。
+#
+# 用法：
+#   mise trust      # 首次使用需要授权读取本文件（安全机制）
+#   mise install    # 把声明的版本装到位
+#   mise exec -- node -v      # 按声明执行单条命令，零全局状态
+#   mise run dev              # 执行下面 [tasks] 里定义的任务
+#
+# 关键原则：agent 应该优先用 `mise exec -- <命令>` 而不是改全局 PATH。
+# 一次性的激活不会污染机器状态，也不会影响正在运行的其它项目。
+
+[tools]
+# 只写主版本号可以让同项目成员各自拿到该主版本下的最新补丁，
+# 写全版本号（如 "22.23.2"）则适合需要严格复现的场景。
+node   = "22"
+python = "3.12"
+
+# 生产环境需要严格一致的依赖，可以配合 lockfile：
+#   mise lock    # 生成 mise.lock，钉住精确版本与校验和
+
+[env]
+# 直接在这里声明环境变量，避免每个成员自己 export，也避免 agent 猜。
+NODE_ENV = "development"
+
+[tasks]
+# 任务定义。agent 可以直接 `mise run test`，不需要知道项目用的是 npm 还是 pnpm。
+test = "npm test"
+lint = "npm run lint"
+build = "npm run build"
+
+# 需要跨语言组合的任务也能写在一起
+check = { depends = ["lint", "test"] }
