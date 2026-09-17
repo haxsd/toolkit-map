@@ -1,6 +1,6 @@
 ---
 name: runtime-census
-description: "盘点和管理本机的工具链：任意工具（语言运行时、编译器、CLI、逆向与渗透工具）装了几份、分别在哪、哪一份会被解析到，以及声明与实际是否漂移。当需要回答这台机器上到底装了哪些工具与版本、发现某个命令的行为与预期不符、遇到某个项目需要旧版本而新版本看不见、要在项目里锁定版本、要在一台新机器上一次性配好工具链，或开工前做环境预检时使用。Use when asked which tools or runtime versions are installed on this machine, when a command resolves to the wrong version (e.g. only Node 16 is visible while a project needs 22), when pinning per-project tool versions, when auditing a dirty machine, or when setting up a machine's toolchain declaratively."
+description: "盘点和管理本机的工具链：任意工具（语言运行时、编译器、CLI、逆向与渗透工具）装了几份、分别在哪、哪一份会被解析到，以及声明与实际是否漂移。当需要回答这台机器上到底装了哪些工具与版本、发现某个命令的行为与预期不符、遇到某个项目需要旧版本而新版本看不见、要在项目里锁定版本、要在一台新机器上一次性配好工具链，或动手前确认自己将要调用的命令实际会是哪个版本时使用。Use when asked which tools or runtime versions are installed on this machine, when a command resolves to the wrong version (e.g. only Node 16 is visible while a project needs 22), when pinning per-project tool versions, when auditing a dirty machine, or when setting up a machine's toolchain declaratively."
 license: MIT
 metadata:
   version: 0.1.0

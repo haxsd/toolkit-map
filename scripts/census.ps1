@@ -424,6 +424,39 @@ function Get-FirstLine {
     }
 }
 
+# 运行一个命令并在超时后放弃，返回 stdout 文本；超时或失败返回空串。
+# 为什么需要它：census 是只读诊断工具，不能跟着别的进程一起卡死。实测踩过——
+# mise 会因为陈旧的锁或联网自检无限等待，而 census 里的 `mise ls` 就会一直挂着。
+# 顺带把 MISE_AUTO_UPDATE 关掉：诊断不该等着检查更新，结果也才可复现。
+function Invoke-CaptureWithTimeout {
+    param([string]$Exe, [string[]]$Arguments, [int]$TimeoutMs = 20000)
+    $cmd = Get-Command $Exe -ErrorAction SilentlyContinue
+    if (-not $cmd) { return '' }
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $cmd.Source
+        $psi.Arguments = ($Arguments | ForEach-Object {
+            if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+        }) -join ' '
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError  = $true
+        $psi.UseShellExecute        = $false
+        $psi.CreateNoWindow         = $true
+        $psi.EnvironmentVariables['MISE_AUTO_UPDATE'] = '0'
+
+        $p  = [System.Diagnostics.Process]::Start($psi)
+        $so = $p.StandardOutput.ReadToEndAsync()
+        $se = $p.StandardError.ReadToEndAsync()   # 必须同时读两个流，否则管道写满会死锁
+        if (-not $p.WaitForExit($TimeoutMs)) {
+            try { $p.Kill() } catch { }
+            return ''
+        }
+        return $so.Result
+    } catch {
+        return ''
+    }
+}
+
 # 判断文件是不是"真的可执行"。
 # 这里只做静态判断（存在、不是目录、长度大于 0），用于筛选"运行时二进制"这类文件。
 # 注意它不能用来判断 WindowsApps 下的商店应用别名——见 Test-AliasExecutable。
@@ -817,7 +850,8 @@ function Get-MiseManaged {
 
     $raw = ''
     try {
-        $raw = (& mise ls --json 2>$null | Out-String).Trim()
+        # 带超时 + 关掉联网自检：mise 卡住时不能把 census 一起挂住
+        $raw = (Invoke-CaptureWithTimeout -Exe 'mise' -Arguments @('ls', '--json') -TimeoutMs 20000).Trim()
     } catch { $raw = '' }
 
     if ([string]::IsNullOrWhiteSpace($raw)) {

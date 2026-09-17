@@ -21,6 +21,8 @@ on:
 jobs:
   windows:
     runs-on: windows-latest
+    # 测试内部对每个子进程都有超时保护，这里再兜一道：宁可快速失败，也不要长期占着 runner
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v5
       # 用 Windows PowerShell 5.1（系统自带）跑，因为这是 Windows 上最常见的宿主；
@@ -40,6 +42,7 @@ jobs:
 
   ubuntu:
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v5
       - name: shell 语法检查

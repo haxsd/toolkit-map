@@ -325,6 +325,29 @@ is_real() {
   [ -f "$1" ] && [ -s "$1" ] && [ -x "$1" ]
 }
 
+# 带超时地运行命令并捕获 stdout。
+# 为什么需要它：census 是只读诊断工具，不能跟着别的进程卡死——实测 mise 会因为
+# 陈旧的锁或联网自检无限等待，`mise ls` 一挂，整份报告就出不来。
+# 优先用 coreutils 的 timeout；macOS 默认没有它，退回到"后台进程 + 看门狗"。
+# 顺带把 MISE_AUTO_UPDATE 关掉：诊断不该等着检查更新，结果才可复现。
+run_with_timeout() {
+  local secs="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then
+    MISE_AUTO_UPDATE=0 timeout "$secs" "$@" 2>/dev/null
+    return 0
+  fi
+  local out_file pid wd
+  out_file="${TMPDIR:-/tmp}/census-cmd-$$.out"
+  MISE_AUTO_UPDATE=0 "$@" >"$out_file" 2>/dev/null &
+  pid=$!
+  ( sleep "$secs"; kill "$pid" 2>/dev/null ) 2>/dev/null &
+  wd=$!
+  wait "$pid" 2>/dev/null
+  kill "$wd" 2>/dev/null
+  cat "$out_file" 2>/dev/null
+  rm -f "$out_file"
+}
+
 # ---------- 声明文件读取（供漂移 / 缺失 / 遮罩三类告警共用）----------
 
 # 去掉可能的 UTF-8 BOM。用 tr 而不是 awk 的 \x 转义：
@@ -475,7 +498,7 @@ MISE_AVAILABLE=0
 MISE_TOOLS=""
 if command -v mise >/dev/null 2>&1; then
   MISE_AVAILABLE=1
-  MISE_TOOLS="$(mise ls 2>/dev/null || true)"
+  MISE_TOOLS="$(run_with_timeout 20 mise ls)"
 fi
 tick '2. mise 纳管层'
 

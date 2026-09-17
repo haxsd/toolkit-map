@@ -53,8 +53,12 @@ printf '#!/bin/sh\necho v22.23.2\n' > "$FX/bin/node22"; chmod +x "$FX/bin/node22
 printf '#!/bin/sh\necho v18.0.0\n' > "$FX/rt1/bin/node"; chmod +x "$FX/rt1/bin/node"
 printf '#!/bin/sh\necho v19.0.0\n' > "$FX/rt2/bin/node"; chmod +x "$FX/rt2/bin/node"
 
-# 受控 PATH：重复的 $FX/bin 触发 PATH_DIRT；mise 若存在则一并纳入，便于覆盖 PATH_ORDER
-MISE_BIN="${MISE_BIN:-$HOME/.local/share/mise/shims}"
+# 受控 PATH：重复的 $FX/bin 触发 PATH_DIRT。
+# 这里【刻意不包含真实的 mise】：测试不应该依赖开发机上的 mise 状态——实测踩过，
+# 本机 mise 一旦卡住（陈旧锁），会调用 mise 的 census 会一起挂住，测试白等十几分钟。
+# 想顺带覆盖 mise 相关告警时，用环境变量显式指一个可用的 shims 目录：
+#   MISE_BIN=/path/to/mise/shims bash tests/smoke.sh
+MISE_BIN="${MISE_BIN:-$FX/__no_mise_here__}"
 export PATH="$FX/bin:$FX/bin:$MISE_BIN:/usr/bin:/bin"
 export HOME="$FX/home"
 export XDG_CONFIG_HOME="$FX/home"    # 同时触发 XDG_SHIFT，并统一两个实现的部署路径口径

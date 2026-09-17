@@ -84,11 +84,12 @@ $fxMsys = ConvertTo-MsysPath $fx
 & $bash -c "printf '#!/bin/sh\necho v22.23.2\n' > '$fxMsys/bin/node22' && chmod +x '$fxMsys/bin/node22' '$fxMsys/rt1/bin/node.exe' '$fxMsys/rt2/bin/node.exe'"
 
 # ---------- 受控环境 ----------
-# PATH 只留沙箱需要的东西：两个实现必须看同一个世界，否则本机装了什么会污染结论。
-$miseBin = (Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Filter 'bin' -Recurse -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match 'mise' } | Select-Object -First 1).FullName
-$miseShims = Join-Path $env:LOCALAPPDATA 'mise\shims'
-$fixturePath = @("$fx\bin", "$fx\bin", $gitUsrBin, $miseShims, $miseBin) |
+# PATH 只留沙箱需要的东西，而且【刻意不含 mise】：两个实现必须看同一个世界，
+# 测试也不该依赖开发机上的 mise 状态——实测踩过：本机 mise 一旦卡住（陈旧锁），
+# 会调用 mise 的 census 就会一起挂住，测试白等十几分钟。要覆盖 mise 相关告警时
+# 再显式把它加进来（见 tests/smoke.sh 的 MISE_BIN 说明）。
+$gitUsrBin = Join-Path $gitRoot 'usr\bin'
+$fixturePath = @("$fx\bin", "$fx\bin", $gitUsrBin) |
                Where-Object { $_ -and (Test-Path -LiteralPath $_) }
 $env:PATH             = ($fixturePath -join ';')   # 重复的 $fx\bin 触发 PATH_DIRT
 $env:USERPROFILE      = "$fx\home"                 # census.ps1 认这个
@@ -120,12 +121,31 @@ function Check {
     }
 }
 
+# 带超时地跑子进程：一旦哪个工具卡住（实测 mise 会因为陈旧的锁无限等待），
+# 测试要快速失败并说清原因，而不是把 CI 挂到超时上限。
+# 刻意不用 Start-Job：这个测试会把 LOCALAPPDATA 指进沙箱，而 PowerShell 的作业
+# 基础设施要往那里写状态，Receive-Job 会报 "The Persistence Path does not exist"。
+# Start-Process + WaitForExit(毫秒) 不依赖任何外部状态，正好。
+function Invoke-Bounded {
+    param([string]$Exe, [string[]]$Arguments, [int]$TimeoutSec = 300, [string]$Tag = 'cmd')
+    $outFile = Join-Path $fx "$Tag.out.txt"
+    $errFile = Join-Path $fx "$Tag.err.txt"
+    $p = Start-Process -FilePath $Exe -ArgumentList $Arguments -NoNewWindow -PassThru `
+                       -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+    if (-not $p.WaitForExit($TimeoutSec * 1000)) {
+        try { $p.Kill() } catch { }
+        Write-Host "  [注意] 子进程超过 $TimeoutSec 秒仍未返回，已终止：$Exe" -ForegroundColor Yellow
+        return ''
+    }
+    return (Get-Content -LiteralPath $outFile -Raw -ErrorAction SilentlyContinue)
+}
+
 # 子进程一律在沙箱目录里跑：即使有工具想往"当前目录"写缓存，也只会写进沙箱。
 Push-Location $fx
 try {
     # ---------- 跑两个实现 ----------
-    $ps1Json = & $psExe -NoProfile -ExecutionPolicy Bypass -File $censusPs1 -Json 2>$null | Out-String
-    $shJson  = & $bash $censusSh --json 2>$null | Out-String
+    $ps1Json = Invoke-Bounded -Exe $psExe -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $censusPs1, '-Json') -Tag 'ps1'
+    $shJson  = Invoke-Bounded -Exe $bash  -Arguments @($censusSh, '--json') -Tag 'sh'
 
     try { $ps1 = $ps1Json | ConvertFrom-Json } catch { $ps1 = $null }
     try { $sh  = $shJson  | ConvertFrom-Json } catch { $sh  = $null }
@@ -160,10 +180,10 @@ foreach ($impl in @(@{ Name = 'census.ps1'; Data = $ps1 }, @{ Name = 'census.sh'
 }
 
     # ---------- 双语与 JSON 契约 ----------
-    $enOut = & $psExe -NoProfile -ExecutionPolicy Bypass -File $censusPs1 -Lang en 2>$null | Out-String
+    $enOut = Invoke-Bounded -Exe $psExe -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $censusPs1, '-Lang', 'en') -TimeoutSec 120 -Tag 'ps1-en'
     Check 'census.ps1 -Lang en 输出英文标题' ($enOut -match '6\. Warnings — things that need a human decision')
     Check 'census.ps1 -Lang en 输出英文告警' ($enOut -match '\[(DRIFT|MISSING|CONVENTION|PATH_DIRT)\] \S')
-    $enOutSh = & $bash $censusSh --lang en 2>$null | Out-String
+    $enOutSh = Invoke-Bounded -Exe $bash -Arguments @($censusSh, '--lang', 'en') -TimeoutSec 120 -Tag 'sh-en'
     Check 'census.sh --lang en 输出英文标题' ($enOutSh -match '6\. Warnings — things that need a human decision')
 
     # JSON 契约：两边都要有 schemaVersion 与同一组顶层字段（跨平台消费的前提）

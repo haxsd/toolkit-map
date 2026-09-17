@@ -249,10 +249,10 @@ git clone https://github.com/haxsd/runtime-census ~/Projects/runtime-census
 ln -s ~/Projects/runtime-census ~/.cursor/skills/runtime-census
 ```
 
-装好之后，提到「这台机器上有哪些 Node / Python / Java 版本」或遇到版本不符预期，
+装好之后，提到「这台机器上有哪些工具和版本」或「这个命令为什么解析到了错的版本」，
 agent 会自动加载它。
 
-`AGENTS.md` 是配套的**发现契约**，写清了 agent 在判断运行时可用性时必须遵守的
+`AGENTS.md` 是配套的**发现契约**，写清了 agent 在判断工具可用性时必须遵守的
 规则。可以单独拷进你自己项目的规则文件，不依赖本仓库。
 
 ## 平台注意事项
@@ -276,6 +276,9 @@ agent 会自动加载它。
   9009。但 0 字节**不等于一定坏**：`pwsh.exe` 和 `winget.exe` 同样是 0 字节别名，
   却能正常执行，因为目标应用装了。文件长度只说明"可疑"，要确认必须真跑一次版本
   命令看有没有输出。
+- **ZIP 下载会丢可执行位（Linux/macOS）**：GitHub 打包的 ZIP 不带文件模式，解压后
+  `./scripts/census.sh` 会报 `Permission denied`（仓库里它是标记为可执行的）。要么改用
+  clone，要么解压后执行一次 `chmod +x scripts/*.sh`。
 - **在 Windows 上验证 .sh 脚本**：PATH 里的 `bash` 通常是
   `C:\WINDOWS\system32\bash.exe`，也就是 WSL 的转发壳；没装发行版时它会报
   `execvpe(/bin/bash) failed: No such file or directory`，看起来像脚本语法错误，

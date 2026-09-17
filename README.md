@@ -266,11 +266,12 @@ git clone https://github.com/haxsd/runtime-census ~/Projects/runtime-census
 ln -s ~/Projects/runtime-census ~/.cursor/skills/runtime-census
 ```
 
-Once installed, asking "which Node / Python / Java versions are on this machine", or
-hitting an unexpected version mismatch, will load it automatically.
+Once installed, asking "which tools and versions are on this machine" or "why does this
+command resolve to the wrong version", or hitting an unexpected version mismatch, will
+load it automatically.
 
 `AGENTS.md` is the companion **discovery contract** — the rules an agent must follow
-when judging runtime availability. Copy it into your own project's rules file; it works
+when judging tool availability. Copy it into your own project's rules file; it works
 standalone.
 
 ## Platform notes
@@ -304,6 +305,10 @@ standalone.
   in your script but is not. Run `.\scripts\verify-shell.ps1`: it finds a real bash (Git
   Bash, otherwise a `bash` container) and runs `bash -n` over every `.sh` — parse only,
   never execute.
+- **ZIP downloads lose the executable bit (Linux/macOS)**: GitHub's ZIP archive does not
+  carry file modes, so `./scripts/census.sh` fails with `Permission denied` even though the
+  repository has it marked executable. Either clone instead, or run `chmod +x scripts/*.sh`
+  once after unpacking.
 - **The PowerShell 5.1 `@()` trap**: `@($list)` on a `List[object]` throws
   `Argument types do not match` — use `$list.ToArray()`. If the script also sets
   `$ErrorActionPreference = 'SilentlyContinue'`, the error is swallowed entirely and only
