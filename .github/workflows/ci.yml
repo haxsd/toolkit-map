@@ -1,0 +1,35 @@
+name: CI
+
+# 只做三件事，都是"防止两份实现悄悄漂移"必须的：
+#   windows —— 在同一沙箱里同时跑 census.ps1（Windows PowerShell 5.1）与 census.sh，
+#              断言两边都发现了沙箱里埋的同一批雷（tests/parity.ps1）
+#   ubuntu  —— 在真 bash 下跑 census.sh 的冒烟测试，并给所有 .sh 做 bash -n
+# 不做的：不跑 bootstrap（它会真的改机器：写 PATH、写 profile、下载运行时）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 用 Windows PowerShell 5.1（系统自带）跑，因为这是 Windows 上最常见的宿主；
+      # parity.ps1 自己会去找 Git Bash（windows-latest 自带）来跑 shell 版。
+      - name: 一致性测试（census.ps1 vs census.sh）
+        shell: powershell
+        run: .\tests\parity.ps1
+
+  ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shell 语法检查
+        run: |
+          for f in scripts/*.sh tests/*.sh; do
+            bash -n "$f" || exit 1
+          done
+      - name: 冒烟测试（census.sh）
+        run: bash tests/smoke.sh

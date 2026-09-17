@@ -1,5 +1,8 @@
 [中文](README.zh-CN.md) ｜ **English**
 
+[![CI](https://github.com/haxsd/runtime-census/actions/workflows/ci.yml/badge.svg)](https://github.com/haxsd/runtime-census/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 # runtime-census
 
 Find every language runtime that **actually exists** on this machine, and manage them declaratively.
@@ -28,7 +31,8 @@ cd runtime-census
 > internet and PowerShell refuses to run them. Unblock once:
 > `Get-ChildItem -Recurse | Unblock-File`
 
-You get a full inventory in under ten seconds. Excerpt:
+A full run takes a few seconds on a lean PATH and up to about half a minute on a Windows
+PATH with thousands of entries — `--timing` prints the per-stage cost. Excerpt:
 
 ```
  4. Runtime inventory — everything present on disk, managed or not
@@ -95,6 +99,21 @@ bootstrap does five things, all idempotent:
 What it deliberately does **not** do: touch machine-level environment variables, delete
 existing PATH entries, or modify runtimes bundled with your IDE.
 
+### Read-only audit vs. side-effecting apply
+
+`census` never writes anything — treat it as the default entry point. `bootstrap` is the
+opposite: it changes machine state on purpose, so start with `-DryRun` / `--dry-run` and
+read the plan before running it for real.
+
+| `bootstrap` changes | How to undo |
+|---|---|
+| Installs mise (winget → scoop → choco → npm; `mise.run` → brew) | Uninstall it with the same package manager |
+| Writes the machine manifest `~/.config/mise/config.toml` | A `config.toml.bak-<timestamp>` backup is kept next to it; delete the file to leave no machine manifest |
+| Moves mise's shims to the front of the **user-level** PATH | Remove that entry in *Edit environment variables for your account*, then reopen terminals |
+| Appends the activation line to PowerShell profiles (both hosts when `pwsh` exists) | Delete the two lines marked `runtime-census` in those profile files |
+| Runs `mise install` (downloads the declared runtimes) | `mise uninstall <tool>@<version>`; versions that were already there are untouched |
+| — | It never touches machine-level environment variables, never deletes PATH entries, never modifies IDE-bundled runtimes |
+
 ## Declaring versions in a project
 
 ```toml
@@ -133,9 +152,29 @@ Both implementations take the same flags. `census.ps1` accepts one or two dashes
 | Flag | Description |
 |---|---|
 | *(none)* | Human-readable report |
-| `--json` | JSON output for programs and agents — includes `warnings` and `timings` arrays |
-| `--deep` | Also scan common install roots (slower) |
+| `--json` | JSON output for programs and agents — schema described below |
+| `--deep` | Also scan common install roots (bounded depth 4, capped results; slower) |
 | `--timing` | Per-stage timings |
+| `-Lang en` / `--lang en` | English output (also via `CENSUS_LANG`); default `zh` |
+
+### JSON output
+
+`--json` prints one object; both implementations emit the **same schema** (checked by
+`tests/parity.ps1` in CI) so an agent or CI job does not need a per-platform parser:
+
+| Field | Contents |
+|---|---|
+| `schemaVersion` | `1` — bumped when the field set or semantics change |
+| `generatedAt`, `host` | Timestamp and `{os, arch, user, cwd}` |
+| `declarations` | Every `mise.toml` / `.tool-versions` found: `{scope, path, tools}` |
+| `toolsRoot` | Canonical root for hand-installed runtimes |
+| `mise` | `{available, tools[]}` for the managed layer |
+| `conventions`, `runtimes`, `resolution` | The inventory stages, same fields on both platforms |
+| `warnings` | `[{kind, tool, message, action, detail}]` — `kind` is a stable ASCII code |
+| `timings`, `summary` | Per-stage milliseconds (with `--timing`) and counts |
+
+`kind` codes (`STUB`, `PATH_ORDER`, `DRIFT`, …) never change with the language; `message`
+and `action` follow `--lang`.
 
 It inventories in five stages:
 
@@ -282,9 +321,11 @@ per project and more friction sharing the host filesystem. This project's goal i
 
 **Isn't a directory scan slow?**
 census uses targeted probing rather than a full walk — one `stat` is one to two orders of
-magnitude cheaper than a directory enumeration, and a full run finishes in under ten
-seconds. The trade-off is that it only covers known install layouts; unusual locations
-need `--deep`.
+magnitude cheaper than a directory enumeration. What it does cost is spawning processes
+for the things it *does* find, so a run takes a few seconds on a small PATH and up to
+about half a minute on a Windows PATH with thousands of entries; `--timing` shows where
+the time goes. The trade-off is that it only covers known install layouts — unusual
+locations need `--deep` (bounded: depth 4, results capped), which is the slow path.
 
 ## Known limitations
 

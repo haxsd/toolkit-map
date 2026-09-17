@@ -1,5 +1,8 @@
 **中文** ｜ [English](README.md)
 
+[![CI](https://github.com/haxsd/runtime-census/actions/workflows/ci.yml/badge.svg)](https://github.com/haxsd/runtime-census/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 # runtime-census
 
 找出这台机器上**真正存在**的语言运行时，并用声明式方式管理它们。
@@ -27,7 +30,8 @@ cd runtime-census
 > 用 ZIP 下载而不是 git clone 的：Windows 会给这些文件打上「来自网络」标记，
 > PowerShell 会拒绝执行。先解除一次即可：`Get-ChildItem -Recurse | Unblock-File`
 
-十秒以内输出一份清单。节选：
+在干净的 PATH 上是几秒钟，在 Windows 上 PATH 条目上千时可能到半分钟——`--timing`
+会打出各阶段耗时。节选：
 
 ```
  4. 运行时清单 —— 磁盘上实际存在的运行时（含纳管与未纳管）
@@ -88,6 +92,20 @@ bootstrap 做五件事，全部幂等：
 
 它刻意不做：不动机器级环境变量、不删你已有的 PATH 条目、不碰 IDE 自带的运行时。
 
+### 只读审计 vs 有副作用的落地
+
+`census` 不写任何东西，**默认先用它**；`bootstrap` 正相反，它刻意改机器状态，
+所以先跑 `-DryRun` / `--dry-run` 看清计划，确认后再真的执行。
+
+| `bootstrap` 改了什么 | 怎么撤销 |
+|---|---|
+| 安装 mise（winget → scoop → choco → npm；Unix 上是 `mise.run` → brew） | 用同一个包管理器卸载 |
+| 写入机器声明 `~/.config/mise/config.toml` | 同目录会留一份 `config.toml.bak-<时间戳>` 备份；删掉该文件就等于不再有机器声明 |
+| 把 mise 的 shims 移到**用户级** PATH 首位 | 在「编辑账户的环境变量」里删掉那一条，然后重开终端 |
+| 往 PowerShell profile 追加激活行（装了 pwsh 时两个宿主都写） | 删掉 profile 里带 `runtime-census` 注释的那两行 |
+| 执行 `mise install`（下载声明的运行时） | `mise uninstall <工具>@<版本>`；原本就有的版本不受影响 |
+| — | 它从不碰机器级环境变量、不删任何 PATH 条目、不改 IDE 自带的运行时 |
+
 ## 在项目里声明所需版本
 
 ```toml
@@ -123,9 +141,28 @@ mise exec -- npm test        # 一次性激活，不改全局状态
 | 参数 | 说明 |
 |---|---|
 | （无） | 人类可读报告 |
-| `--json` | JSON 输出，供程序或 agent 消费——含 `warnings` 与 `timings` 两个数组 |
-| `--deep` | 额外扫描盘上的常见安装根目录（较慢） |
+| `--json` | JSON 输出，供程序或 agent 消费——结构见下 |
+| `--deep` | 额外扫描常见安装根目录（有界：深度 4、结果条数封顶；较慢） |
 | `--timing` | 附带各阶段耗时 |
+| `-Lang en` / `--lang en` | 英文输出（也可用环境变量 `CENSUS_LANG`）；默认 `zh` |
+
+### JSON 输出
+
+`--json` 只输出一个对象，两个实现的**结构完全一致**（CI 里的 `tests/parity.ps1` 每次都会核对），
+所以 agent 或 CI 不需要为平台写两套解析逻辑：
+
+| 字段 | 内容 |
+|---|---|
+| `schemaVersion` | `1`——字段或语义变化时递增 |
+| `generatedAt`、`host` | 时间戳与 `{os, arch, user, cwd}` |
+| `declarations` | 找到的每个 `mise.toml` / `.tool-versions`：`{scope, path, tools}` |
+| `toolsRoot` | 非托管运行时的规范根 |
+| `mise` | 纳管层：`{available, tools[]}` |
+| `conventions`、`runtimes`、`resolution` | 三个盘点阶段，两个平台字段相同 |
+| `warnings` | `[{kind, tool, message, action, detail}]`——`kind` 是稳定的 ASCII 代码 |
+| `timings`、`summary` | 各阶段毫秒数（配合 `--timing`）与计数 |
+
+`kind` 代码（`STUB`、`PATH_ORDER`、`DRIFT` …）不随语言变化；`message` 与 `action` 跟随 `--lang`。
 
 它分五步盘点：
 
@@ -260,7 +297,9 @@ mise 只能管到它自己装的东西，它永远不会知道 `<系统盘>:\nod
 
 **census 会不会很慢？**
 用定向探测而不是全盘遍历 —— 一次 `stat` 比一次目录枚举便宜一到两个数量级，
-实测十秒以内。代价是只覆盖已知的安装布局，非常规位置需要 `--deep` 兜底。
+实测：干净的 PATH 上几秒，Windows 上 PATH 条目上千时到半分钟（`--timing` 会给出分解）。
+代价是只覆盖已知的安装布局，非常规位置需要 `--deep` 兜底——它是有界的深扫
+（深度 4、结果条数封顶），也是唯一明显慢的路径。
 
 ## 已知限制
 

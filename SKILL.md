@@ -55,7 +55,11 @@ metadata:
 <skill目录>/scripts/census.sh
 <skill目录>/scripts/census.sh --json
 <skill目录>/scripts/census.sh --timing
+<skill目录>/scripts/census.sh --lang en   # 英文输出（Windows 侧是 -Lang en）
 ```
+
+两个实现输出**同一套 JSON 结构**（`schemaVersion: 1`），所以 agent 不需要为平台写两套解析；
+CI 里的 `tests/parity.ps1` 每次都会在同一个沙箱里对两种实现各跑一遍，核对它们发现了同一批问题。
 
 输出六节：声明层 / mise 纳管层 / 命名约定层 / 运行时清单 / 解析层 / 告警。
 告警有这些，每一种都能直接转成行动：

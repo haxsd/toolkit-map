@@ -13,21 +13,29 @@
 #   ./census.sh --json       JSON 输出，供 agent 消费
 #   ./census.sh --deep       额外扫描常见安装根目录（较慢）
 #   ./census.sh --timing     附带各阶段耗时
+#   ./census.sh --lang en    英文输出（章节、告警与处置建议都是英文；默认 zh）
 #
 set -uo pipefail
 
 JSON=0
 DEEP=0
 TIMING=0
+OUT_LANG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --json) JSON=1; shift ;;
     --deep) DEEP=1; shift ;;
     --timing) TIMING=1; shift ;;
-    -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --lang) OUT_LANG="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 2 ;;
   esac
 done
+
+# 语言选择：--lang 参数 > 环境变量 CENSUS_LANG > 默认 zh。
+# 不要用 LANG 这个变量名——它是系统的 locale 变量，覆盖它会波及子进程。
+OUT_LANG="$(printf '%s' "${OUT_LANG:-${CENSUS_LANG:-zh}}" | tr 'A-Z' 'a-z')"
+case "$OUT_LANG" in zh|en) ;; *) OUT_LANG=zh ;; esac
 
 # 仓库内的相对路径（机器声明模板等）靠它定位，不能用当前工作目录推
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -47,6 +55,236 @@ json_escape() {
     | awk 'BEGIN{ORS="\\n"} {gsub(/\n/,"\\n")} 1' | sed 's/\\n$//'
 }
 
+# ============================================================
+# 语言与文案
+# ============================================================
+# 文案表用 TSV 形式（键@@语言@@文本）放在 here-doc 里，用 awk 按需查。
+# 刻意不用关联数组：macOS 自带的 /bin/bash 是 3.2，不支持 declare -A，
+# 而这个脚本承诺在 macOS 上开箱即用。
+catalog() {
+  cat <<'CATALOG'
+title@@zh@@运行时普查报告 (census)
+title@@en@@runtime-census report
+meta@@zh@@生成时间: {time}   主机: {user}@{arch}   当前目录: {cwd}
+meta@@en@@generated {time}   host {user}@{arch}   cwd {cwd}
+sec.decl@@zh@@1. 声明层 —— 谁在要求什么版本
+sec.decl@@en@@1. Declarations — who asks for which version
+sec.managed@@zh@@2. 纳管层 —— mise 管理的运行时
+sec.managed@@en@@2. Managed — runtimes that mise manages
+sec.conv@@zh@@3. 约定层 —— 带版本号的命名 shim（最容易失传的约定）
+sec.conv@@en@@3. Conventions — version-suffixed shims (the kind that gets lost)
+sec.inv@@zh@@4. 运行时清单 —— 磁盘上实际存在的运行时（含纳管与未纳管）
+sec.inv@@en@@4. Inventory — runtimes actually present on disk (managed or not)
+sec.res@@zh@@5. 解析层 —— 命令实际解析到哪
+sec.res@@en@@5. Resolution — what each command actually resolves to
+sec.warn@@zh@@6. 告警 —— 需要人工确认的问题
+sec.warn@@en@@6. Warnings — things that need a human decision
+sec.summary@@zh@@汇总
+sec.summary@@en@@Summary
+sec.timing@@zh@@性能分解 —— 各阶段耗时
+sec.timing@@en@@Timing — per-stage cost
+no.decl@@zh@@（未发现任何 mise.toml / .tool-versions 声明）
+no.decl@@en@@(no mise.toml / .tool-versions declarations found)
+no.mise@@zh@@mise 未安装（PATH 上找不到）。
+no.mise@@en@@mise is not installed (not found on PATH).
+no.managed@@zh@@mise 已安装，但尚未纳管任何运行时。
+no.managed@@en@@mise is installed but manages no runtimes yet.
+no.conv@@zh@@（未发现）
+no.conv@@en@@(none found)
+no.warn@@zh@@未发现问题。
+no.warn@@en@@No problems found.
+scope.global@@zh@@[全局]
+scope.global@@en@@[global]
+scope.project@@zh@@[项目]
+scope.project@@en@@[project]
+conv.line@@zh@@{shim} 名称声明 {declared} 实际 {actual} [{state}]
+conv.line@@en@@{shim} declares {declared}, actual {actual} [{state}]
+state.ok@@zh@@OK
+state.ok@@en@@OK
+state.bad@@zh@@不可用
+state.bad@@en@@not usable
+inv.count@@zh@@{tool}  共 {count} 个
+inv.count@@en@@{tool}  {count} found
+res.hits@@zh@@{command} -> {path}  ({version})  [{hits} 个 PATH 命中]
+res.hits@@en@@{command} -> {path}  ({version})  [{hits} PATH hits]
+res.line@@zh@@{command} -> {path}  ({version})
+res.line@@en@@{command} -> {path}  ({version})
+res.stub@@zh@@^ 警告：实测无法执行（应用执行别名的目标未安装，运行 --version 无输出、退出码 9009）
+res.stub@@en@@^ warning: cannot actually run (app-execution alias whose target app is missing; --version gives no output, exit 9009)
+sum.runtimes@@zh@@发现的运行时条目数: {count}
+sum.runtimes@@en@@Runtime files found: {count}
+sum.byTool@@zh@@{tool}  {count} 个版本: {versions}
+sum.byTool@@en@@{tool}  {count} versions: {versions}
+sum.placement@@zh@@位置分布: {text}
+sum.placement@@en@@Placement: {text}
+sum.root@@zh@@规范根:   {root}
+sum.root@@en@@Canonical root: {root}
+sum.warnings@@zh@@告警数量: {count}
+sum.warnings@@en@@Warnings: {count}
+timing.total@@zh@@合计
+timing.total@@en@@total
+lbl.托管@@zh@@托管
+lbl.托管@@en@@managed
+lbl.宿主@@zh@@宿主
+lbl.宿主@@en@@bundled with IDE
+lbl.公认@@zh@@公认
+lbl.公认@@en@@standard location
+lbl.规范根@@zh@@规范根
+lbl.规范根@@en@@canonical root
+lbl.游离@@zh@@游离
+lbl.游离@@en@@stray
+lbl.游离位置@@zh@@游离位置
+lbl.游离位置@@en@@stray location
+lbl.不可用@@zh@@不可用
+lbl.不可用@@en@@not usable
+lbl.系统安装@@zh@@系统安装
+lbl.系统安装@@en@@system install
+lbl.IDE 内置@@zh@@IDE 内置
+lbl.IDE 内置@@en@@bundled with IDE
+lbl.自定义位置@@zh@@自定义位置
+lbl.自定义位置@@en@@custom location
+lbl.版本管理器@@zh@@版本管理器
+lbl.版本管理器@@en@@version manager
+lbl.mise@@zh@@mise
+lbl.mise@@en@@mise
+lbl.conda@@zh@@conda
+lbl.conda@@en@@conda
+lbl.scoop@@zh@@scoop
+lbl.scoop@@en@@scoop
+lbl.chocolatey@@zh@@chocolatey
+lbl.chocolatey@@en@@chocolatey
+lbl.homebrew@@zh@@homebrew
+lbl.homebrew@@en@@homebrew
+lbl.0. PATH 索引@@zh@@0. PATH 索引
+lbl.0. PATH 索引@@en@@0. PATH index
+lbl.1. 声明层@@zh@@1. 声明层
+lbl.1. 声明层@@en@@1. Declarations
+lbl.2. mise 纳管层@@zh@@2. mise 纳管层
+lbl.2. mise 纳管层@@en@@2. Managed (mise)
+lbl.3. 约定层@@zh@@3. 约定层
+lbl.3. 约定层@@en@@3. Conventions (shims)
+lbl.4. 定向探测@@zh@@4. 定向探测
+lbl.4. 定向探测@@en@@4. Targeted probing
+lbl.5. 解析层@@zh@@5. 解析层
+lbl.5. 解析层@@en@@5. Resolution
+lbl.6. 汇总告警@@zh@@6. 汇总告警
+lbl.6. 汇总告警@@en@@6. Warnings
+dirt.dupes@@zh@@重复条目 {n} 条
+dirt.dupes@@en@@duplicate entries: {n}
+dirt.quoted@@zh@@带引号的条目 {n} 条
+dirt.quoted@@en@@quoted entries: {n}
+dirt.join@@zh@@、
+dirt.join@@en@@ and 
+drift.onlyTpl@@zh@@模板有而部署副本没有: {keys}
+drift.onlyTpl@@en@@in the template but not deployed: {keys}
+drift.onlyDep@@zh@@部署副本有而模板没有: {keys}
+drift.onlyDep@@en@@deployed but not in the template: {keys}
+drift.sameKeys@@zh@@[tools] 的键相同，但内容有差异（版本或注释不同）
+drift.sameKeys@@en@@same [tools] keys, different content (versions or comments)
+drift.join@@zh@@；
+drift.join@@en@@; 
+warn.STUB.message@@zh@@命令 '{command}' 解析到 '{path}'，实测无法执行（运行 --version 无输出、退出码 9009）。这类文件是 Windows 应用执行别名，目标应用没装时执行会静默失败，而 Get-Command / where.exe 都会把它当成可用命令。
+warn.STUB.message@@en@@'{command}' resolves to '{path}', which cannot actually run (probing --version gives no output, exit code 9009). This is a Windows app-execution alias: when the target app is missing the call fails silently, yet Get-Command and where.exe both list it as usable.
+warn.STUB.action@@zh@@换用其它命令，或安装该别名对应的应用
+warn.STUB.action@@en@@Use another command, or install the app behind the alias
+warn.PATH_ORDER.message@@zh@@声明要求 {tool} {wanted}（{file}），mise 也装有 {have}，但 '{command}' 解析到 '{path}'（{version}）。未激活 mise 的场景（cmd、图形程序、IDE 任务、-NoProfile 脚本）会用到错版本；根因是 PATH 组合顺序，不是运行时本身有问题。
+warn.PATH_ORDER.message@@en@@'{file}' asks for {tool} {wanted} and mise has {have}, but '{command}' resolves to '{path}' ({version}). Contexts without mise activation (cmd, GUI apps, IDE tasks, -NoProfile scripts) get the wrong version — the root cause is PATH ordering, not the runtime itself.
+warn.PATH_ORDER.action@@zh@@交互式会话里 mise activate 会把 shims 前置来救场；要让所有场景都对，需要把 shims 放到用户级 PATH 首位（bootstrap 会做），机器级条目（如 Oracle 的 javapath）需要管理员权限调整或让位
+warn.PATH_ORDER.action@@en@@mise activate prepends the shims inside interactive sessions; to fix every context, put the shims first on the user PATH (bootstrap does this) — machine-level entries such as Oracle javapath need admin rights to change
+warn.SHADOWED.message@@zh@@'{tool}' 在磁盘上有 {total} 个副本，其中 {hidden} 个不在 PATH 上，无法被直接调用。被遮蔽的位置见下。
+warn.SHADOWED.message@@en@@'{tool}' exists {total} times on disk; {hidden} cannot be reached through PATH (the hidden copies are listed below).
+warn.SHADOWED.action@@zh@@要固定用某一版就写进声明文件；不要靠 PATH 顺序记住它
+warn.SHADOWED.action@@en@@Pin the version you want in a declaration file instead of relying on PATH order
+warn.CONVENTION.message@@zh@@发现自定义命名约定 '{shim}'（文件名里声明版本 {declared}，实际 {actual}）。这类约定不在任何标准里，必须写进声明文件否则会失传。
+warn.CONVENTION.message@@en@@Found a naming convention: '{shim}' (the filename claims {declared}, the binary is actually {actual}). Conventions that live only in a filename are invisible to every tool — record it in a declaration file or it will be lost.
+warn.CONVENTION.action@@zh@@把这条约定登记到声明文件（mise.toml / .tool-versions）
+warn.CONVENTION.action@@en@@Record it in a declaration file (mise.toml / .tool-versions)
+warn.PATH_DIRT.message@@zh@@PATH 里有{parts}。它们不改变解析结果，但会让「改了却没生效」这类问题更难查。
+warn.PATH_DIRT.message@@en@@PATH contains {parts}. They do not change resolution, but they hide “I changed it but nothing took effect” problems.
+warn.PATH_DIRT.action@@zh@@清理这些条目（重复条目可以直接删掉）
+warn.PATH_DIRT.action@@en@@Clean them up (duplicate entries can simply be dropped)
+warn.DRIFT.message@@zh@@部署的全局声明（{deployed}）与仓库模板不一致。模板代表这台机器想要的状态，漂移意味着模板里新加的工具永远不会被安装。
+warn.DRIFT.message@@en@@The deployed machine manifest ({deployed}) differs from the repo template. The template is the state this machine wants; while they drift, tools added to the template are never installed.
+warn.DRIFT.action@@zh@@刷新: scripts/bootstrap.sh --refresh-config（会先备份）
+warn.DRIFT.action@@en@@Refresh it: scripts/bootstrap.sh --refresh-config (backs up first)
+warn.XDG_SHIFT.message@@zh@@本机设置了 XDG_CONFIG_HOME={xdg}，mise 的全局配置目录会跟着搬到这里（{config}）。后果是 ~/.config/mise/config.toml 不再是全局配置，而是「从工作目录向上发现」的配置——工作目录不在用户目录之下时它不生效。
+warn.XDG_SHIFT.message@@en@@XDG_CONFIG_HOME={xdg} is set, so mise moves its global config directory to {config}. As a result ~/.config/mise/config.toml is no longer the global config: it becomes a config discovered by walking up from the working directory, and has no effect outside the home tree.
+warn.XDG_SHIFT.action@@zh@@要么去掉这个变量（推荐，机器声明就写在 ~/.config/mise/config.toml），要么把声明迁到 {config}
+warn.XDG_SHIFT.action@@en@@Either unset the variable (recommended: the manifest lives in ~/.config/mise/config.toml) or move the manifest to {config}
+warn.STRAY.message@@zh@@有 {count} 个运行时放在非规范位置，且没有任何管理器纳管它们。它们只靠 PATH 被找到——PATH 一变就失传。建议登记到声明文件；今后新装的运行时请落在 {root}。
+warn.STRAY.message@@en@@{count} runtime(s) sit outside the canonical root and are tracked by no manager. They are reachable only through PATH, so a PATH change loses them. Record them in a declaration file; install future runtimes under {root}.
+warn.STRAY.action@@zh@@登记它们（不要搬动路径：路径可能被项目配置或 IDE 写死）
+warn.STRAY.action@@en@@Record them — do not move the paths (project config or IDEs may hard-code them)
+warn.UNDECLARED.message@@zh@@当前目录的 package.json 要求 node {wanted}，但没有任何工具读得到的声明文件。engines 只在版本不符时给警告，不会切换版本——这就是当初需要 node22.cmd 那类私有约定的原因。
+warn.UNDECLARED.message@@en@@This directory's package.json asks for node {wanted}, but no tool can read a declaration here. engines only warns on mismatch; it never switches versions — which is why private conventions like node22.cmd existed.
+warn.UNDECLARED.action@@zh@@在项目根目录建 mise.toml（[tools] node = "22"）或 .tool-versions（nodejs 22）；之后 cd 进项目会自动用对版本
+warn.UNDECLARED.action@@en@@Add mise.toml ([tools] node = "22") or .tool-versions (nodejs 22) at the project root; from then on cd-ing in selects the right version
+warn.MISSING.message@@zh@@声明文件 '{file}' 要求 {tool} {wanted}，但本机未发现该运行时的任何安装。
+warn.MISSING.message@@en@@'{file}' asks for {tool} {wanted}, but no installation of that runtime was found here.
+warn.MISSING.action@@zh@@执行 mise install 把它装上（新机器可直接跑 scripts/bootstrap.sh）
+warn.MISSING.action@@en@@Install it with mise install (on a new machine, just run scripts/bootstrap.sh)
+warn.NO_MISE.message@@zh@@本机未安装 mise。运行时只能靠 PATH 解析，无法按项目自动切换版本。
+warn.NO_MISE.message@@en@@mise is not installed. Runtimes can only be resolved through PATH, so per-project version switching is unavailable.
+warn.NO_MISE.action@@zh@@执行 scripts/bootstrap.sh 建立声明式层
+warn.NO_MISE.action@@en@@Run scripts/bootstrap.sh to set up the declarative layer
+CATALOG
+}
+
+# 取一条文案并用 k=v 参数替换 {占位符}。缺失的键返回键名本身，
+# 这样漏翻译会立刻在输出里露出来，而不是静默变成空白。
+# 文案表只在第一次调用时生成一次并落成临时文件：报告里 T 会被调用几十次，
+# 每次都重跑一次 catalog+awk 会白白多出上百个进程（实测占掉数秒）。
+TEXT_FILE=""
+ensure_text_file() {
+  [ -n "$TEXT_FILE" ] && return 0
+  TEXT_FILE="${TMPDIR:-/tmp}/census-text-$$.tsv"
+  catalog > "$TEXT_FILE" 2>/dev/null || TEXT_FILE=""
+  [ -n "$TEXT_FILE" ] && trap 'rm -f "$TEXT_FILE"' EXIT
+  return 0
+}
+T() {
+  local key="$1"; shift
+  local s
+  ensure_text_file
+  if [ -n "$TEXT_FILE" ]; then
+    s="$(awk -F'@@' -v k="$key" -v l="$OUT_LANG" '$1==k && $2==l {print $3; exit}' "$TEXT_FILE")"
+    [ -n "$s" ] || s="$(awk -F'@@' -v k="$key" '$1==k {print $3; exit}' "$TEXT_FILE")"
+  else
+    s="$(catalog | awk -F'@@' -v k="$key" -v l="$OUT_LANG" '$1==k && $2==l {print $3; exit}')"
+  fi
+  [ -n "$s" ] || s="$key"
+  local kv k2 v2 pat
+  for kv in "$@"; do
+    k2="${kv%%=*}"; v2="${kv#*=}"; pat="{$k2}"
+    s="${s//$pat/$v2}"
+  done
+  printf '%s' "$s"
+}
+
+# 内部取值（位置、来源、阶段名）→ 当前语言的显示名
+label_text() {
+  local s
+  s="$(T "lbl.$1" 2>/dev/null)"
+  if [ "$s" = "lbl.$1" ]; then printf '%s' "$1"; else printf '%s' "$s"; fi
+}
+
+# 内部取值 → JSON 里的稳定 ASCII 键（agent 不该依赖中文取值）
+stable_key() {
+  case "$1" in
+    托管) echo managed ;; 宿主) echo host ;; 公认) echo standard ;;
+    规范根) echo canonical ;; 游离) echo stray ;;
+    mise) echo mise ;; conda) echo conda ;; scoop) echo scoop ;;
+    chocolatey) echo chocolatey ;; homebrew) echo homebrew ;;
+    系统安装) echo system ;; "IDE 内置") echo ide ;; 自定义位置) echo custom ;;
+    版本管理器) echo version-manager ;; 定向探测) echo probe ;; "(深度扫描)") echo deep-scan ;;
+    # 计时阶段名
+    "0. PATH 索引") echo path-index ;; "1. 声明层") echo declarations ;;
+    "2. mise 纳管层") echo managed ;; "3. 约定层") echo conventions ;;
+    "4. 定向探测") echo roots ;; "5. 解析层") echo resolution ;; "6. 汇总告警") echo warnings ;;
+    *) echo "$1" ;;
+  esac
+}
+
 # ---------- 数据收集 ----------
 RUNTIME_ROWS=""      # tool|version|path|source|placement|usable
 CONV_ROWS=""         # shim|shimVersion|actualVersion|target|usable
@@ -54,16 +292,31 @@ WARN_JSON="[]"
 WARN_TEXT=""
 WARN_JSON_ITEMS=""   # 逐条拼出来的 JSON 片段，供 --json 输出使用
 
-add_runtime() { RUNTIME_ROWS="${RUNTIME_ROWS}${1}|${2}|${3}|${4}|${5}
+# 运行时行的字段顺序：tool|version|path|source|placement|usable
+# 注意必须收满 6 个字段：下游的去重（NF>=6）、[STRAY]（$6=="yes"）、
+# 位置分布统计、§4 的标记全都依赖第 6 列。少收一个字段会让整节静默变空。
+add_runtime() { RUNTIME_ROWS="${RUNTIME_ROWS}${1}|${2}|${3}|${4}|${5}|${6}
 "; }
 add_conv()    { CONV_ROWS="${CONV_ROWS}${1}|${2}|${3}|${4}|${5}
 "; }
 # 记一条告警：人类可读文本与 JSON 片段同时产出，保证 --json 里也能看到全部告警
+# 记一条告警：kind 是稳定的 ASCII 代码；message / action 跟随语言；
+# detail 是事实（路径、版本）。人类可读文本与 JSON 片段同时产出，
+# 保证 --json 里也能看到全部告警（含处置建议）。
+# 用法: add_warn <KIND> <TOOL> <DETAIL> [k=v ...]
 add_warn()    {
-  WARN_TEXT="${WARN_TEXT}[$1] $2
-        $3
+  local kind="$1" tool="$2" detail="$3"; shift 3
+  local message action entry
+  message="$(T "warn.$kind.message" "$@")"
+  action="$(T "warn.$kind.action" "$@")"
+  entry="[$kind] ${message}"
+  [ -n "$action" ] && entry="${entry}
+        -> ${action}"
+  [ -n "$detail" ] && entry="${entry}
+        ${detail}"
+  WARN_TEXT="${WARN_TEXT}${entry}
 "
-  WARN_JSON_ITEMS="${WARN_JSON_ITEMS}${WARN_JSON_ITEMS:+,}{\"kind\":\"$1\",\"message\":\"$(json_escape "$2")\",\"detail\":\"$(json_escape "$3")\"}"
+  WARN_JSON_ITEMS="${WARN_JSON_ITEMS}${WARN_JSON_ITEMS:+,}{\"kind\":\"$kind\",\"tool\":\"$(json_escape "$tool")\",\"message\":\"$(json_escape "$message")\",\"action\":\"$(json_escape "$action")\",\"detail\":\"$(json_escape "$detail")\"}"
 }
 
 # 判断文件是否"真的可执行"：存在、非常规文件、非 0 字节。
@@ -134,7 +387,7 @@ tick() {
   elapsed=$((now - LAST_TICK))
   TIMING_ROWS="${TIMING_ROWS}${1}|${elapsed}
 "
-  TIMING_JSON_ITEMS="${TIMING_JSON_ITEMS}${TIMING_JSON_ITEMS:+,}{\"phase\":\"$(json_escape "$1")\",\"seconds\":${elapsed}}"
+  TIMING_JSON_ITEMS="${TIMING_JSON_ITEMS}${TIMING_JSON_ITEMS:+,}{\"phase\":\"$(stable_key "$1")\",\"seconds\":${elapsed}}"
   LAST_TICK="$now"
 }
 
@@ -183,6 +436,11 @@ declare_mise_files() {
     [ "$dir" = "/" ] && break
     dir="$(dirname "$dir")"
   done
+  # 全局声明。XDG_CONFIG_HOME 被设置时 mise 的全局配置会搬走，这里必须跟着走，
+  # 否则"声明层"与"漂移检测"会看两个不同的文件，报出的结论互相矛盾。
+  if [ -n "${XDG_CONFIG_HOME:-}" ]; then
+    [ -f "$XDG_CONFIG_HOME/mise/config.toml" ] && printf '%s\n' "$XDG_CONFIG_HOME/mise/config.toml"
+  fi
   for f in "${HOME}/.config/mise/config.toml" "${HOME}/.tool-versions"; do
     [ -f "$f" ] && printf '%s\n' "$f"
   done
@@ -242,15 +500,25 @@ scan_conventions() {
   for dir in $path_dirs; do
     IFS="$IFS_OLD"
     [ -d "$dir" ] || continue
-    for f in "$dir"/*; do
-      [ -e "$f" ] || continue
-      base="$(basename "$f")"
+    # 性能要点：不要对目录里的每个文件都起进程去判断。
+    # 旧写法对每个文件跑一次 grep，遇到 /usr/bin 这种上千文件的目录（Git Bash 下尤其明显）
+    # 会卡到分钟级。现在改成：一次 ls 列出文件名 + 一次 grep 过滤，只有命中少数名字
+    # 才进入后面的权限检查与版本探测。
+    while IFS= read -r base; do
+      [ -n "$base" ] || continue
       # 去掉常见可执行后缀
       base="${base%.exe}"; base="${base%.cmd}"; base="${base%.bat}"
       base="${base%.ps1}"; base="${base%.sh}"
       if printf '%s' "$base" | grep -qiE '^(node|nodejs|npm|npx|pnpm|yarn|python|python3|py|pip|uv|java|javac|mvn|gradle|go|cargo|rustc|deno|bun|dotnet|php|ruby)([-_]?v?)[0-9]+(\.[0-9]+){0,3}$'; then
         # python3 / python3.12 / pip3 是跨平台公认的名字，不算本地私有约定
         if printf '%s' "$base" | grep -qiE '^(python|pip)[23](\.[0-9]+){0,2}$'; then continue; fi
+        f="$dir/$base"
+        # 后缀被剥掉了，回到真实文件名要按候选后缀逐个试
+        [ -e "$f" ] || {
+          for _ext in .exe .cmd .bat .ps1 .sh; do
+            [ -e "$dir/$base$_ext" ] && { f="$dir/$base$_ext"; break; }
+          done
+        }
         is_real "$f" || continue
         tool="$(printf '%s' "$base" | sed -E 's/^([a-zA-Z]+).*/\1/' | tr 'A-Z' 'a-z')"
         decl="$(printf '%s' "$base" | grep -oE '[0-9]+(\.[0-9]+){0,3}$')"
@@ -272,7 +540,9 @@ scan_conventions() {
         esac
         add_conv "$base" "$decl" "$actual" "$target" "yes"
       fi
-    done
+    done <<EOF
+$(ls -1 "$dir" 2>/dev/null | grep -iE '^(node|nodejs|npm|npx|pnpm|yarn|python|python3|py|pip|uv|java|javac|mvn|gradle|go|cargo|rustc|deno|bun|dotnet|php|ruby)[-_]?v?[0-9]' | head -n 200)
+EOF
   done
   # 外层循环用换行分隔目录列表（去重后的 path_dirs 是换行拼的），
   # 循环体内先恢复成原始 IFS，避免影响 basename/路径展开。
@@ -387,7 +657,26 @@ for d in "$HOME"/.local/share/JetBrains/Toolbox/apps/*/*/; do
 done
 
 # 去重：同一个真实路径只保留一条
+# 注意这一步必须在 --deep 深扫之前完成（下面的深扫会再补一批记录）。
 RUNTIME_ROWS="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' 'NF>=6 { key=tolower($3); if (!(key in seen)) { seen[key]=1; print } }')"
+
+# ---------- 第 4 阶段补充：--deep 宽松深扫 ----------
+# 定向探测只覆盖已知安装布局，装在奇怪位置的运行时只有深扫才看得见。
+# 默认关闭：这是唯一非线性的开销来源，所以要限深度、限文件名、限结果条数。
+# （census.ps1 的 -Deep 是同一件事：对每个盘符做有深度上限的扫描。）
+if [ "$DEEP" -eq 1 ]; then
+  for _root in /usr/local /opt /usr/lib "$HOME/.local" "$HOME/opt" "$HOME/.opt" /Applications; do
+    [ -d "$_root" ] || continue
+    while IFS= read -r hit; do
+      [ -n "$hit" ] || continue
+      probe_path "$hit"
+    done <<EOF
+$(find "$_root" -maxdepth 4 \( -name node -o -name node.exe -o -name python -o -name python.exe -o -name python3 -o -name java -o -name java.exe \) -type f 2>/dev/null | head -n 300)
+EOF
+  done
+  # 深扫结果同样按路径去重
+  RUNTIME_ROWS="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' 'NF>=6 { key=tolower($3); if (!(key in seen)) { seen[key]=1; print } }')"
+fi
 tick '4. 定向探测'
 
 # ---------- 第 5 阶段：解析层 ----------
@@ -411,7 +700,7 @@ probe_cmd() {
 "
   # 解析到不可执行的文件 → 高危告警
   if ! is_real "$resolved"; then
-    add_warn "STUB" "命令 '${name}' 解析到 '${resolved}'，但该文件不可执行。执行会失败。" "$resolved"
+    add_warn "STUB" "$name" "$resolved" "command=$name" "path=$resolved"
   fi
 }
 for c in node npm npx pnpm yarn python python3 py pip uv java javac mvn gradle go cargo rustc deno bun dotnet mise; do
@@ -426,13 +715,18 @@ for tool in node python java; do
   total="$(printf '%s\n' "$paths" | grep -c . || true)"
   [ "${total:-0}" -le 1 ] && continue
   hidden=""
-  for p in $paths; do
+  hcount=0
+  # 用 while read 而不是 for 循环：路径里带空格时 for 会把它拆成两个词
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
     d="$(dirname "$p")"
-    case ":$PATH:" in *":$d:"*) ;; *) hidden="${hidden}${p} | " ;; esac
-  done
+    case ":$PATH:" in *":$d:"*) ;; *) hidden="${hidden}${p} | "; hcount=$((hcount+1)) ;; esac
+  done <<EOF
+$paths
+EOF
   hidden="${hidden% | }"
-  [ -n "$hidden" ] || continue
-  add_warn "SHADOWED" "'${tool}' 在磁盘上有 ${total} 个副本，其中一部分不在 PATH 上，无法被直接调用。" "$hidden"
+  [ "$hcount" -gt 0 ] || continue
+  add_warn "SHADOWED" "$tool" "$hidden" "tool=$tool" "total=$total" "hidden=$hcount"
 done
 
 # 2) 自定义命名约定
@@ -440,14 +734,13 @@ done
 #    WARN_TEXT / WARN_JSON_ITEMS 的内容会随子 shell 一起丢掉。
 while IFS='|' read -r shim decl actual target ok; do
   [ -n "$shim" ] || continue
-  add_warn "CONVENTION" \
-    "发现自定义命名约定 '${shim}'（文件名里声明版本 ${decl}，实际 ${actual}）。这类约定不在任何标准里，必须写进声明文件否则会失传。" \
-    "$target"
+  c_tool="$(printf '%s' "$shim" | sed -E 's/^([a-zA-Z]+).*/\1/' | tr 'A-Z' 'a-z')"
+  add_warn "CONVENTION" "$c_tool" "$target" "shim=$shim" "declared=$decl" "actual=$actual"
 done < <(printf '%s' "$CONV_ROWS")
 
 # 3) mise 未安装
 if [ "$MISE_AVAILABLE" -eq 0 ]; then
-  add_warn "NO_MISE" "本机未安装 mise。运行时只能靠 PATH 解析，无法按项目自动切换版本。执行 scripts/bootstrap.sh 可一键建立。" ""
+  add_warn "NO_MISE" "mise" ""
 fi
 
 # 4) 游离运行时：没有任何管理器纳管，也不在公认位置或规范根下
@@ -457,9 +750,8 @@ fi
 STRAY_ROWS="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' '$5=="游离" && $6=="yes" {print $1" "$2" @ "$3}')"
 STRAY_COUNT="$(printf '%s\n' "$STRAY_ROWS" | grep -c . || true)"
 if [ "${STRAY_COUNT:-0}" -gt 0 ]; then
-  add_warn "STRAY" \
-    "有 ${STRAY_COUNT} 个运行时放在非规范位置，且没有任何管理器纳管它们。它们只靠 PATH 被找到——PATH 一变就失传。建议登记到声明文件；今后新装的运行时请落在 ${TOOLS_ROOT}。" \
-    "$(printf '%s' "$STRAY_ROWS" | tr '\n' '|' | sed 's/|$//; s/|/ | /g')"
+  add_warn "STRAY" "stray" "$(printf '%s' "$STRAY_ROWS" | tr '\n' '|' | sed 's/|$//; s/|/ | /g')" \
+    "count=$STRAY_COUNT" "root=$TOOLS_ROOT"
 fi
 
 # 5) 项目有版本约束，但没有工具读得到的声明文件
@@ -469,9 +761,7 @@ if [ -z "$PROJECT_DECL_FILES" ] && [ -f "$(pwd)/package.json" ]; then
   WANT_NODE="$(grep -oE '"node"[[:space:]]*:[[:space:]]*"[^"]*"' "$(pwd)/package.json" 2>/dev/null \
     | head -n1 | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/')"
   if [ -n "$WANT_NODE" ]; then
-    add_warn "UNDECLARED" \
-      "当前目录的 package.json 要求 node ${WANT_NODE}，但没有任何工具读得到的声明文件。engines 只在版本不符时给警告，不会切换版本——这就是当初需要私有命名约定（如 node22）的原因。" \
-      "在项目根目录创建 mise.toml（[tools] node = \"22\"）或 .tool-versions（nodejs 22）"
+    add_warn "UNDECLARED" "node" "" "wanted=$WANT_NODE"
   fi
 fi
 
@@ -483,27 +773,24 @@ if [ -f "$TEMPLATE_CFG" ] && [ -f "$DEPLOYED_CFG" ] && ! cmp -s "$TEMPLATE_CFG" 
   ONLY_TPL="$(comm -23 <(tools_keys "$TEMPLATE_CFG") <(tools_keys "$DEPLOYED_CFG") | grep -v '^$' | tr '\n' ' ' || true)"
   ONLY_DEP="$(comm -13 <(tools_keys "$TEMPLATE_CFG") <(tools_keys "$DEPLOYED_CFG") | grep -v '^$' | tr '\n' ' ' || true)"
   DRIFT_DETAIL=""
-  [ -n "$ONLY_TPL" ] && DRIFT_DETAIL="模板有而部署副本没有: ${ONLY_TPL}"
-  [ -n "$ONLY_DEP" ] && DRIFT_DETAIL="${DRIFT_DETAIL}${DRIFT_DETAIL:+；}部署副本有而模板没有: ${ONLY_DEP}"
-  [ -n "$DRIFT_DETAIL" ] || DRIFT_DETAIL="[tools] 的键相同，但内容有差异（版本或注释不同）"
-  add_warn "DRIFT" \
-    "部署的全局声明（${DEPLOYED_CFG}）与仓库模板（templates/mise-config.toml）不一致。模板代表这台机器想要的状态，漂移意味着模板里新加的工具永远不会被安装。" \
-    "${DRIFT_DETAIL} —— 刷新: scripts/bootstrap.sh --refresh-config（会先备份）"
+  [ -n "$ONLY_TPL" ] && DRIFT_DETAIL="$(T 'drift.onlyTpl' "keys=$ONLY_TPL")"
+  [ -n "$ONLY_DEP" ] && DRIFT_DETAIL="${DRIFT_DETAIL}$( [ -n "$DRIFT_DETAIL" ] && T 'drift.join' || true )$(T 'drift.onlyDep' "keys=$ONLY_DEP")"
+  [ -n "$DRIFT_DETAIL" ] || DRIFT_DETAIL="$(T 'drift.sameKeys')"
+  add_warn "DRIFT" "mise" "$DRIFT_DETAIL" "deployed=$DEPLOYED_CFG"
 fi
 
 # 7) XDG_CONFIG_HOME 被设置：mise 的"全局"配置会搬家
 if [ -n "${XDG_CONFIG_HOME:-}" ]; then
-  add_warn "XDG_SHIFT" \
-    "本机设置了 XDG_CONFIG_HOME=${XDG_CONFIG_HOME}，mise 的全局配置目录会跟着搬到这里（${XDG_CONFIG_HOME}/mise/config.toml）。后果是 ~/.config/mise/config.toml 不再是全局配置，而是「从工作目录向上发现」的配置——工作目录不在用户目录之下时它不生效。" \
-    "要么去掉该变量，要么把机器声明迁到 ${XDG_CONFIG_HOME}/mise/config.toml"
+  add_warn "XDG_SHIFT" "mise" "" \
+    "xdg=$XDG_CONFIG_HOME" "config=${XDG_CONFIG_HOME}/mise/config.toml"
 fi
 
 # 8) PATH 里的重复条目
 PATH_DUPES="$(printf '%s' "$PATH" | tr ':' '\n' | awk 'NF' | sort | uniq -d)"
 if [ -n "$PATH_DUPES" ]; then
-  add_warn "PATH_DIRT" \
-    "PATH 里有重复条目。它们不改变解析结果，但会让「改了却没生效」这类问题更难查。" \
-    "$(printf '%s' "$PATH_DUPES" | tr '\n' '|' | sed 's/|$//; s/|/ | /g')"
+  d_parts="$(T 'dirt.dupes' "n=$(printf '%s\n' "$PATH_DUPES" | grep -c . || true)")"
+  add_warn "PATH_DIRT" "PATH" "$(printf '%s' "$PATH_DUPES" | tr '\n' '|' | sed 's/|$//; s/|/ | /g')" \
+    "parts=$d_parts"
 fi
 
 # 9) 声明被 PATH 顺序遮蔽：声明要求某个版本、mise 也装了，但解析到别的副本。
@@ -523,9 +810,9 @@ while IFS='|' read -r d_tool d_ver d_src; do
     r_path="$(printf '%s' "$RESOLVE_ROWS" | awk -F'|' -v c="$c" '$1==c {print $2; exit}')"
     [ -n "$r_path" ] || continue
     case "$r_path" in */mise/*) continue ;; esac
-    add_warn "PATH_ORDER" \
-      "声明要求 ${d_tool} ${d_ver}（${d_src}），mise 也装有 ${m_ver}，但 '${c}' 解析到 '${r_path}'。未激活 mise 的场景（脚本、图形程序、IDE 任务）会用到错版本；根因是 PATH 顺序，不是运行时本身有问题。" \
-      "交互式会话里 mise activate 会在会话内把 shims 前置来救场；要让所有场景都对，需要让 shims 排在那些直接目录之前"
+    add_warn "PATH_ORDER" "$c" "" \
+      "tool=$d_tool" "wanted=$d_ver" "file=$d_src" "have=$m_ver" \
+      "command=$c" "path=$r_path" "version=$(printf '%s' "$RESOLVE_ROWS" | awk -F'|' -v c="$c" '$1==c {print $3; exit}')"
   done
 done < <(declared_tools)
 
@@ -535,9 +822,8 @@ while IFS='|' read -r d_tool d_ver d_src; do
   s_tool="$(short_tool "$d_tool")"
   [ -n "$(mise_version "$s_tool")" ] && continue
   runtime_installed "$s_tool" && continue
-  add_warn "MISSING" \
-    "声明文件 '${d_src}' 要求 ${d_tool} ${d_ver}，但本机未发现该运行时的任何安装。" \
-    "$d_src"
+  add_warn "MISSING" "$s_tool" "$d_src" \
+    "tool=$d_tool" "wanted=$d_ver" "file=$d_src"
 done < <(declared_tools)
 tick '6. 汇总告警'
 
@@ -547,35 +833,80 @@ if [ "$JSON" -eq 1 ]; then
   # "...from C:\Users\...\site-packages\pip (python 3.12)"，里面的 \U 这种序列
   # 会让整个 JSON 非法，ConvertFrom-Json / jq 直接报 "Unrecognized escape sequence"。
   # awk 的 esc() 负责反斜杠、双引号和控制字符，三个数组块共用。
-  AWK_ESC='function esc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/[\r\n\t]/, " ", s); return s }'
+  AWK_ESC='function esc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/[\r\n\t]/, " ", s); return s }
+           function sk(s) {
+             if (s == "托管") return "managed"; if (s == "宿主") return "host";
+             if (s == "公认") return "standard"; if (s == "规范根") return "canonical";
+             if (s == "游离") return "stray"; if (s == "系统安装") return "system";
+             if (s == "IDE 内置") return "ide"; if (s == "自定义位置") return "custom";
+             if (s == "版本管理器") return "version-manager";
+             return s
+           }'
   printf '{\n'
+  # schemaVersion 与字段结构必须与 census.ps1 完全一致：
+  # Agent / CI 跨平台消费同一份 JSON 时，不该为"哪个平台"写两套解析逻辑。
+  printf '  "schemaVersion": 1,\n'
   printf '  "generatedAt": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf '  "host": {"os": "%s", "arch": "%s", "user": "%s", "cwd": "%s"},\n' \
     "$(uname -s)" "$(uname -m)" "$(whoami)" "$(json_escape "$(pwd)")"
-  printf '  "miseAvailable": %s,\n' "$([ "$MISE_AVAILABLE" -eq 1 ] && echo true || echo false)"
+
+  # declarations：声明文件 + 它们声明的工具（按文件聚合，与 census.ps1 的结构一致）
+  printf '  "declarations": ['
+  _first=1
+  for _f in $DECL_FILES; do
+    _scope="project"
+    case "$_f" in
+      "$HOME"/*|"$HOME"|"${XDG_CONFIG_HOME:-/nonexistent}"/*) _scope="global" ;;
+    esac
+    _tools="$(declared_tools | awk -F'|' -v s="$_f" '$3==s {printf "%s\"%s\": \"%s\"", (n++ ? ", " : ""), $1, $2}')"
+    if [ "$_first" -eq 1 ]; then printf '\n'; _first=0; else printf ',\n'; fi
+    printf '    {"scope": "%s", "path": "%s", "tools": {%s}}' \
+      "$_scope" "$(json_escape "$_f")" "$_tools"
+  done
+  [ "$_first" -eq 1 ] || printf '\n'
+  printf '  ],\n'
+
   printf '  "toolsRoot": "%s",\n' "$(json_escape "$TOOLS_ROOT")"
-  printf '  "runtimes": [\n'
-  printf '%s' "$RUNTIME_ROWS" | awk -F'|' "$AWK_ESC"' NF>=6 {printf "%s    {\"tool\": \"%s\", \"version\": \"%s\", \"path\": \"%s\", \"source\": \"%s\", \"placement\": \"%s\"}", (NR>1?",\n":""), esc($1), esc($2), esc($3), esc($4), esc($5)}'
-  printf '\n  ],\n'
+  printf '  "mise": {"available": %s, "tools": [' "$([ "$MISE_AVAILABLE" -eq 1 ] && echo true || echo false)"
+  printf '%s' "$MISE_TOOLS" | awk -F'[ \t]+' "$AWK_ESC"' NF>=2 {printf "%s{\"tool\": \"%s\", \"version\": \"%s\", \"requested\": \"%s\"}", (NR>1?", ":""), esc($1), esc($2), esc($NF)}'
+  printf ']},\n'
   printf '  "conventions": [\n'
   printf '%s' "$CONV_ROWS" | awk -F'|' "$AWK_ESC"' NF>=4 {printf "%s    {\"shim\": \"%s\", \"nameVersion\": \"%s\", \"actualVersion\": \"%s\", \"target\": \"%s\"}", (NR>1?",\n":""), esc($1), esc($2), esc($3), esc($4)}'
+  printf '\n  ],\n'
+  printf '  "runtimes": [\n'
+  printf '%s' "$RUNTIME_ROWS" | awk -F'|' "$AWK_ESC"' NF>=6 {printf "%s    {\"tool\": \"%s\", \"version\": \"%s\", \"path\": \"%s\", \"source\": \"%s\", \"placement\": \"%s\", \"managed\": %s, \"real\": %s}", (NR>1?",\n":""), esc($1), esc($2), esc($3), sk($4), sk($5), ($3 ~ /\/mise\// ? "true" : "false"), ($6 == "yes" ? "true" : "false")}'
   printf '\n  ],\n'
   printf '  "resolution": [\n'
   printf '%s' "$RESOLVE_ROWS" | awk -F'|' "$AWK_ESC"' NF>=4 {printf "%s    {\"command\": \"%s\", \"resolvesTo\": \"%s\", \"version\": \"%s\", \"hitCount\": %s}", (NR>1?",\n":""), esc($1), esc($2), esc($3), $4}'
   printf '\n  ],\n'
   printf '  "warnings": [%s],\n' "$WARN_JSON_ITEMS"
-  printf '  "timings": [%s]\n' "$TIMING_JSON_ITEMS"
+  printf '  "timings": [%s],\n' "$TIMING_JSON_ITEMS"
+
+  # summary：与 census.ps1 对齐（runtimeCount / warningCount / byTool）
+  # 逐工具构造，不要在一个 awk 里同时管"开数组/加逗号/收尾"——那种写法极易漏逗号，
+  # 上一版就是这么把 byTool 拼成非法 JSON 的（parity 测试立刻抓到了）。
+  _bytool=""
+  _sep=""
+  for _t in $(printf '%s' "$RUNTIME_ROWS" | awk -F'|' '$1 != "" {print $1}' | sort -u); do
+    _vers="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' -v t="$_t" '$1==t && !seen[$2]++ {printf "%s\"%s\"", (n++ ? ", " : ""), $2}')"
+    _bytool="${_bytool}${_sep}\"${_t}\": [${_vers}]"
+    _sep=", "
+  done
+  printf '  "summary": {"runtimeCount": %s, "warningCount": %s, "byTool": {%s}}\n' \
+    "$(printf '%s\n' "$RUNTIME_ROWS" | grep -c . || true)" \
+    "$(printf '%s\n' "$WARN_TEXT" | grep -c '^\[' || true)" \
+    "$_bytool"
   printf '}\n'
   exit 0
 fi
 
 echo
-echo " 运行时普查报告 (census)"
-echo " 生成时间: $(date '+%Y-%m-%dT%H:%M:%S')   主机: $(whoami)@$(uname -m)   当前目录: $(pwd)"
+echo " $(T 'title')"
+echo " $(T 'meta' "time=$(date '+%Y-%m-%dT%H:%M:%S')" "user=$(whoami)" "arch=$(uname -m)" "cwd=$(pwd)")"
 
-sec '1. 声明层 —— 谁在要求什么版本'
+sec "$(T 'sec.decl')"
 if [ -z "$DECL_FILES" ]; then
-  note "（未发现任何 mise.toml / .tool-versions 声明）"
+  note "$(T 'no.decl')"
 else
   for f in $DECL_FILES; do
     note "$f"
@@ -583,70 +914,107 @@ else
   done
 fi
 
-sec '2. 纳管层 —— mise 管理的运行时'
+sec "$(T 'sec.managed')"
 if [ "$MISE_AVAILABLE" -eq 0 ]; then
-  note "mise 未安装（PATH 上找不到）。"
+  note "$(T 'no.mise')"
 elif [ -z "$MISE_TOOLS" ]; then
-  note "mise 已安装，但尚未纳管任何运行时。"
+  note "$(T 'no.managed')"
 else
   printf '%s\n' "$MISE_TOOLS" | sed 's/^/  /'
 fi
 
-sec '3. 约定层 —— 带版本号的命名 shim（最容易失传的约定）'
+sec "$(T 'sec.conv')"
 if [ -z "$CONV_ROWS" ]; then
-  note "（未发现）"
+  note "$(T 'no.conv')"
 else
   printf '%s' "$CONV_ROWS" | while IFS='|' read -r shim decl actual target ok; do
     [ -n "$shim" ] || continue
-    printf '  %-16s 名称声明 %-12s 实际 %-24s\n        -> %s\n' "$shim" "$decl" "$actual" "$target"
+    _state="$(T 'state.ok')"
+    [ "$ok" = "yes" ] || _state="$(T 'state.bad')"
+    echo "  $(T 'conv.line' "shim=$shim" "declared=$decl" "actual=$actual" "state=$_state")"
+    echo "        -> $target"
   done
 fi
 
-sec '4. 运行时清单 —— 磁盘上实际存在的运行时（含纳管与未纳管）'
-for tool in node python java; do
-  cnt="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' -v t="$tool" '$1==t' | grep -c . || true)"
-  [ "${cnt:-0}" -eq 0 ] && continue
-  echo "  $(printf '%s' "$tool" | tr 'a-z' 'A-Z')  共 ${cnt} 个"
-  printf '%s' "$RUNTIME_ROWS" | awk -F'|' -v t="$tool" '$1==t {
-      extra = "";
-      if ($6 == "yes" && $5 == "游离")   extra = " | 游离位置";
-      if ($6 == "yes" && $5 == "规范根") extra = " | 规范根";
-      if ($6 != "yes")                   extra = " | 不可用";
-      printf "    %-16s %s\n                   [%s%s]\n", $2, $3, $4, extra
-    }'
-done
+sec "$(T 'sec.inv')"
+# 这一节把每条运行时连同它的来源与位置一起打印。来源/位置内部是固定中文取值，
+# 显示时经 label_text 映射到当前语言（JSON 那边则换成 ASCII 键）。
+# inv_current 必须在循环前初始化：脚本开着 set -u，未定义变量会让整个循环直接退出。
+inv_current=""
+while IFS='|' read -r r_tool r_ver r_path r_src r_place r_usable; do
+  [ -n "$r_tool" ] || continue
+  if [ "$r_tool" != "$inv_current" ]; then
+    inv_current="$r_tool"
+    cnt="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' -v t="$r_tool" '$1==t' | grep -c . || true)"
+    echo "  $(T 'inv.count' "tool=$(printf '%s' "$r_tool" | tr 'a-z' 'A-Z')" "count=$cnt")"
+  fi
+  flags="$(label_text "$r_src")"
+  if [ "$r_usable" = "yes" ]; then
+    [ "$r_place" = "游离" ]   && flags="${flags} | $(T 'lbl.游离位置')"
+    [ "$r_place" = "规范根" ] && flags="${flags} | $(T 'lbl.规范根')"
+  else
+    flags="${flags} | $(T 'lbl.不可用')"
+  fi
+  printf '    %-16s %s\n' "$r_ver" "$r_path"
+  printf '                   [%s]\n' "$flags"
+done < <(printf '%s\n' "$RUNTIME_ROWS" | sort -t'|' -k1,1)
 
-sec '5. 解析层 —— 命令实际解析到哪'
-printf '%s' "$RESOLVE_ROWS" | while IFS='|' read -r cmd resolved ver hits; do
+sec "$(T 'sec.res')"
+while IFS='|' read -r cmd resolved ver hits; do
   [ -n "$cmd" ] || continue
   if [ "${hits:-1}" -gt 1 ]; then
-    printf '  %-9s -> %s  (%s)  [%s 个 PATH 命中]\n' "$cmd" "$resolved" "$ver" "$hits"
+    echo "  $(T 'res.hits' "command=$cmd" "path=$resolved" "version=$ver" "hits=$hits")"
   else
-    printf '  %-9s -> %s  (%s)\n' "$cmd" "$resolved" "$ver"
+    echo "  $(T 'res.line' "command=$cmd" "path=$resolved" "version=$ver")"
   fi
-done
+  # 解析到不可执行的文件 → 就地标出来
+  is_real "$resolved" || echo "             $(T 'res.stub')"
+done < <(printf '%s' "$RESOLVE_ROWS" | sort)
 
-sec '6. 告警 —— 需要人工确认的问题'
+sec "$(T 'sec.warn')"
 if [ -z "$WARN_TEXT" ]; then
-  echo "  未发现问题。"
+  echo "  $(T 'no.warn')"
 else
   printf '%s' "$WARN_TEXT" | sed 's/^/  /'
 fi
 
-sec '汇总'
-note "发现的运行时条目数: $(printf '%s\n' "$RUNTIME_ROWS" | grep -c . || true)"
+sec "$(T 'sec.summary')"
+note "$(T 'sum.runtimes' "count=$(printf '%s\n' "$RUNTIME_ROWS" | grep -c . || true)")"
+# 按工具统计版本数
+for tool in node python java; do
+  versions="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' -v t="$tool" '$1==t {print $2}' | sort -u | grep -v '^$' | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
+  [ -n "$versions" ] || continue
+  vcount="$(printf '%s' "$versions" | awk -F', ' '{print NF}')"
+  note "$(T 'sum.byTool' "tool=$tool" "count=$vcount" "versions=$versions")"
+done
 # 位置分布：一眼看出有多少运行时是"只靠 PATH 被记住"的
 PLACEMENT_TEXT="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' '$6=="yes" {c[$5]++} END {
   split("托管 宿主 公认 规范根 游离", order, " ")
   out = ""
-  for (i = 1; i <= 5; i++) { k = order[i]; if (c[k] > 0) out = out (out == "" ? "" : "  /  ") k " " c[k] }
+  for (i = 1; i <= 5; i++) { k = order[i]; if (c[k] > 0) out = out (out == "" ? "" : "|") k " " c[k] }
   print out
 }')"
-note "位置分布: $PLACEMENT_TEXT"
-note "规范根:   $TOOLS_ROOT"
-note "告警数量: $(printf '%s\n' "$WARN_TEXT" | grep -c '^\[' || true)"
+PLACEMENT_PRETTY=""
+_old_ifs="$IFS"; IFS='|'
+for seg in $PLACEMENT_TEXT; do
+  IFS="$_old_ifs"
+  [ -n "$seg" ] || { IFS='|'; continue; }
+  k="${seg%% *}"; n="${seg##* }"
+  PLACEMENT_PRETTY="${PLACEMENT_PRETTY}$( [ -n "$PLACEMENT_PRETTY" ] && printf '  /  ' )$(label_text "$k") $n"
+  IFS='|'
+done
+IFS="$_old_ifs"
+note "$(T 'sum.placement' "text=$PLACEMENT_PRETTY")"
+note "$(T 'sum.root' "root=$TOOLS_ROOT")"
+note "$(T 'sum.warnings' "count=$(printf '%s\n' "$WARN_TEXT" | grep -c '^\[' || true)")"
 if [ "$TIMING" -eq 1 ]; then
-  sec '性能分解 —— 各阶段耗时'
-  printf '%s' "$TIMING_ROWS" | awk -F'|' 'NF>=2 { printf "  %-24s %6s s\n", $1, $2 }'
+  sec "$(T 'sec.timing')"
+  # 阶段名经 label_text 映射；JSON 那边用的是 stable_key 的 ASCII 键
+  while IFS='|' read -r _ph _sec; do
+    [ -n "$_ph" ] || continue
+    printf '  %-24s %6s s\n' "$(label_text "$_ph")" "$_sec"
+  done <<EOF
+$TIMING_ROWS
+EOF
 fi
 echo
