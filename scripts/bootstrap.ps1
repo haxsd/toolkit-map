@@ -244,11 +244,11 @@ if ($NoProfile) {
     } else {
         Invoke-Action "向 $PROFILE 追加激活行" {
             Add-Content -Path $PROFILE -Value ''
-            Add-Content -Path $PROFILE -Value '# 由 toolchain-kit 的 bootstrap.ps1 添加：让 mise 按项目声明自动切换运行时版本'
+            Add-Content -Path $PROFILE -Value '# 由 runtime-census 的 bootstrap.ps1 添加：让 mise 按项目声明自动切换运行时版本'
             Add-Content -Path $PROFILE -Value $activation
         }
         Write-Done "激活行已写入 $PROFILE"
-        if (-not $DryRun) { Write-Warn2 '想撤销就删掉该文件里带 "toolchain-kit" 注释的那两行' }
+        if (-not $DryRun) { Write-Warn2 '想撤销就删掉该文件里带 "runtime-census" 注释的那两行' }
     }
 }
 

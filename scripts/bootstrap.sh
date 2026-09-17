@@ -183,11 +183,11 @@ else
     else
       mkdir -p "$(dirname "$RC_FILE")"
       {
-        printf '\n# 由 toolchain-kit 的 bootstrap.sh 添加：让 mise 按项目声明自动切换运行时版本\n'
+        printf '\n# 由 runtime-census 的 bootstrap.sh 添加：让 mise 按项目声明自动切换运行时版本\n'
         printf '%s\n' "$ACTIVATION"
       } >> "$RC_FILE"
       ok "激活行已写入 $RC_FILE"
-      warn '想撤销就删掉该文件里带 "toolchain-kit" 注释的那两行'
+      warn '想撤销就删掉该文件里带 "runtime-census" 注释的那两行'
     fi
   fi
 fi

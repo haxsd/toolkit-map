@@ -1,8 +1,10 @@
-# toolchain-kit
+# runtime-census
 
 一套**跨机器可移植**的运行时管理约定，解决一个具体问题：
 
 > **"本机只有 Node 16"** —— 这句话通常是错的。
+
+作者 [@haxsd](https://github.com/haxsd) ｜ MIT 许可 ｜ 同时是一个 Cursor / Claude skill
 
 ---
 
@@ -93,14 +95,14 @@ Agent 应该优先用 `mise exec -- <命令>`：零全局状态、一次性、�
 
 ```powershell
 # Windows
-git clone <本仓库> ; cd toolchain-kit
+git clone <本仓库> ; cd runtime-census
 .\scripts\bootstrap.ps1 -DryRun     # 先看会改什么
 .\scripts\bootstrap.ps1             # 实际执行
 ```
 
 ```bash
 # macOS / Linux
-git clone <本仓库> && cd toolchain-kit
+git clone <本仓库> && cd runtime-census
 ./scripts/bootstrap.sh --dry-run
 ./scripts/bootstrap.sh
 ```
@@ -191,7 +193,7 @@ mise exec -- npm test            # 一次性激活执行
 ## 目录结构
 
 ```
-toolchain-kit/
+runtime-census/
 ├── SKILL.md                 agent 入口（本仓库同时是一个 Cursor / Claude skill）
 ├── README.md                本文件，给人看
 ├── AGENTS.md                运行时发现契约 —— 拷进你自己项目的规则文件里
@@ -214,16 +216,16 @@ toolchain-kit/
 
 ```powershell
 # Windows：目录联接，不需要管理员权限
-git clone <本仓库> $env:USERPROFILE\Projects\toolchain-kit
+git clone <本仓库> $env:USERPROFILE\Projects\runtime-census
 New-Item -ItemType Junction `
-  -Path "$env:USERPROFILE\.cursor\skills\toolchain-kit" `
-  -Target "$env:USERPROFILE\Projects\toolchain-kit"
+  -Path "$env:USERPROFILE\.cursor\skills\runtime-census" `
+  -Target "$env:USERPROFILE\Projects\runtime-census"
 ```
 
 ```bash
 # macOS / Linux：符号链接
-git clone <本仓库> ~/Projects/toolchain-kit
-ln -s ~/Projects/toolchain-kit ~/.cursor/skills/toolchain-kit
+git clone <本仓库> ~/Projects/runtime-census
+ln -s ~/Projects/runtime-census ~/.cursor/skills/runtime-census
 ```
 
 装好之后，当你在会话里提到"这台机器上有哪些 Node / Python / Java 版本"
@@ -271,4 +273,4 @@ mise 只能管到它自己装的东西。它永远不会知道 `<系统盘>:\nod
 
 ## 许可
 
-MIT
+MIT © [haxsd](https://github.com/haxsd)

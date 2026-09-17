@@ -1,9 +1,13 @@
 ---
-name: toolchain-kit
+name: runtime-census
 description: "盘点和管理本机的语言运行时（Node / Python / Java 等的多版本共存）。当需要回答这台机器上到底装了哪些版本、发现 node/python/java 版本与预期不符、遇到某个项目需要旧版本而新版本看不见、要在项目里锁定运行时版本、或者要在一台新机器上一次性配好工具链时使用。Use when asked which runtime versions are installed on this machine, when a version mismatch appears (e.g. only Node 16 is visible while a project needs 22), when pinning per-project tool versions, or when setting up a machine's toolchain declaratively."
+license: MIT
+metadata:
+  version: 0.1.0
+  author: haxsd
 ---
 
-# toolchain-kit
+# runtime-census
 
 管理本机语言运行时的工具集。核心作用是解决一个常见的错误认知：
 
