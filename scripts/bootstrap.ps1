@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   一键把本机改造成"声明式工具链"模式：装好 mise、写入机器声明、配好 PATH。

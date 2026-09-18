@@ -25,6 +25,11 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v5
+      # 编码检查放在最前：.ps1 缺 BOM 时，英文系统的 ANSI 代码页（cp1252）会把中文注释
+      # 读成智能引号、脚本直接解析失败——开发机是中文系统就完全看不见这个问题。
+      - name: 脚本编码检查（.ps1 必须有 UTF-8 BOM）
+        shell: powershell
+        run: .\tests\check-encodings.ps1
       # 用 Windows PowerShell 5.1（系统自带）跑，因为这是 Windows 上最常见的宿主；
       # parity.ps1 自己会去找 Git Bash（windows-latest 自带）来跑 shell 版。
       - name: 一致性测试（census.ps1 vs census.sh）
