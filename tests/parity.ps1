@@ -119,6 +119,10 @@ function Check {
     else {
         Write-Host "  [失败] $What" -ForegroundColor Red
         if ($Hint) { Write-Host "         $Hint" -ForegroundColor DarkGray }
+        # 同时打一条 GitHub 注解：注解可以匿名从 API 读到，而 job 日志需要鉴权。
+        # 放在这里而不是交给工作流收尾，是因为脚本一旦 exit，宿主可能直接结束，
+        # 收尾代码就没有机会运行了（上一轮就是这么丢掉了全部线索）。
+        Write-Host "::error::$What $(if ($Hint) { $Hint })"
         $script:fail++
     }
 }
@@ -156,6 +160,10 @@ try {
     if ($null -eq $ps1 -or $null -eq $sh) {
         Write-Host "`n census.ps1 原始输出片段: $($ps1Json.Substring(0, [Math]::Min(200, $ps1Json.Length)))" -ForegroundColor DarkGray
         Write-Host " census.sh  原始输出片段: $($shJson.Substring(0, [Math]::Min(200, $shJson.Length)))" -ForegroundColor DarkGray
+        # 这一步是"脚本跑了但输出不是 JSON"，原因常常是子进程被超时终止或环境不对，
+        # 原始输出里才有线索——同样转成注解带出去。
+        Write-Host "::error::census.ps1 输出前 200 字符: $($ps1Json.Substring(0, [Math]::Min(200, $ps1Json.Length)))"
+        Write-Host "::error::census.sh  输出前 200 字符: $($shJson.Substring(0, [Math]::Min(200, $shJson.Length)))"
         exit 1
     }
 
@@ -182,11 +190,14 @@ foreach ($impl in @(@{ Name = 'census.ps1'; Data = $ps1 }, @{ Name = 'census.sh'
 }
 
     # ---------- 双语与 JSON 契约 ----------
+    # 断言只用 ASCII 匹配：CI runner 多是英文系统，子进程重定向到文件时按 OEM
+    # 代码页写出，非 ASCII 字符（例如破折号）会被替换掉，拿它做断言会假失败。
     $enOut = Invoke-Bounded -Exe $psExe -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $censusPs1, '-Lang', 'en') -TimeoutSec 120 -Tag 'ps1-en'
-    Check 'census.ps1 -Lang en 输出英文标题' ($enOut -match '6\. Warnings — things that need a human decision')
-    Check 'census.ps1 -Lang en 输出英文告警' ($enOut -match '\[(DRIFT|MISSING|CONVENTION|PATH_DIRT)\] \S')
+    Check 'census.ps1 -Lang en 输出英文标题' ($enOut -match '6\. Warnings')
+    Check 'census.ps1 -Lang en 输出英文告警' ($enOut -match '\[CONVENTION\] Found a naming convention')
     $enOutSh = Invoke-Bounded -Exe $bash -Arguments @($censusSh, '--lang', 'en') -TimeoutSec 120 -Tag 'sh-en'
-    Check 'census.sh --lang en 输出英文标题' ($enOutSh -match '6\. Warnings — things that need a human decision')
+    Check 'census.sh --lang en 输出英文标题' ($enOutSh -match '6\. Warnings')
+    Check 'census.sh --lang en 输出英文告警' ($enOutSh -match '\[CONVENTION\] Found a naming convention')
 
     # JSON 契约：两边都要有 schemaVersion 与同一组顶层字段（跨平台消费的前提）
     $sharedFields = @('schemaVersion', 'generatedAt', 'host', 'declarations', 'toolsRoot', 'mise', 'conventions', 'runtimes', 'resolution', 'warnings', 'timings', 'summary')
