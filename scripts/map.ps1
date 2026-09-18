@@ -25,6 +25,8 @@ param(
     [switch]$Prefer,                         # add 用：同时标记为首选
 
     [string]$Url = '',                       # install 用：portable 归档的直链
+    [string]$Via = '',                       # install 用：'winget' 表示走包管理器兜底
+    [string]$WingetId = '',                  # install 用：包管理器里的包 ID（默认用工具名）
     [string]$MapFile = '',                   # 覆盖地图位置（默认 ~/.toolkit/map.json）
     [int]$MaxAgeHours = 24,                  # status 用：超过多少小时算旧
 
@@ -661,7 +663,59 @@ function Get-ExeVersionByPattern {
 }
 
 function Invoke-Install {
-    if (-not $Tool) { throw "用法：map.ps1 install <tool>@<版本|latest>（或 install <tool> -Url <zip 直链>）" }
+    if (-not $Tool) { throw "用法：map.ps1 install <tool>@<版本|latest>（或 install <tool> -Url <zip 直链>，或 install <tool> -Via winget）" }
+
+    # ---- 兜底路径：只能走安装器的工具（nmap、驱动类、需要注册表/服务集成的） ----
+    # 统一仓库的理想是"装完长一样"，但不该为了形式统一而拒绝安装。这里允许装到包管理器
+    # 自己的位置，装完在地图里标注真实路径与"不在仓库"的原因——它仍然是可发现的。
+    if ($Via) {
+        if ($Via -ne 'winget') { throw "目前只支持 -Via winget（其余情况请人工安装后用 map.ps1 add 登记）" }
+        $id = if ($WingetId) { $WingetId } else { $Tool }
+        Write-Host "用 winget 安装 $id（装到包管理器自己的位置，不在统一仓库）…" -ForegroundColor Cyan
+        if ($WhatIf) { Write-Host "  winget install --id $id --exact --silent" -ForegroundColor DarkGray; Write-Host '（-WhatIf：到此为止）' -ForegroundColor Yellow; return }
+
+        & winget install --id $id --exact --silent --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1 |
+            Select-Object -Last 3 | ForEach-Object { '  ' + $_ }
+
+        # 关键一步：当前进程的 PATH 是安装前的旧环境（子进程继承，不会跟着注册表变），
+        # 所以先用注册表现算一份新 PATH 再搜，否则"装好了却找不到"。
+        $saved = $env:PATH
+        try {
+            $env:PATH = ([Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH', 'User'))
+            $cands = @(Get-ToolCandidates -Name $Tool -RuntimeIndex @{})
+            # 有些安装器不把目录写进 PATH：再往公认安装位置里找一次
+            if ($cands.Count -eq 0) {
+                foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+                    if (-not $root) { continue }
+                    $hit = @(Get-ChildItem -LiteralPath $root -Recurse -Depth 3 -File -ErrorAction SilentlyContinue |
+                             Where-Object { $_.BaseName -eq $Tool -and $_.Extension -in @('.exe', '.cmd', '.bat') } |
+                             Select-Object -First 1)
+                    if ($hit.Count -gt 0) {
+                        $cands = @((New-Candidate -P $hit[0].FullName))
+                        break
+                    }
+                }
+            }
+            if ($cands.Count -eq 0) {
+                Write-Warning "winget 装完了，但没找到 $Tool 的可执行文件。请确认路径后用 map.ps1 add 登记。"
+                return
+            }
+            $map = Read-Map
+            if ($null -eq $map) { $map = @{ schemaVersion = 1; warehouse = (Get-WarehouseRoot); tools = @{} } }
+            if (-not $map.tools.ContainsKey($Tool)) { $map.tools[$Tool] = @{ preferred = ''; candidates = @() } }
+            foreach ($c in $cands) {
+                $c.note = 'winget 安装（不在统一仓库）；升级/卸载交给 winget'
+                if (-not ($map.tools[$Tool].candidates | Where-Object { $_.path -eq $c.path })) {
+                    $map.tools[$Tool].candidates = @($map.tools[$Tool].candidates) + @($c)
+                }
+            }
+            if (-not $map.tools[$Tool].preferred) { $map.tools[$Tool].preferred = @($map.tools[$Tool].candidates)[0].id }
+            Save-Map $map
+            Write-Host ("  已登记进地图：map.ps1 find {0}" -f $Tool) -ForegroundColor Green
+        } finally { $env:PATH = $saved }
+        return
+    }
+
     $name = $Tool; $ver = $Version
     if ($Tool -match '@') { $parts = $Tool -split '@', 2; $name = $parts[0]; $ver = $parts[1] }
 
@@ -781,6 +835,9 @@ toolkit-map —— 本机工具地图（给 agent 用）
   map.ps1 add <tool> -Path <p> 登记一个已有副本（不搬家）
   map.ps1 update [<tool>]      重探（路径没了 / 版本变了 / 多出新副本）
   map.ps1 install <tool>@<ver> 装进统一仓库并登记
+  map.ps1 install <tool> -Via winget [-WingetId <id>]
+                               只能走安装器的工具用它：装到包管理器自己的位置，
+                               并在地图里标注"不在仓库"（升级/卸载仍交给 winget）
 
   公共开关：-Json（机器可读）  -MapFile <路径>  -SkipScan  -WhatIf
 '@
