@@ -1,143 +1,63 @@
 ---
-name: runtime-census
-description: "盘点和管理本机的工具链：任意工具（语言运行时、编译器、CLI、逆向与渗透工具）装了几份、分别在哪、哪一份会被解析到，以及声明与实际是否漂移。当需要回答这台机器上到底装了哪些工具与版本、发现某个命令的行为与预期不符、遇到某个项目需要旧版本而新版本看不见、要在项目里锁定版本、要在一台新机器上一次性配好工具链，或动手前确认自己将要调用的命令实际会是哪个版本时使用。Use when asked which tools or runtime versions are installed on this machine, when a command resolves to the wrong version (e.g. only Node 16 is visible while a project needs 22), when pinning per-project tool versions, when auditing a dirty machine, or when setting up a machine's toolchain declaratively."
-license: MIT
-metadata:
-  version: 0.1.0
-  author: haxsd
+name: toolkit-map
+description: "本机工具地图：agent 要用任何工具（运行时、编译器、CLI、逆向/渗透工具）之前，先查地图拿到确定的绝对路径——而不是靠 PATH 解析或自己猜。地图里没有就装进统一仓库再登记。当需要确认某个命令实际会跑哪个文件、机器上同一工具存在多份副本、要装一个新工具又不想把机器搞乱，或接手一台陌生机器需要先摸清工具链时使用。Use when you need to know which binary a command will actually run, when a machine has several copies of the same tool, when installing a new CLI without polluting the machine, or when orienting yourself on an unfamiliar machine's toolchain."
 ---
 
-# runtime-census
+# toolkit-map —— 先查地图，再动手
 
-盘点本机**工具**并把它们声明式管起来的工具集：语言运行时只是其中一类，编译器、
-CLI、逆向与渗透工具都走同一条流水线。核心作用是解决一个常见的错误认知：
+## 一句话
 
-> `node --version` 是**解析器**（回答"按 PATH 顺序现在用哪个"），
-> 不是**盘点器**（回答"这台机器上装了哪些"）。
+**要用工具之前，先 `find` 一次拿绝对路径；地图里没有，就 `install` 到统一仓库再登记。**
 
-把前者当成后者，就会得出"本机只有 Node 16"这种关于机器的错误结论。
-真实情况常常是同一个命令有好几份副本、IDE 里还捆着一套工具、conda 环境里还有一套，
-只是都被 PATH 挡住了。
+不要用 `Get-Command` / `where.exe` / `Test-Path` / 手工比较 PATH 去推测"该用哪个"——
+本地实测过：这样推测会错（同一个命令名在旧会话和新会话里跑的不是同一个文件）。
 
 ## 铁律
 
-在动任何工具之前先读这几条，它们决定了后面所有命令的写法。
+1. **开工前先确认地图存在**：`scripts/map.ps1 status`。没有地图或提示过旧 → `scripts/map.ps1 scan`。
+2. **调用任何工具前先 `find`**：`scripts/map.ps1 find <tool> -Json`，用返回的 `path` 执行。
+   返回值里还有 `candidates`——**多份副本是常态**，看它们是为了别用错，不是为了挑一个顺手的。
+3. **不许猜**。地图没收录 → `find` 会现场搜一次；搜索也找不到 → 按第 4 条装。
+4. **装新工具只走 `install`**：`scripts/map.ps1 install <tool>@<版本>`。
+   它内部会按 portable 归档 → 解包安装器 → 包管理器 的顺序降级，装完自动登记进地图。
+   **不要**手工下载解压到随手找的位置，也不要往 PATH 里加目录。
+5. **项目内有自己的版本声明时，以项目为准**，用 `mise exec -- <命令>` 执行；
+   机器级声明只代表"这台机器提供哪些版本"。地图给的是机器事实，项目声明是项目意图。
+6. **已有的副本不迁移**。发现地图里没有的副本 → `add` 登记；发现地图过时 → `update`。
+   搬动别人的路径可能断掉项目配置、IDE 设置或 CI 脚本。
 
-1. **不要用 `--version` 回答"有哪些"。** 它只能回答"用哪个"。
-2. **先读声明，再决定版本。** 项目里的 `mise.toml` / `.tool-versions` /
-   `.nvmrc` / `package.json` 的 `engines` 表达的是**需求**；探测只能反映**现状**。
-   需求优先。
-3. **需要特定版本时用一次性激活，不改全局状态。**
-   `mise exec -- <命令>` 优于改 PATH、优于全局安装。
-4. **让机器满足项目，而不是改项目迁就机器。** 版本对不上就装、就切，
-   不要顺手改 `engines` 或降级依赖——那会造成"本机跑得通、CI 上炸"的隐蔽问题。
-5. **说结论之前先完成一次真实盘点。** 不要说"本机只有 X 版本"，
-   要说"PATH 上的 `node` 解析到 X，机器上另有 Y 未被 PATH 覆盖"。
-6. **新装的运行时放在规范根 `~/toolchains/<工具>/<版本>/`**（可用环境变量
-   `TOOLCHAIN_ROOT` 覆盖）。不要往 PATH 里加版本目录，也不要装到随手找的位置。
-   已存在的游离运行时**不要迁移**——路径可能被项目配置、IDE 设置、CI 脚本写死，
-   搬走会断；正确做法是登记到声明文件。细则见 `AGENTS.md` 规则 5。
+## 五个动作
 
-完整的契约（含五类盘点来源、五个常见坑、报告格式要求）在 `AGENTS.md`，
-需要给其它项目用时直接拷那个文件。
-
-## 三个使用场景
-
-脚本都在**本 skill 目录的 `scripts/` 下**。Windows 用 `.ps1`，macOS/Linux 用 `.sh`。
-
-### 场景一：不知道这台机器上有什么
-
-```powershell
-<skill目录>\scripts\census.ps1          # 人类可读报告
-<skill目录>\scripts\census.ps1 -Json    # JSON，供程序消费
-<skill目录>\scripts\census.ps1 -Timing  # 附带各阶段耗时
-```
-
-```bash
-<skill目录>/scripts/census.sh
-<skill目录>/scripts/census.sh --json
-<skill目录>/scripts/census.sh --timing
-<skill目录>/scripts/census.sh --lang en   # 英文输出（Windows 侧是 -Lang en）
-```
-
-两个实现输出**同一套 JSON 结构**（`schemaVersion: 1`），所以 agent 不需要为平台写两套解析；
-CI 里的 `tests/parity.ps1` 每次都会在同一个沙箱里对两种实现各跑一遍，核对它们发现了同一批问题。
-
-输出六节：声明层 / mise 纳管层 / 命名约定层 / 运行时清单 / 解析层 / 告警。
-告警有这些，每一种都能直接转成行动：
-
-| 告警 | 含义 | 该做什么 |
+| 命令 | 什么时候用 | 会做什么 |
 |---|---|---|
-| `STUB` | 命令解析到商店应用执行别名，而目标应用没装（实测退出码 9009） | 这个命令不能用，换一个 |
-| `PATH_ORDER` | 声明与 mise 一致，但 PATH 解析到别的副本（未激活的场景会用错版本） | 把 shims 放到用户级 PATH 首位；机器级目录需管理员权限 |
-| `SHADOWED` | 有多个版本，但 PATH 只暴露一个 | 用 `mise exec` 或显式路径 |
-| `CONVENTION` | 存在只写在文件名里的版本约定 | 必须写进声明文件，否则会失传 |
-| `PATH_DIRT` | 用户级 PATH 有重复或带引号的条目 | 清理掉，否则挤占 PATH 长度并掩盖"改了没生效" |
-| `DRIFT` | 部署的全局声明与 `templates/mise-config.toml` 不一致 | `bootstrap -RefreshConfig`（会先备份） |
-| `XDG_SHIFT` | 设置了 `XDG_CONFIG_HOME`，全局声明搬了家、原位置变成路径相关配置 | 去掉该变量，或把声明迁过去 |
-| `STRAY` | 运行时放在非规范位置，且没有管理器纳管 | 登记到声明文件（**不要迁移**，见铁律 6） |
-| `UNDECLARED` | 当前项目有 `engines` 约束但无可读的声明文件 | 补 `mise.toml` / `.tool-versions`，见 `AGENTS.md`「接手一个锁旧版本的老项目」 |
-| `MISSING` | 声明要求了但没装 | `mise install` |
+| `map.ps1 scan` | 第一次用；距离上次超过 24 小时；装了/卸了东西之后 | 扫描本机，重建地图（复用 census 的扫描内核） |
+| `map.ps1 status` | 每次开工前 | 地图在不在、多旧、有没有候选路径失效、PATH 变没变 |
+| `map.ps1 find <tool> [-Json]` | 要用某工具前 | 返回首选绝对路径 + 版本 + 来源 + **其他候选**；地图没有就现场搜一次 |
+| `map.ps1 add <tool> -Path <绝对路径> [-Version v] [-Note 说明]` | 发现地图里没有的副本 | 登记进地图，不搬路径 |
+| `map.ps1 update [<tool>]` | `find` 的结果与实际不符时 | 重探：路径消失就移除、版本变了就更新、发现新副本就登记 |
+| `map.ps1 install <tool>@<版本>` | 地图和现场都没有 | 装进统一仓库（`~/toolchains/<工具>/<版本>/`）并设为首选 |
 
-### 场景二：新机器，要把环境一次配好
+## 地图在哪、长什么样
 
-```powershell
-<skill目录>\scripts\bootstrap.ps1 -DryRun   # 先看会改什么
-<skill目录>\scripts\bootstrap.ps1           # 再执行
-```
+- `~/.toolkit/map.json`（机器可读；`TOOLKIT_MAP` 可覆盖），同名 `.md` 是人类可读摘要
+- 每个工具：一个 `preferred` + 若干 `candidates`。关键字段：
+  - `source`：`warehouse`（我们的统一仓库）｜`manager`（mise 等）｜`manual`（手装）｜
+    `system`（系统安装）｜`ide-host`（IDE 自带）｜`conda-base` / `conda-env`
+  - `reachable`：这个文件所在的目录在不在 PATH 上（**存在 ≠ 可用 ≠ 会生效**，三层分开记）
+  - `isShim`：是间接层（如 `mise\shims\`），**只登记、不执行**——执行 shim 可能触发自动安装
+  - `note`：为什么这条要小心（IDE 自带、conda 环境内、shim、商店别名占位……）
 
-```bash
-<skill目录>/scripts/bootstrap.sh --dry-run
-<skill目录>/scripts/bootstrap.sh
-```
+**首选规则**：声明匹配 → 仓库里装的 → 能被 PATH 解析的具体二进制 → 来源优先级 → 版本高者。
+shim 不会被选为首选（它指向谁可能变），环境内的副本（conda env）默认不参选。
 
-它会装 mise、写入机器声明、把 shims 放到用户级 PATH 首位、拉取运行时。
-刻意不做：不动机器级环境变量、不删已有的 PATH 条目、不碰 IDE 自带的运行时。
+## 只读护栏
 
-两个值得知道的开关：
+- 扫描/探测**绝不执行 shim 类路径**（会触发管理器自动安装，实测踩过：装出了第二份 gh）。
+- 扫描**绝不修改**机器状态：不写 PATH、不动已有副本、不卸载任何东西。
+- 只有 `install` 会改状态，且只改统一仓库里的那一份。
 
-- 声明漂移时默认**只报告、不覆盖**（部署副本里可能有你手工加的工具）。要覆盖请加
-  `-RefreshConfig` / `--refresh-config`，覆盖前自动备份。
-- `tests/verify-shell.ps1` 用真 bash（Git Bash，否则退回容器）对所有 `.sh` 执行
-  `bash -n`——Windows 上 PATH 里的 `bash` 往往是 WSL 转发壳，导致 `.sh` 从来没被验证过。
+## 不做什么
 
-### 场景三：项目里锁定运行时版本
-
-```toml
-# 项目根目录 mise.toml
-[tools]
-node   = "22"
-python = "3.12"
-```
-
-```bash
-mise trust && mise install
-mise exec -- npm test        # 一次性激活，零全局状态
-```
-
-## 三个平台陷阱
-
-写脚本或判断运行时可用性时会踩到，遇到诡异现象先想到这几条。
-
-**存在 ≠ 可用（Windows）。** `WindowsApps\python3.exe` 是 **0 字节的商店应用
-别名**：`Get-Command` 能找到它，`where.exe` 也会列出它，但执行时无输出、退出码
-9009。反过来也不成立——0 字节不等于坏，`pwsh.exe`、`winget.exe` 同样是 0 字节却
-能正常执行。文件长度只说明"可疑"，下结论要靠真跑一次版本命令。
-
-**Windows 的 PATH 是「机器级在前、用户级在后」拼起来的。** 机器级的直接工具目录
-（如 `C:\ProgramData\Oracle\Java\javapath`）永远排在 mise 的 shims 之前，把 shims
-加进用户级 PATH 也抢不过它；而 `mise activate` 只在当前会话内前置 shims。于是交互式
-shell 用对版本，cmd、图形程序、IDE 任务、`-NoProfile` 脚本用旧版本——判断"声明生效
-没有"必须区分这两种场景。
-
-**PowerShell 5.1 的 `@()` 陷阱。** `@($list)` 作用于 `List[object]` 会抛出
-`Argument types do not match`，必须用 `$list.ToArray()`。而且如果脚本里设了
-`$ErrorActionPreference = 'SilentlyContinue'`，这个错误会被完全吞掉，
-只在后续表现为某个对象莫名变成 `$null`。
-
-## 本套件不负责的事
-
-- **不安装语言本身之外的开发工具**（jadx、frida、nmap 之类）。它只管运行时版本。
-- **不管容器**。需要完全隔离的环境用 Docker 或 devcontainer，那是另一条路线。
-- **不改 IDE 自带的运行时**。JetBrains 的 `jbr/` 属于 IDE 的一部分，
-  census 会把它单独标为「IDE 内置」，仅供知情，不建议当项目 JDK 用。
+- 不管应用依赖（venv、node_modules、pip/npm 装的库）——那些离开环境没有意义，不进地图。
+- 不管应用环境诊断（端口、`.env`、依赖目录、执行位）。
+- 不替代包管理器：mise 负责"项目里用哪个版本"，本技能负责"机器上哪个文件是可用的、装哪儿"。
