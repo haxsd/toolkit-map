@@ -29,6 +29,17 @@ param([switch]$KeepSandbox)
 
 $ErrorActionPreference = 'Stop'
 
+# 任何未捕获的异常都要带上位置与原因，并转成 GitHub 注解后再退出：
+# 抛异常会直接中断调用方的步骤脚本，那样连一条线索都留不下（CI 上踩过）。
+trap {
+    $where = $_.InvocationInfo.PositionMessage
+    Write-Host "  [失败] parity.ps1 抛出异常" -ForegroundColor Red
+    Write-Host "         $($_.Exception.Message)" -ForegroundColor DarkGray
+    Write-Host "::error::parity.ps1 异常: $($_.Exception.Message)"
+    if ($where) { Write-Host "::error::位置: $($where -replace "`r?`n", ' ')" }
+    exit 1
+}
+
 $repoRoot  = Split-Path $PSScriptRoot -Parent
 $censusPs1 = Join-Path $repoRoot 'scripts\census.ps1'
 $censusSh  = Join-Path $repoRoot 'scripts\census.sh'
