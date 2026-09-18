@@ -504,9 +504,9 @@ function Invoke-Find {
                 Save-Map $map
                 Write-Host "  找到并已登记进地图。" -ForegroundColor Green
             } else {
-                # 真的没有 → 按协议应当装进仓库
-                $o = @{ tool = $Tool; found = $false; hint = "本机没有这个工具。按协议装进统一仓库：map.ps1 install $Tool@<版本>" }
-                if ($Json) { $o | ConvertTo-Json -Compress } else { Write-Host "本机没有 '$Tool'。用 map.ps1 install $Tool@<版本> 装进仓库。" -ForegroundColor Yellow }
+                # 真的没有 → find 只报告缺失；安装是用户明确要求时的独立动作
+                $o = @{ tool = $Tool; found = $false; hint = "本次查找未找到 '$Tool'。如明确需要安装，再执行：map.ps1 install $Tool@<版本>" }
+                if ($Json) { $o | ConvertTo-Json -Compress } else { Write-Host "本次查找未找到 '$Tool'。如明确需要安装，再执行 map.ps1 install $Tool@<版本>。" -ForegroundColor Yellow }
                 exit 1
             }
         } else {

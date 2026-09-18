@@ -2,8 +2,8 @@
 
 给 agent 用的**本机工具地图**：它是这台机器的工具索引，仓库是存放地点，两者分开。
 
-- **要调用工具**：先 `find` 拿绝对路径——它可能在统一仓库里，也可能在系统或管理器里——然后执行它。
-- **要装工具**：先 `find` 确认本机确实没有，再 `install` 进统一仓库，装完自动登记进地图。
+- **要调用工具**：先 `find` 拿绝对路径——它可能在统一仓库里，也可能在系统或管理器里——然后执行它；找不到时只现场探测并登记，不会自动安装。
+- **要装工具**：只有明确需要安装时，才先 `find` 确认地图和现场都没有，再单独执行 `install` 进统一仓库，装完自动登记进地图。
 
 ## 为什么需要它
 
@@ -34,10 +34,10 @@ ln -s ~/Projects/toolkit-map ~/.cursor/skills/toolkit-map
 ```powershell
 .\scripts\map.ps1 scan                  # 扫描本机，生成/刷新地图（复用 census 的扫描内核）
 .\scripts\map.ps1 status                # 地图在不在、多旧、有没有失效候选
-.\scripts\map.ps1 find jadx             # 查这个工具该用哪个
+.\scripts\map.ps1 find jadx             # 查这个工具该用哪个（只查找，不安装）
 .\scripts\map.ps1 add <tool> -Path <p>  # 登记一个已有副本（不搬家）
 .\scripts\map.ps1 update [<tool>]       # 重探：路径没了就移除、版本变了就更新
-.\scripts\map.ps1 install jadx@latest   # 装进统一仓库并登记为首选
+.\scripts\map.ps1 install jadx@latest   # 明确需要时才装进统一仓库并登记为首选
 ```
 
 `find` 的典型输出——**它会把所有副本摆出来**，因为多份副本是常态：
@@ -60,6 +60,10 @@ ln -s ~/Projects/toolkit-map ~/.cursor/skills/toolkit-map
 - **首选规则**：声明匹配 → 仓库里装的 → 能被 PATH 解析的具体二进制 → 来源优先级 → 版本高者。
   shim 不作首选（它指向谁可能变），conda 环境内的副本默认不参选。
 
+这两个目录都是**使用者本机状态**，不属于 GitHub 仓库：`~/.toolkit/map.json` 记录本机发现结果，
+`~/toolchains/` 存放本机明确安装的工具。GitHub 只发布协议、脚本、安装配方和通用示例；
+文档里的工具名是配方或示例，不是某台机器当前安装清单。
+
 ## 管什么、不管什么
 
 - **管**：可独立执行的工具——运行时、编译器、CLI、逆向/渗透工具。判断标准是三条同时成立：
@@ -81,8 +85,9 @@ ln -s ~/Projects/toolkit-map ~/.cursor/skills/toolkit-map
 
 ## 已知限制
 
-- `install` 目前支持 portable 归档（内置 gh / jadx / ripgrep / fd 四个配方，其余用 `-Url` 给直链）；
-  只能走安装器的工具需要人工处理后再 `add` 登记。
+- `install` 目前支持 GitHub portable 配方（gh / jadx / ripgrep / fd）、固定 URL 配方（adb），以及
+  `-Via winget` 的安装器兜底。安装器管理的工具会登记真实路径，但不一定落在统一仓库；其他 portable
+  工具需要用 `-Url` 给直链，或人工安装后再 `add` 登记。
 - Unix 版（`map.sh`）尚未编写；macOS / Linux 上目前只有扫描内核 `census.sh` 可用。
 
 ## 许可
