@@ -1,14 +1,14 @@
 ﻿<#
 .SYNOPSIS
-  文档检查：文档必须成对存在（中英各一份），且所有相对链接都能解析到真实的文件与标题。
+  文档检查：文档保持单语（中文），所有相对链接都能解析到真实的文件与标题。
 
 .DESCRIPTION
-  为什么必须有这一项：文档拆进 docs/ 之后，出错的成本变得很低——只改了中英其中一份，
-  或者搬动、改名之后留下一堆指向不存在文件的链接。这两种问题在本地都没有任何症状，
-  只有在别人打开仓库时才暴露。
+  为什么必须有这一项：文档出错的成本很低——搬动、改名之后留下一堆指向不存在文件的链接，
+  或者不知不觉又冒出中英两份互相漂移。这两种问题在本地都没有任何症状，只有别人打开仓库时
+  才会暴露。
 
   检查两类问题：
-    · 成对：每个 .md 都要有对应的 .zh-CN.md（反之亦然），README 与 docs/ 都覆盖
+    · 单语：不允许出现 *.zh-CN.md（改名、新增文档时容易顺手复制出第二份）
     · 链接：所有相对链接（含 #锚点）必须指向仓库内真实存在的文件与标题
 
   锚点比对刻意宽松（只比较字母与数字，忽略连字符、下划线、标点的差异）：
@@ -70,28 +70,19 @@ function Test-Anchor {
     return $false
 }
 
-# 刻意只维护单一语言的文件：它们是"要被整份拷进别的项目"的契约（agent 规则、skill 入口），
-# 同时维护中英两份只会互相漂移，收益是负的。其余文档一律要求成对。
-$singleLanguage = @('AGENTS.md', 'SKILL.md')
-
+# 文档单语（中文）：消费方是 agent 与使用者自己，同时维护中英两份只会互相漂移。
+# 这里反向检查"没有 .zh-CN.md 回潮"——新增或改名文档时最容易顺手复制出第二份。
 $docs = @(Get-MarkdownFiles)
 $zhSuffix = '.zh-CN.md'
 
 Write-Host ''
-Write-Host ' 文档检查（成对与链接）' -ForegroundColor White
+Write-Host ' 文档检查（单语与链接）' -ForegroundColor White
 
-# ---------- 1. 中英成对 ----------
+# ---------- 1. 单语 ----------
 foreach ($f in $docs) {
-    if ($singleLanguage -contains $f.Name) { continue }
     if ($f.Name -like "*$zhSuffix") {
-        # 中文版 -> 需要英文版同目录同名
-        $counterpart = Join-Path $f.DirectoryName ($f.Name.Substring(0, $f.Name.Length - $zhSuffix.Length) + '.md')
-    } else {
-        # 英文版 -> 需要中文版同目录同名
-        $counterpart = Join-Path $f.DirectoryName ([System.IO.Path]::GetFileNameWithoutExtension($f.Name) + $zhSuffix)
+        Check "$($f.Name) 不该存在" $false '文档已改为单语：请把内容合并进主文件后删除它'
     }
-    Check "$($f.Name) 有对应版本 $(Split-Path $counterpart -Leaf)" (Test-Path -LiteralPath $counterpart) `
-          '中英两份必须同时维护：改名或新增时把另一份也补上'
 }
 
 # ---------- 2. 相对链接与锚点 ----------

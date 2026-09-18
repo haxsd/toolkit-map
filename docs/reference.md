@@ -1,175 +1,117 @@
-[中文](reference.zh-CN.md) ｜ **English** ｜ [README](../README.md)
+# 参考手册
 
-# Reference
+本文件描述三件事：`map.ps1` 的动作与参数、地图文件的格式、以及扫描内核 `census.ps1` 的输出契约。
 
-Every flag the two commands accept, what they print, and the conventions behind them.
-Platform-specific behaviour lives in [platform notes](platform-notes.md).
+## 1. map.ps1
 
-For the rule an agent must follow when judging tool availability, see
-[AGENTS.md](../AGENTS.md) (Chinese).
+```
+map.ps1 <动作> [参数] [开关]
+```
 
-## census
-
-Inventory only — it never writes to the machine, which is why it is the default entry
-point. A full run takes a few seconds on a lean PATH and up to about half a minute on a
-Windows PATH with thousands of entries.
-
-| Flag | Description |
-|---|---|
-| *(none)* | Human-readable report |
-| `--json` | One JSON object on stdout and nothing else — the human-readable sections are suppressed entirely |
-| `--deep` | Also scan common install roots (bounded: depth 4, results capped; the slow path) |
-| `--timing` | Per-stage timings |
-| `-Lang en` / `--lang en` | English output (also via `CENSUS_LANG`); default `zh` |
-
-`census.ps1` accepts one or two dashes (`-Json` or `--json`); `census.sh` uses two.
-
-### What it inventories
-
-| Stage | What it covers |
-|---|---|
-| 1. Declarations | `mise.toml` / `.tool-versions` in the project and globally |
-| 2. Managed | Runtimes that mise manages |
-| 3. Conventions | Version-suffixed shims on PATH — and the file each one actually points to |
-| 4. Inventory | Version manager dirs, system installs, IDE-bundled JBRs, conda envs |
-| 5. Resolution | What common commands actually resolve to, their version, and whether they run |
-
-### JSON output
-
-Both implementations emit the **same schema** (checked by `tests/parity.ps1` in CI), so an
-agent or CI job does not need a per-platform parser:
-
-| Field | Contents |
-|---|---|
-| `schemaVersion` | `1` — bumped when the field set or semantics change |
-| `generatedAt`, `host` | Timestamp and `{os, arch, user, cwd}` |
-| `declarations` | Every `mise.toml` / `.tool-versions` found: `{scope, path, tools}` |
-| `toolsRoot` | Canonical root for hand-installed runtimes |
-| `mise` | `{available, tools[]}` for the managed layer |
-| `conventions`, `runtimes`, `resolution` | The inventory stages. Consume the fields documented here; an implementation may carry extra fields of its own (see below) |
-| `warnings` | `[{kind, tool, message, action, detail}]` — `kind` is a stable ASCII code |
-| `timings`, `summary` | Per-stage milliseconds (with `--timing`) and counts |
-
-`kind` codes (`STUB`, `PATH_ORDER`, `DRIFT`, …) never change with the language; `message`
-and `action` follow `--lang`.
-
-**The two implementations are not required to be structurally identical.** The fields listed
-above are the contract; an implementation may carry extras of its own — `host.powershell` and
-`mise.tools[].installPath`, for instance, exist only in the PowerShell version because they
-describe facts that only exist on Windows. `tests/parity.ps1` deliberately does not compare
-fields one by one; it only enforces the rule above, that machine-readable markers stay ASCII.
-
-### Warning codes
-
-| Warning | Meaning | What to do |
+| 动作 | 参数 | 做什么 |
 |---|---|---|
-| `STUB` | The command resolves to a Store app-execution alias whose target app is not installed — probing it gives no output and exit code 9009 | The command does not work; use another |
-| `PATH_ORDER` | Declaration and mise agree on a version, but PATH resolves the command to a copy that does **not** satisfy the declaration (a copy of the declared version itself is fine — only a genuinely wrong version is reported) | Put mise's shims first in the user PATH (bootstrap does); machine-level dirs need admin rights |
-| `SHADOWED` | Multiple versions exist, PATH exposes only one | Use an absolute path or activate via a version manager |
-| `CONVENTION` | A version convention exists only in a filename | Record it in a declaration file, or it will be lost |
-| `PATH_DIRT` | The user PATH has duplicate or quoted entries | Clean them up — they eat into the PATH length limit and hide "I changed it but nothing took effect" bugs |
-| `DRIFT` | The deployed global declaration differs from `templates/mise-config.toml` | `bootstrap.ps1 -RefreshConfig` / `bootstrap.sh --refresh-config` (backs up first) |
-| `XDG_SHIFT` | `XDG_CONFIG_HOME` is set, so mise's global config moved and `~/.config/mise/config.toml` became a path-dependent config | Unset the variable, or move the declaration |
-| `STRAY` | Runtime sits in a non-standard location with no manager tracking it | Record it in a declaration file — **do not migrate** it (see below) |
-| `UNDECLARED` | The current project has an `engines` constraint but no readable declaration | Add `mise.toml` / `.tool-versions` |
-| `MISSING` | Declared but not installed | `mise install` |
+| `scan` | — | 调用 census 扫描本机，重建地图（`~/.toolkit/map.json` 与同名 `.md`） |
+| `status` | — | 地图是否存在、扫描时间、候选失效数、PATH 是否变过；给出是否该重扫的建议 |
+| `find` | `<工具名>` | 返回首选绝对路径 + 版本 + 来源 + 其他候选；地图里没有就现场搜一次，找到即登记 |
+| `add` | `<工具名> -Path <绝对路径>` | 登记一个已有副本（不搬路径）。可选 `-Version`、`-Note`、`-Prefer` |
+| `update` | `[<工具名>]` | 重探：路径消失就移除、版本变了就更新、发现新副本就登记；省略工具名则全量 |
+| `install` | `<工具名>@<版本\|latest>` | 装进统一仓库并登记为首选。也可 `install <工具名> -Url <zip 直链>` |
 
-### Convention: where unmanaged runtimes live
+通用开关：
 
-Runtimes you install by hand — a zip download, a side-by-side install kept for a legacy
-project — belong under one root, arranged as `<tool>/<version>/`:
-
-```text
-~/toolchains/
-├── node/22.23.2/
-└── python/3.12.10/
-```
-
-Override the location with `TOOLCHAIN_ROOT`. This buys two things: a single place to
-look, and a predictable path so the next agent or teammate can find it without asking.
-
-**Runtimes that are already elsewhere are not migrated.** Their paths may be hard-coded
-in project config, IDE settings, or CI scripts, and moving them breaks things days later.
-The fix is to *record* them — `census` lists them under `[STRAY]` — not to move them.
-A non-standard location is not the real problem; the real problem is that a runtime only
-reachable through PATH is lost the moment PATH changes.
-
-## Declaring versions in a project
-
-```toml
-# mise.toml at the project root
-[tools]
-node   = "22"
-python = "3.12"
-
-[env]
-NODE_ENV = "development"
-
-[tasks]
-test  = "npm test"
-build = "npm run build"
-```
-
-```bash
-mise trust && mise install
-mise exec -- npm test        # one-shot activation, no global state changed
-```
-
-One file covers every language. asdf's `.tool-versions` is supported too — see
-`examples/` for both formats.
-
-**The direction matters**: make the machine satisfy the project's declaration, not the
-other way round. Editing `engines` or downgrading dependencies to match whatever happens
-to be installed produces the nastiest class of bug — passes locally, fails in CI.
-
-## bootstrap
-
-The one-time setup script. Run it only if you want per-project version switching on top of
-census. Flags are the same on both platforms, spelled with one dash on PowerShell and two
-on the shell script:
-
-| Flag | Description |
+| 开关 | 作用 |
 |---|---|
-| `-DryRun` / `--dry-run` | Print what would change, touch nothing |
-| `-RefreshConfig` / `--refresh-config` | Overwrite the deployed machine manifest with the template (backing up first). Without it, drift is only reported |
-| `-SkipTools` / `--skip-tools` | Install mise and write the manifest, but do not run `mise install` |
-| `-NoProfile` / `--no-rc` | Do not touch shell startup files |
-| `-ToolsRoot` / `--tools-root` | Override the canonical root for hand-installed runtimes (default `~/toolchains`) |
-| `-ConfigSource` / `--config` | Use a different manifest template instead of `templates/mise-config.toml` |
+| `-Json` | 机器可读输出（agent 用这个） |
+| `-MapFile <路径>` | 覆盖地图位置（默认 `~/.toolkit/map.json`，也可用环境变量 `TOOLKIT_MAP`） |
+| `-SkipScan` | `find` 时不要现场搜索，只在现有地图里查 |
+| `-WhatIf` | `install` 只打印计划，不下载不安装 |
+| `-MaxAgeHours <小时>` | `status` 判断"过旧"的阈值，默认 24 |
 
-It performs five idempotent steps:
+退出码：`0` 成功；`find` 找不到工具时退出码 `1`（此时输出里会给出应该执行的 `install` 命令）。
 
-1. Installs [mise](https://mise.jdx.dev) (winget → scoop → choco → npm; `mise.run` → brew on Unix)
-2. Writes `templates/mise-config.toml` as the global machine manifest. If nothing is deployed yet it copies the template; if the deployed copy differs, it reports the drift (which `[tools]` keys differ) and **leaves your file alone**
-3. Creates the canonical root for hand-installed runtimes (`~/toolchains`)
-4. Puts mise's shims directory at the **front** of the user-level PATH (appended, it loses to every pre-existing direct tool dir) and lists machine-level dirs that still shadow it
-5. Runs `mise install` to fetch the declared runtimes
+## 2. 地图文件
 
-`bootstrap` changes machine state on purpose, so start with `-DryRun` / `--dry-run` and
-read the plan before running it for real.
-
-### What bootstrap changes and how to undo it
-
-| `bootstrap` changes | How to undo |
-|---|---|
-| Installs mise (winget → scoop → choco → npm; `mise.run` → brew) | Uninstall it with the same package manager |
-| Writes the machine manifest `~/.config/mise/config.toml` | A `config.toml.bak-<timestamp>` backup is kept next to it; delete the file to leave no machine manifest |
-| Moves mise's shims to the front of the **user-level** PATH | Remove that entry in *Edit environment variables for your account*, then reopen terminals |
-| Appends the activation line to PowerShell profiles (both hosts when `pwsh` exists) | Delete the two lines marked `runtime-census` in those profile files |
-| Runs `mise install` (downloads the declared runtimes) | `mise uninstall <tool>@<version>`; versions that were already there are untouched |
-| — | It never touches machine-level environment variables, never deletes PATH entries, never modifies IDE-bundled runtimes |
-
-## verify-shell.ps1
-
-Windows only, and only when you edit the `.sh` implementations: `bash` on PATH is usually
-the WSL relay, which fails with `execvpe(/bin/bash) failed: No such file or directory` —
-that looks like a syntax error in your script but is not. The script lives in `tests/`
-since it is a development check rather than part of the product:
-
-```powershell
-.\tests\verify-shell.ps1
+```jsonc
+{
+  "schemaVersion": 1,
+  "scannedAt": "2026-09-18T13:55:57+08:00",
+  "warehouse": "C:\\Users\\<你>\\toolchains",
+  "pathSnapshot": "……当时的 PATH，用于检测机器是否变过",
+  "censusSummary": { "warnings": ["SHADOWED", "STRAY"], "counts": { "runtimes": 22, "declarations": 1 } },
+  "tools": {
+    "gh": {
+      "preferred": "system-2.101.0",
+      "candidates": [
+        {
+          "id": "system-2.101.0",
+          "version": "2.101.0",
+          "path": "C:\\Program Files\\GitHub CLI\\gh.exe",
+          "source": "system",
+          "reachable": true,
+          "isShim": false,
+          "note": ""
+        }
+      ]
+    }
+  }
+}
 ```
 
-It finds a real bash (Git Bash, otherwise a `bash` container) and runs `bash -n` over every
-`.sh` in `scripts/` and `tests/` — parse only, never execute. See
-[contributing](contributing.md) for the rest of the local checks.
+候选字段：
+
+| 字段 | 含义 |
+|---|---|
+| `id` | 工具内唯一标识，`preferred` 指向它 |
+| `version` | 版本号（探测不到则为空，例如 shim 与商店别名不探测） |
+| `path` | **绝对路径**——agent 要执行的就是它 |
+| `source` | `warehouse`（统一仓库）｜`manager`（mise 等）｜`manual`（手装）｜`system`（系统安装）｜`ide-host`（IDE 自带）｜`conda-base` / `conda-env` |
+| `reachable` | 该文件所在目录是否在 PATH 上。**存在 ≠ 可用 ≠ 会生效**，三层分开记 |
+| `isShim` | 是间接层（如 `mise\shims\`）。只登记、**不执行**：执行 shim 可能触发管理器自动安装 |
+| `note` | 为什么这条要小心（IDE 自带、conda 环境内、shim、商店别名占位……） |
+
+**首选规则**（`Select-Preferred`）：
+
+1. 若该工具在某份声明里被点名 → 只在**满足声明的具体二进制**里选（shim 不参与这一步）
+2. 环境内的副本（`conda-env`）默认不参选
+3. 排序：仓库里装的 → 能被 PATH 解析的具体二进制 → 能被 PATH 解析的 shim → 其余
+4. 同层比来源：`warehouse` → `manager` → `manual` → `system` → `ide-host` → `conda-base`
+5. 最后比版本，高者优先
+
+## 3. 安装配方
+
+`install` 内置四个 portable 配方（`gh`、`jadx`、`ripgrep`、`fd`），其余工具用 `-Url` 给直链。
+配方把 **发布 tag** 与 **资产文件名** 分开写——同一个项目的这两者 `v` 前缀经常不一致
+（jadx 的 tag 是 `v1.5.6`，资产却叫 `jadx-1.5.6.zip`）。版本号一律按裸版本处理，
+`@latest` 走 GitHub API 解析最新发布。
+
+落点固定为 `<TOOLCHAIN_ROOT>/<工具>/<版本>/`；归档里若多一层同名目录会被压平，
+保证"仓库里一律长这样"。
+
+## 4. 扫描内核：census.ps1 / census.sh
+
+`map.ps1 scan` 直接调用 `census.ps1 -Json`，不重复实现盘点。两者也可以单独使用。
+
+| 参数 | 作用 |
+|---|---|
+| `-Json` / `--json` | 机器可读输出（`schemaVersion` 目前为 1） |
+| `-Timing` / `--timing` | 各阶段耗时（随语言与平台，阶段集合略有差异） |
+| `-Lang en` / `--lang en` | 英文输出；默认中文 |
+| `-Deep` / `--deep` | 宽松深扫（慢，默认关闭） |
+| `-ToolsRoot` / `--tools-root` | 覆盖规范根（默认 `~/toolchains`） |
+
+JSON 字段：`schemaVersion`、`generatedAt`、`host`、`declarations`、`toolsRoot`、`mise`、
+`conventions`、`runtimes`、`resolution`、`warnings`、`timings`、`summary`。
+`runtimes[].pattern`、`source`、`placement`、`warnings[].kind` 都是**稳定的 ASCII 标识符**；
+`warnings[].message` / `action` 是散文，跟随 `--lang`。
+
+告警代码：`STUB`（命令指向跑不起来的文件）、`PATH_ORDER`（解析到的版本不满足声明）、
+`SHADOWED`（同一工具存在多份副本）、`CONVENTION`（只存在于文件名的命名约定）、
+`PATH_DIRT`（PATH 里有重复或带引号的条目）、`DRIFT`（模板与部署副本不一致）、
+`XDG_SHIFT`（`XDG_CONFIG_HOME` 让 mise 全局配置搬了家）、`STRAY`（游离副本）、
+`UNDECLARED`（项目有版本约束却没有声明文件）、`MISSING`（声明了但没装）。
+
+## 5. 平台差异（有意保留）
+
+两份实现共享一份文档化的字段，但不要求结构逐字段一致：
+`host.powershell` 与 `mise.tools[].installPath/source/managed` 只在 PowerShell 版里出现，
+因为它们描述的是 Windows 上才有的事实。消费按上面的字段表读即可。

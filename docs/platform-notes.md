@@ -1,75 +1,82 @@
-[中文](platform-notes.zh-CN.md) ｜ **English** ｜ [README](../README.md)
+# 平台说明
 
-# Platform notes
+## PATH 是单值命名空间
 
-Behaviour that differs between Windows, macOS and Linux — plus the traps that make a
-working command look broken. Each one is something `census` reports rather than hides.
+PATH 是有序列表，同名命令只有第一个生效。所以：
 
-## mise activate does not switch directories on PowerShell 5.1
+- `<系统盘>:\nodejs` 排在前面 → 装在别处的 Node 22 永远不会被裸命令 `node` 找到
+- 装了 7 个 JDK → `java` 只会是其中 1 个
 
-mise's `chpwd` hook requires PowerShell 7 or newer. On 5.1, activation only prepends
-mise's versions as the global default — `cd`-ing into a project switches nothing, which is
-the only reason to use `activate` in the first place.
+这不是缺陷，是它的本性。正确做法是让 PATH 里那**一个**位置指向**间接层**
+（shim 目录或版本管理器的激活机制），由间接层按目录、按项目决定用哪个版本。
+不要试图把多个具体版本都塞进 PATH 去争同一个名字——那也是本产品把新装的工具
+放进 `~/toolchains` 而不加进 PATH 的原因。
 
-PowerShell profiles are **per-host** (5.1 reads `WindowsPowerShell`, 7 reads `PowerShell`),
-so bootstrap writes the activation line into **both** hosts' profiles when PowerShell 7 is
-available, and tells you to open `pwsh` instead.
+## Windows 的组合规则
 
-Detect PowerShell 7 with a probe, not by looking for the file: the `pwsh.exe` in
-`WindowsApps` is a 0-byte alias.
+PATH 是「机器级条目在前 + 用户级条目在后」拼起来的。于是：
 
-## Windows composes PATH as machine entries first, user entries second
+- 机器级的直接工具目录（如 `C:\ProgramData\Oracle\Java\javapath`）排在所有用户级条目之前，
+  把 shims 加进**用户级** PATH 也抢不过它；
+- `mise activate` 只在当前会话内前置 shims，于是 cmd、图形程序、IDE 任务、
+  `-NoProfile` 脚本仍然用旧版本。
 
-Commands are resolved by walking that combined list, so a machine-level direct tool
-directory (`C:\ProgramData\Oracle\Java\javapath`) or a legacy directory early in the user
-PATH always beats mise's shims, which scripts usually append at the end.
+判断"声明到底生效没有"必须区分**激活的会话**和**未激活的场景**。
+要让所有场景都对，需要管理员权限调整机器级条目——`bootstrap` 会提示，但不会替你改。
 
-`mise activate` prepends the shims **inside the session only**: interactive shells get the
-declared version, while cmd, GUI apps, IDE tasks and `-NoProfile` scripts silently get the
-old one. That gap is what `[PATH_ORDER]` reports. bootstrap moves the shims to the *front*
-of the user PATH and lists the machine-level directories, which need admin rights to change.
+## shim 是什么，什么时候不该碰
 
-## Exists ≠ usable on Windows, but 0 bytes ≠ broken
+shim 是一个**替身程序**：放在 PATH 上顶着某个命令名，被调用时读当前目录的声明，
+再转给对应版本的真正二进制。实测（同一个 236KB 的 mise shim）：
 
-`WindowsApps\python3.exe` is a 0-byte Microsoft Store app-execution alias; `Get-Command`
-finds it, `where.exe` lists it, and running it produces no output and exits with code 9009.
+```
+C:\...\Temp（无声明）              → node v22.23.2
+C:\...\Temp\shim-demo（node = 20） → node v20.20.2
+```
 
-A 0-byte alias is not automatically broken, though: `pwsh.exe` and `winget.exe` are 0-byte
-aliases that work, because their target apps are installed. File length means "suspect",
-not "unusable" — confirm by running a version command and checking for output. That is
-exactly how `census` decides: `[STUB]` appears only after a probe actually fails.
+| 间接方式 | 生效范围 | 失效范围 |
+|---|---|---|
+| shim | 任何调用场景：cmd、GUI、IDE 任务、`-NoProfile` 脚本 | 基本没有（这就是它存在的理由） |
+| `mise activate` | 只在你加载了钩子的交互式 shell 里 | 其它场景全部拿错版本 |
+| `mise exec -- …` | 明确写出来的那一条命令 | 需要每次记得加前缀 |
+| 本产品的 `find` | agent 干活时：直接给绝对路径 | 人裸敲命令时管不着 |
 
-## ZIP downloads lose the executable bit on Linux and macOS
+**两条实践规矩**：
 
-GitHub's ZIP archive does not carry file modes, so `./scripts/census.sh` fails with
-`Permission denied` even though the repository has it marked executable. Either clone
-instead, or run `chmod +x scripts/*.sh` once after unpacking.
+1. **不要手搓第二套 shim**。`~/tools/bin/node22.cmd` 这类写法创造了一个只存在于文件名里的
+   API——想知道它存在，你得先读过它（自指死锁）。要么写进声明文件，要么用 `find` 登记。
+2. **不要执行 shim 去问版本**。mise 的 shim 在目标工具缺失时会**自动安装**（实测触发过一次：
+   只是为取版本执行了一下 shim，就在 `mise\installs` 下装出了第二份 `gh`）。本产品的扫描
+   因此对 shim 只登记路径、绝不执行（候选里的 `isShim` 标记）。
 
-## bash on PATH is usually the WSL relay
+## 存在 ≠ 可用（但 0 字节也不等于一定坏）
 
-On Windows, `bash` is normally `C:\WINDOWS\system32\bash.exe`. Without a distro installed
-it fails with `execvpe(/bin/bash) failed: No such file or directory`, which looks like a
-syntax error in your script but is not. `tests/verify-shell.ps1` finds a real bash (Git
-Bash, otherwise a `bash` container) and runs `bash -n` over every `.sh` — parse only,
-never execute.
+Windows 上 `WindowsApps\python3.exe` 是 0 字节的商店应用执行别名：`Get-Command` 会返回它，
+但执行时无输出、退出码 9009。不过同一个目录下实测：
 
-## The PowerShell 5.1 `@()` trap
+| 别名 | 大小 | 实测结果 |
+|---|---|---|
+| `python3.exe` | 0 字节 | 无输出、退出码 9009（没装商店版 Python） |
+| `pwsh.exe` | 0 字节 | 正常输出 7.6.6 |
+| `winget.exe` | 0 字节 | 正常输出 v1.29.290 |
 
-`@($list)` on a `List[object]` throws `Argument types do not match` — use
-`$list.ToArray()`. If the script also sets `$ErrorActionPreference = 'SilentlyContinue'`,
-the error is swallowed entirely and only surfaces later as an object mysteriously becoming
-`$null`, which is very hard to trace.
+**文件长度只能说"可疑"，要下结论必须真跑一次版本命令。** 扫描内核就是这么做的
+（`[STUB]` 只在实测失败时才出现）；地图对商店别名同样不执行、只登记路径。
 
-## Known limitations
+## IDE 自带的运行时
 
-- Targeted probing only covers **known install layouts**. Runtimes in completely
-  non-standard locations require `--deep`.
-- `census.sh` only detects JBRs inside `.app` bundles on macOS under common naming;
-  non-standard JetBrains Toolbox install paths may be missed.
-- mise's native Windows support is less mature than on Unix. Some plugins' build scripts
-  assume a Unix-like environment; use WSL or a container for those.
-- The `mise.run` installer does not work on Windows (macOS/Linux only) — use
-  winget / scoop / choco / npm / a manual download instead.
-- CLI output is Chinese by default. The warning codes (`STUB`, `SHADOWED`, `CONVENTION`,
-  `MISSING`) and the `--json` output are language-neutral; `--lang en` switches the prose
-  on both platforms.
+JetBrains 系 IDE 的安装目录里有 `jbr/`，里面是完整的 JDK，版本往往比用户自己装的还新。
+它们不注册到系统，裸命令永远看不到。地图会把它们标成 `ide-host`——
+**只在明确需要时使用**（比如临时验证新语法），不要当作项目的 JDK，
+否则构建会依赖某个 IDE 的私有安装。
+
+## 已知平台差异
+
+- **`py` 不是 mise 的工具**：它是 Windows 的 Python 启动器（`py -0p` 列出注册的 Python）。
+  mise 只生成 `python.exe` / `python3.exe` / `pythonw.exe`。所以"把 shims 放首位"永远
+  不能让 `py` 走进 mise；扫描内核现在只在解析到的版本**确实不满足声明**时才报 `[PATH_ORDER]`。
+- **`.cmd` 在 MSYS/bash 里不算可执行**：`node22.cmd` 这类约定在 Git Bash 下不可见
+  （`[ -x ]` 为假），所以同一个仓库在 PowerShell 版和 shell 版里可能得出不同的约定清单。
+  这是有意保留的差异，不追求两份实现逐字段一致。
+- **`date` 的分辨率**：shell 版计时用 `date +%s`（macOS 不认 `%N`），所以 `timings` 的值是
+  1000 的整数倍；字段名与单位与 PowerShell 版一致（毫秒）。
