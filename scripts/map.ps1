@@ -610,14 +610,22 @@ function Invoke-Update {
 
 # ---------- 动作：install ----------
 
-# portable 归档的来源。只收录"官方发布 zip"的常见工具；其它工具用 -Url 指定直链。
-# tag/asset 两个模板分开写：同一个项目里"发布 tag"和"资产文件名"的 v 前缀经常不一致
-# （jadx 的 tag 是 v1.5.1，资产却叫 jadx-1.5.1.zip），所以版本号统一按裸版本处理。
+# portable 归档的来源。两种形态：
+#   · GitHub 发布：repo + tag + asset 三段模板。tag 与资产文件名的 v 前缀经常不一致
+#     （jadx 的 tag 是 v1.5.6，资产却叫 jadx-1.5.6.zip），所以模板分开写、版本号按裸版本处理。
+#   · 固定 URL：vendor 只给一个"永远指向最新"的地址（如 Google 的 platform-tools），
+#     版本号装完再从可执行文件里探出来。
 $Recipes = @{
     'gh'      = @{ repo = 'cli/cli'; tag = 'v{ver}'; asset = 'gh_{ver}_windows_amd64.zip'; exe = 'bin\gh.exe' }
     'jadx'    = @{ repo = 'skylot/jadx'; tag = 'v{ver}'; asset = 'jadx-{ver}.zip'; exe = 'bin\jadx.bat' }
     'ripgrep' = @{ repo = 'BurntSushi/ripgrep'; tag = '{ver}'; asset = 'ripgrep-{ver}-x86_64-pc-windows-msvc.zip'; exe = 'rg.exe' }
     'fd'      = @{ repo = 'sharkdp/fd'; tag = 'v{ver}'; asset = 'fd-v{ver}-x86_64-pc-windows-msvc.zip'; exe = 'fd.exe' }
+    'adb'     = @{ url = 'https://dl.google.com/android/repository/platform-tools-latest-windows.zip'; exe = 'adb.exe'
+                   # adb 的 --version 第一行是协议版本（1.0.41），平台工具版本在第二行：
+                   #   Android Debug Bridge version 1.0.41
+                   #   Version 36.0.0-13206524
+                   # 所以必须按正则取，不能用通用探测（否则地图里会记成 1.0.41）
+                   versionPattern = '(?m)^Version\s+(\d+(?:\.\d+)*)' }
 }
 
 # 版本号不许猜：@latest 走 GitHub API 拿最新发布的 tag。
@@ -633,6 +641,25 @@ function Resolve-LatestVersion {
     }
 }
 
+# 带提取规则的版本探测：有些工具的 --version 第一行不是版本号
+# （adb 第一行是协议版本 1.0.41，平台工具版本在第二行），所以配方可以自带正则。
+function Get-ExeVersionByPattern {
+    param([string]$ExePath, [string]$Pattern)
+    if (-not $Pattern) { return (Get-ExeVersion $ExePath) }
+    foreach ($flag in @('--version', '-version')) {
+        try {
+            $out = (& $ExePath $flag 2>&1 | Select-Object -First 4) -join "`n"
+            if ($out) {
+                $m = [regex]::Match($out, $Pattern)
+                if ($m.Success) {
+                    return $(if ($m.Groups.Count -gt 1) { $m.Groups[1].Value } else { $m.Value })
+                }
+            }
+        } catch { }
+    }
+    return ''
+}
+
 function Invoke-Install {
     if (-not $Tool) { throw "用法：map.ps1 install <tool>@<版本|latest>（或 install <tool> -Url <zip 直链>）" }
     $name = $Tool; $ver = $Version
@@ -646,67 +673,92 @@ function Invoke-Install {
             throw "没有 $name 的 portable 配方。请给直链：map.ps1 install $name -Url <zip 直链> -Version $ver（或用包管理器装，然后 map.ps1 add 登记）"
         }
         $recipe = $Recipes[$name]
-        # 版本号一律按裸版本处理：'v1.5.1' 和 '1.5.1' 等价；'latest' 去 API 查
-        $ver = "$ver" -replace '^v', ''
-        if (-not $ver -or $ver -eq 'latest') {
-            Write-Host "解析 $name 的最新版本（GitHub API）…" -ForegroundColor DarkGray
-            $ver = Resolve-LatestVersion -Repo $recipe.repo
-        }
-        $tag = $recipe.tag -replace '\{ver\}', $ver
-        $asset = $recipe.asset -replace '\{ver\}', $ver
-        $url = "https://github.com/$($recipe.repo)/releases/download/$tag/$asset"
         $exeRel = $recipe.exe
+        if ($recipe.url) {
+            # 固定 URL 形态（vendor 只给一个永远指向最新的地址）：版本号装完再探。
+            # 注意 'latest' 在这里不是版本号，而是"未知"——不能拿它当目录名。
+            $url = $recipe.url
+            if ($ver -and ($ver -ne 'latest')) { $ver = "$ver" -replace '^v', '' } else { $ver = '' }
+        } else {
+            # GitHub 发布形态：版本号一律按裸版本处理（'v1.5.6' 与 '1.5.6' 等价），latest 走 API
+            $ver = "$ver" -replace '^v', ''
+            if (-not $ver -or $ver -eq 'latest') {
+                Write-Host "解析 $name 的最新版本（GitHub API）…" -ForegroundColor DarkGray
+                $ver = Resolve-LatestVersion -Repo $recipe.repo
+            }
+            $tag = $recipe.tag -replace '\{ver\}', $ver
+            $asset = $recipe.asset -replace '\{ver\}', $ver
+            $url = "https://github.com/$($recipe.repo)/releases/download/$tag/$asset"
+        }
     }
-    if (-not $ver) { $ver = 'unversioned' }
-    $target = Join-Path (Join-Path $root $name) $ver
 
-    Write-Host "将把 $name $ver 装到：$target" -ForegroundColor Cyan
+    Write-Host "将把 $name $(if ($ver) { $ver } else { '(版本装完探测)' }) 装到仓库：$(Join-Path $root $name)" -ForegroundColor Cyan
     Write-Host "  下载：$url" -ForegroundColor DarkGray
     if ($WhatIf) { Write-Host '（-WhatIf：到此为止）' -ForegroundColor Yellow; return }
 
-    $tmp = Join-Path $env:TEMP ("tk-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
-    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    # 先在暂存目录里下载+解压+验证，全部通过后再整体搬进仓库——
+    # 这样失败不会在仓库里留下半个目录（半成品最难排查：它看起来像装好了）。
+    $stage = Join-Path $env:TEMP ("tk-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    New-Item -ItemType Directory -Force -Path $stage | Out-Null
     try {
-        $zip = Join-Path $tmp 'pkg.zip'
+        $zip = Join-Path $stage 'pkg.zip'
         Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
-        if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
-        New-Item -ItemType Directory -Force -Path $target | Out-Null
-        Expand-Archive -LiteralPath $zip -DestinationPath $target -Force
+        $extract = Join-Path $stage 'x'
+        Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
 
         # 归档里往往多一层同名目录，压平一层，保证 <仓库>/<工具>/<版本>/<文件> 的布局稳定
-        $entries = @(Get-ChildItem -LiteralPath $target -Force)
+        $entries = @(Get-ChildItem -LiteralPath $extract -Force)
         if ($entries.Count -eq 1 -and $entries[0].PSIsContainer) {
             $inner = $entries[0].FullName
-            foreach ($f in (Get-ChildItem -LiteralPath $inner -Force)) { Move-Item -LiteralPath $f.FullName -Destination $target -Force }
+            foreach ($f in (Get-ChildItem -LiteralPath $inner -Force)) { Move-Item -LiteralPath $f.FullName -Destination $extract -Force }
             Remove-Item -LiteralPath $inner -Recurse -Force -ErrorAction SilentlyContinue
         }
-        $exe = $exeRel
+
+        # 找可执行文件：配方给的是相对路径；没配方就挑一个与工具同名的
+        $exe = ''
+        if ($exeRel) {
+            $cand = Join-Path $extract $exeRel
+            if (Test-Path -LiteralPath $cand) { $exe = $cand }
+        }
         if (-not $exe) {
-            # 没有配方时：挑一个与工具同名的可执行文件
-            $found = @(Get-ChildItem -LiteralPath $target -Recurse -File -ErrorAction SilentlyContinue |
+            $found = @(Get-ChildItem -LiteralPath $extract -Recurse -File -ErrorAction SilentlyContinue |
                        Where-Object { $_.BaseName -eq $name -and $_.Extension -in @('.exe', '.cmd', '.bat', '') } |
                        Select-Object -First 1)
             if ($found.Count -gt 0) { $exe = $found[0].FullName }
-        } else {
-            $exe = Join-Path $target $exe
         }
-        if (-not $exe -or -not (Test-Path -LiteralPath $exe)) {
-            Write-Warning "装好了，但没找到 $name 的可执行文件。位置：$target（请用 map.ps1 add 手动登记）"
+        if (-not $exe) {
+            Write-Warning "下载解压成功，但没找到 $name 的可执行文件（暂存目录：$extract）。请人工确认后用 map.ps1 add 登记。"
             return
         }
-        Write-Host "  已安装：$exe" -ForegroundColor Green
 
-        # 登记进地图，并在该工具还没有首选时设为仓库优先
+        # 版本未知（固定 URL 形态）就从可执行文件里探一个出来，目录名必须带版本。
+        # 用配方自带的正则（如果有）：有些工具 --version 第一行不是版本号（adb 第一行是
+        # 协议版本 1.0.41，平台工具版本在第二行），通用探测会记错。
+        if (-not $ver) {
+            $vpat = ''
+            if ($recipe -and $recipe.versionPattern) { $vpat = $recipe.versionPattern }
+            $probed = Get-ExeVersionByPattern -ExePath $exe -Pattern $vpat
+            $ver = if ($probed) { $probed } else { 'unknown' }
+            Write-Host "  探测到版本：$ver" -ForegroundColor DarkGray
+        }
+        $target = Join-Path (Join-Path $root $name) $ver
+        if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+        New-Item -ItemType Directory -Force -Path (Split-Path $target -Parent) | Out-Null
+        Move-Item -LiteralPath $extract -Destination $target
+        $finalExe = Join-Path $target ($exe.Substring($extract.Length).TrimStart('\'))
+        Write-Host "  已安装：$finalExe" -ForegroundColor Green
+
+        # 登记进地图并设为首选（同一工具的多个版本可以并存，目录并列）
         $map = Read-Map
         if ($null -eq $map) { $map = @{ schemaVersion = 1; warehouse = $root; tools = @{} } }
         if (-not $map.tools.ContainsKey($name)) { $map.tools[$name] = @{ preferred = ''; candidates = @() } }
-        $c = New-Candidate -P $exe -VersionHint $ver
+        $c = New-Candidate -P $finalExe -VersionHint $ver
         $map.tools[$name].candidates = @($map.tools[$name].candidates) + @($c)
         $map.tools[$name].preferred = $c.id
         Save-Map $map
-        Write-Host ("  已登记进地图并设为首选：map.ps1 find $name" ) -ForegroundColor Green
+        Write-Host "  已登记进地图并设为首选：map.ps1 find $name" -ForegroundColor Green
     } finally {
-        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
