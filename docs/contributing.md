@@ -19,11 +19,12 @@ SKILL.md    使用协议：find / install 的硬规矩
 | `.\tests\check-encodings.ps1` | 每个 `.ps1` 带 UTF-8 BOM、每个 `.sh` 都不带，且 `.ps1` 按 cp1252 读法也能解析。加 `-Fix` 可补 BOM |
 | `.\tests\check-docs.ps1` | 文档单语（禁止 `.zh-CN.md` 回潮）、所有相对链接与锚点可解析 |
 | `.\tests\parity.ps1` | 在同一个沙箱里跑两份扫描内核，断言它们发现同一批人造问题 |
+| `.\tests\map-smoke.ps1` | 用临时地图验证失效首选会修复、已有安装不会被覆盖 |
 | `bash tests/smoke.sh` | 扫描内核（shell 版）的冒烟测试 |
 | `.\tests\verify-shell.ps1` | 对所有 `.sh` 执行 `bash -n`——只解析、不执行 |
 
 **该跑多少**：只跑覆盖你改动的那几项——改文档 → `check-docs`；动 `.sh` → `verify-shell`；
-改告警或解析逻辑 → `parity`；动 `map.ps1` → 手动跑一遍 `scan` + `find`。**发布前才跑全套**。
+改告警或解析逻辑 → `parity`；动 `map.ps1` → `map-smoke`，必要时再手动跑一遍 `scan` + `find`。**发布前才跑全套**。
 `parity.ps1` 要把两份实现各跑一遍（约一分钟），每改一处就全套跑一遍，正是让这个仓库
 显得又慢又重的原因。
 
@@ -51,7 +52,7 @@ SKILL.md    使用协议：find / install 的硬规矩
 
 | 任务 | 步骤 |
 |---|---|
-| `windows`（宿主 PowerShell 5.1） | 编码检查 → 文档检查 → `tests/parity.ps1` |
+| `windows`（宿主 PowerShell 5.1） | 编码检查 → 文档检查 → `tests/map-smoke.ps1` → `tests/parity.ps1` |
 | `ubuntu` | 对 `scripts/*.sh` 与 `tests/*.sh` 执行 `bash -n` → `tests/smoke.sh` |
 
 CI 刻意**不跑** `bootstrap`：它会真的改机器（写 PATH、动 profile、下载运行时）。

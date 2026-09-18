@@ -25,6 +25,7 @@ param(
     [switch]$Prefer,                         # add 用：同时标记为首选
 
     [string]$Url = '',                       # install 用：portable 归档的直链
+    [string]$Sha256 = '',                    # install 用：归档的可选 SHA256（可带 sha256: 前缀）
     [string]$Via = '',                       # install 用：'winget' 表示走包管理器兜底
     [string]$WingetId = '',                  # install 用：包管理器里的包 ID（默认用工具名）
     [string]$MapFile = '',                   # 覆盖地图位置（默认 ~/.toolkit/map.json）
@@ -497,12 +498,12 @@ function Invoke-Find {
     if (-not $map.tools.ContainsKey($Tool)) {
         if (-not $SkipScan) {
             # 地图里没有 → 现场在 PATH / 仓库 / 管理器目录里找一次，找到就补进地图
-            Write-Host "地图里没有 '$Tool'，现场搜索…" -ForegroundColor DarkGray
+            if (-not $Json) { Write-Host "地图里没有 '$Tool'，现场搜索…" -ForegroundColor DarkGray }
             $cands = @(Get-ToolCandidates -Name $Tool -RuntimeIndex @{})
             if ($cands.Count -gt 0) {
                 $map.tools[$Tool] = @{ preferred = (Select-Preferred -Name $Tool -Candidates $cands); candidates = $cands }
                 Save-Map $map
-                Write-Host "  找到并已登记进地图。" -ForegroundColor Green
+                if (-not $Json) { Write-Host "  找到并已登记进地图。" -ForegroundColor Green }
             } else {
                 # 真的没有 → find 只报告缺失；安装是用户明确要求时的独立动作
                 $o = @{ tool = $Tool; found = $false; hint = "本次查找未找到 '$Tool'。如明确需要安装，再执行：map.ps1 install $Tool@<版本>" }
@@ -517,8 +518,48 @@ function Invoke-Find {
     }
 
     $t = $map.tools[$Tool]
-    $pref = @($t.candidates | Where-Object { $_.id -eq $t.preferred } | Select-Object -First 1)
-    $others = @($t.candidates | Where-Object { $_.id -ne $t.preferred })
+    $liveMap = @($t.candidates | Where-Object {
+        $_ -and $_.path -and (Test-Path -LiteralPath $_.path -PathType Leaf)
+    })
+    $pref = @($liveMap | Where-Object { $_.id -eq $t.preferred } | Select-Object -First 1)
+
+    # 地图可能比文件系统旧：status 会提醒，但 agent 直接 find 时也不能返回死路径。
+    # 先保留仍然存在的手工登记，再现场补一次；shim 仍由 Get-ToolCandidates 的护栏负责不执行。
+    if ($pref.Count -eq 0 -and -not $SkipScan) {
+        $fresh = @(Get-ToolCandidates -Name $Tool -RuntimeIndex @{})
+        $merged = New-Object System.Collections.Generic.List[object]
+        $seen = New-Object System.Collections.Generic.HashSet[string]
+        foreach ($c in @($fresh) + @($liveMap)) {
+            if ($c -and $c.path -and $seen.Add($c.path.ToLowerInvariant())) { $merged.Add($c) }
+        }
+        $t.candidates = $merged.ToArray()
+        $t.preferred = Select-Preferred -Name $Tool -Candidates $t.candidates -DeclaredVersions @{}
+        Save-Map $map
+        $liveMap = @($t.candidates)
+        $pref = @($liveMap | Where-Object { $_.id -eq $t.preferred } | Select-Object -First 1)
+    } elseif ($pref.Count -eq 0 -and $liveMap.Count -gt 0) {
+        # -SkipScan 只禁止现场搜索，仍可从地图中剩余的活候选里重新选首选。
+        $t.candidates = $liveMap
+        $t.preferred = Select-Preferred -Name $Tool -Candidates $liveMap -DeclaredVersions @{}
+        Save-Map $map
+        $pref = @($liveMap | Where-Object { $_.id -eq $t.preferred } | Select-Object -First 1)
+    } elseif (@($t.candidates).Count -ne $liveMap.Count) {
+        # 首选本来就有效，但也顺手清掉同一条目里的死候选，避免 status 长期报旧警告。
+        $t.candidates = $liveMap
+        Save-Map $map
+    }
+
+    if ($pref.Count -eq 0) {
+        $o = @{
+            tool = $Tool; found = $false; path = ''; version = ''; source = ''; note = ''
+            candidates = @($liveMap)
+            hint = if ($SkipScan) { '地图里没有可用候选（本次跳过现场搜索）' } else { "本次查找未找到 '$Tool'；如明确需要安装，再执行 map.ps1 install $Tool@<版本>" }
+        }
+        if ($Json) { $o | ConvertTo-Json -Depth 6 -Compress } else { Write-Host $o.hint -ForegroundColor Yellow }
+        exit 1
+    }
+
+    $others = @($liveMap | Where-Object { $_.id -ne $t.preferred })
 
     if ($Json) {
         @{
@@ -528,7 +569,7 @@ function Invoke-Find {
             version   = if ($pref.Count -gt 0) { $pref[0].version } else { '' }
             source    = if ($pref.Count -gt 0) { $pref[0].source } else { '' }
             note      = if ($pref.Count -gt 0) { $pref[0].note } else { '' }
-            candidates = @($t.candidates)
+            candidates = @($liveMap)
         } | ConvertTo-Json -Depth 6 -Compress
         return
     }
@@ -662,8 +703,22 @@ function Get-ExeVersionByPattern {
     return ''
 }
 
+function Assert-ArchiveSha256 {
+    param([string]$ArchivePath, [string]$Expected)
+    if (-not $Expected) { return }
+    $normalized = $Expected.Trim() -replace '^sha256:', ''
+    if ($normalized -notmatch '^[0-9a-fA-F]{64}$') {
+        throw 'SHA256 必须是 64 位十六进制字符串（可带 sha256: 前缀）'
+    }
+    $actual = (Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash
+    if (-not [string]::Equals($actual, $normalized, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "归档 SHA256 不匹配：期望 $normalized，实际 $actual"
+    }
+    Write-Host '  SHA256 校验通过。' -ForegroundColor DarkGray
+}
+
 function Invoke-Install {
-    if (-not $Tool) { throw "用法：map.ps1 install <tool>@<版本|latest>（或 install <tool> -Url <zip 直链>，或 install <tool> -Via winget）" }
+    if (-not $Tool) { throw "用法：map.ps1 install <tool>@<版本|latest>（或 install <tool> -Url <zip 直链> [-Sha256 <校验值>]，或 install <tool> -Via winget）" }
 
     # ---- 兜底路径：只能走安装器的工具（nmap、驱动类、需要注册表/服务集成的） ----
     # 统一仓库的理想是"装完长一样"，但不该为了形式统一而拒绝安装。这里允许装到包管理器
@@ -748,6 +803,12 @@ function Invoke-Install {
 
     Write-Host "将把 $name $(if ($ver) { $ver } else { '(版本装完探测)' }) 装到仓库：$(Join-Path $root $name)" -ForegroundColor Cyan
     Write-Host "  下载：$url" -ForegroundColor DarkGray
+    if ($ver) {
+        $knownTarget = Join-Path (Join-Path $root $name) $ver
+        if (Test-Path -LiteralPath $knownTarget) {
+            throw "目标版本已存在，拒绝覆盖：$knownTarget"
+        }
+    }
     if ($WhatIf) { Write-Host '（-WhatIf：到此为止）' -ForegroundColor Yellow; return }
 
     # 先在暂存目录里下载+解压+验证，全部通过后再整体搬进仓库——
@@ -757,6 +818,7 @@ function Invoke-Install {
     try {
         $zip = Join-Path $stage 'pkg.zip'
         Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+        Assert-ArchiveSha256 -ArchivePath $zip -Expected $Sha256
         $extract = Join-Path $stage 'x'
         Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
 
@@ -796,7 +858,9 @@ function Invoke-Install {
             Write-Host "  探测到版本：$ver" -ForegroundColor DarkGray
         }
         $target = Join-Path (Join-Path $root $name) $ver
-        if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+        if (Test-Path -LiteralPath $target) {
+            throw "目标版本已存在，拒绝覆盖：$target"
+        }
         New-Item -ItemType Directory -Force -Path (Split-Path $target -Parent) | Out-Null
         Move-Item -LiteralPath $extract -Destination $target
         $finalExe = Join-Path $target ($exe.Substring($extract.Length).TrimStart('\'))
@@ -834,12 +898,12 @@ toolkit-map —— 本机工具地图（给 agent 用）
   map.ps1 find <tool>          查这个工具该用哪个（绝对路径 + 版本 + 其他候选）
   map.ps1 add <tool> -Path <p> 登记一个已有副本（不搬家）
   map.ps1 update [<tool>]      重探（路径没了 / 版本变了 / 多出新副本）
-  map.ps1 install <tool>@<ver> 装进统一仓库并登记
+  map.ps1 install <tool>@<ver> 装进统一仓库并登记（可用 -Sha256 校验归档）
   map.ps1 install <tool> -Via winget [-WingetId <id>]
                                只能走安装器的工具用它：装到包管理器自己的位置，
                                并在地图里标注"不在仓库"（升级/卸载仍交给 winget）
 
-  公共开关：-Json（机器可读）  -MapFile <路径>  -SkipScan  -WhatIf
+  公共开关：-Json（机器可读）  -MapFile <路径>  -SkipScan  -WhatIf  -Sha256 <校验值>
 '@
     }
 }

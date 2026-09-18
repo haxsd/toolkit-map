@@ -35,6 +35,9 @@ jobs:
       - name: 文档检查（中英成对、相对链接可解析）
         shell: powershell
         run: .\tests\check-docs.ps1
+      - name: 地图动作回归（失效路径与安装覆盖护栏）
+        shell: powershell
+        run: .\tests\map-smoke.ps1
       # 用 Windows PowerShell 5.1（系统自带）跑，因为这是 Windows 上最常见的宿主；
       # parity.ps1 自己会去找 Git Bash（windows-latest 自带）来跑 shell 版。
       - name: 一致性测试（census.ps1 vs census.sh）

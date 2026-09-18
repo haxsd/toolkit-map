@@ -16,16 +16,17 @@
 
 ## 安装成技能
 
-仓库根目录有 `SKILL.md`，本身就是 Cursor / Claude 技能。链接安装，`git pull` 即可升级：
+仓库根目录有 `SKILL.md`，本身就是 Cursor / Claude 技能。下面固定到当前稳定版；需要跟随开发版时把
+`--branch v0.1.3` 改为 `main`：
 
 ```powershell
-git clone https://github.com/haxsd/toolkit-map $env:USERPROFILE\Projects\toolkit-map
+git clone --branch v0.1.3 --depth 1 https://github.com/haxsd/toolkit-map $env:USERPROFILE\Projects\toolkit-map
 New-Item -ItemType Junction -Path "$env:USERPROFILE\.cursor\skills\toolkit-map" `
   -Target "$env:USERPROFILE\Projects\toolkit-map"
 ```
 
 ```bash
-git clone https://github.com/haxsd/toolkit-map ~/Projects/toolkit-map
+git clone --branch v0.1.3 --depth 1 https://github.com/haxsd/toolkit-map ~/Projects/toolkit-map
 ln -s ~/Projects/toolkit-map ~/.cursor/skills/toolkit-map
 ```
 
@@ -87,7 +88,7 @@ ln -s ~/Projects/toolkit-map ~/.cursor/skills/toolkit-map
 
 - `install` 目前支持 GitHub portable 配方（gh / jadx / ripgrep / fd）、固定 URL 配方（adb），以及
   `-Via winget` 的安装器兜底。安装器管理的工具会登记真实路径，但不一定落在统一仓库；其他 portable
-  工具需要用 `-Url` 给直链，或人工安装后再 `add` 登记。
+  工具需要用 `-Url` 给直链。直链归档可用 `-Sha256` 校验；统一仓库已有同版本目录时会拒绝覆盖。
 - Unix 版（`map.sh`）尚未编写；macOS / Linux 上目前只有扫描内核 `census.sh` 可用。
 
 ## 许可
