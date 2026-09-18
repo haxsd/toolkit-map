@@ -205,13 +205,37 @@ function Read-Map {
     catch { Write-Warning "地图文件解析失败（当作没有地图处理）：$p"; return $null }
 }
 
+function Write-AtomicUtf8 {
+    param([string]$Path, [string]$Content)
+    $dir = Split-Path $Path -Parent
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $temp = Join-Path $dir ('.' + [IO.Path]::GetFileName($Path) + '.' + [guid]::NewGuid().ToString('N') + '.tmp')
+    $utf8 = New-Object System.Text.UTF8Encoding -ArgumentList $true
+    try {
+        [IO.File]::WriteAllText($temp, $Content, $utf8)
+        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+            try {
+                # 同盘文件替换是原子的；只在文件系统不支持 Replace 时退回普通移动。
+                [IO.File]::Replace($temp, $Path, $null)
+            } catch {
+                Move-Item -LiteralPath $temp -Destination $Path -Force
+            }
+        } else {
+            Move-Item -LiteralPath $temp -Destination $Path
+        }
+    } finally {
+        if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function Save-Map {
     param($Map)
     $p = Get-MapPath
     $dir = Split-Path $p -Parent
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     $Map.scannedAt = (Get-Date).ToString('o')
-    ($Map | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $p -Encoding UTF8
+    $json = $Map | ConvertTo-Json -Depth 8
+    Write-AtomicUtf8 -Path $p -Content $json
     Write-MapMarkdown $Map
 }
 
@@ -238,7 +262,7 @@ function Write-MapMarkdown {
     }
     $lines.Add('')
     $lines.Add('> 首选规则：声明优先 → 统一仓库 → 管理器 → 手装 → 系统/宿主。')
-    ($lines -join "`n") | Set-Content -LiteralPath $p -Encoding UTF8
+    Write-AtomicUtf8 -Path $p -Content ($lines -join "`n")
 }
 
 # ---------- 候选收集 ----------
@@ -729,8 +753,12 @@ function Invoke-Install {
         Write-Host "用 winget 安装 $id（装到包管理器自己的位置，不在统一仓库）…" -ForegroundColor Cyan
         if ($WhatIf) { Write-Host "  winget install --id $id --exact --silent" -ForegroundColor DarkGray; Write-Host '（-WhatIf：到此为止）' -ForegroundColor Yellow; return }
 
-        & winget install --id $id --exact --silent --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1 |
-            Select-Object -Last 3 | ForEach-Object { '  ' + $_ }
+        $wingetOutput = @(& winget install --id $id --exact --silent --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1)
+        $wingetExit = $LASTEXITCODE
+        $wingetOutput | Select-Object -Last 3 | ForEach-Object { '  ' + $_ }
+        if ($wingetExit -ne 0) {
+            throw "winget 安装失败（退出码 $wingetExit）：$id"
+        }
 
         # 关键一步：当前进程的 PATH 是安装前的旧环境（子进程继承，不会跟着注册表变），
         # 所以先用注册表现算一份新 PATH 再搜，否则"装好了却找不到"。

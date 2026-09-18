@@ -18,6 +18,7 @@ $scratch = Join-Path $env:TEMP ('toolkit-map-smoke-' + [guid]::NewGuid().ToStrin
 $mapFile = Join-Path $scratch 'map.json'
 $warehouse = Join-Path $scratch 'toolchains'
 $oldToolchainRoot = $env:TOOLCHAIN_ROOT
+$oldPath = $env:PATH
 
 function Fail {
     param([string]$Message)
@@ -97,21 +98,29 @@ try {
     }
     Write-Fixture $tools
 
+    # 原子写入器是 map.ps1 的内部实现，但用真实 dot-source 调用验证它，
+    # 确保地图与摘要不会继续依赖直接覆盖写入。
+    . $mapScript -Action status -MapFile $mapFile
+    Assert-True ($null -ne (Get-Command Write-AtomicUtf8 -ErrorAction SilentlyContinue)) 'map.ps1 缺少原子 UTF-8 写入器'
+    $atomicProbe = Join-Path $scratch 'atomic-probe.txt'
+    Write-AtomicUtf8 -Path $atomicProbe -Content 'atomic-ok'
+    Assert-True ((Get-Content -LiteralPath $atomicProbe -Raw).Trim() -eq 'atomic-ok') '原子 UTF-8 写入器没有写出完整内容'
+
     $result = Invoke-Map @('find', 'git', '-Json', '-MapFile', $mapFile)
-    $json = Get-JsonOutput $result
+    $jsonResult = Get-JsonOutput $result
     Assert-True ($result.ExitCode -eq 0) "失效首选路径修复后 find 应成功，退出码为 $($result.ExitCode)"
-    Assert-True ([bool]$json.found) '失效首选路径修复后 found 应为 true'
-    Assert-True ($json.path -ne $deadPath -and (Test-Path -LiteralPath $json.path -PathType Leaf)) "find 应返回现场找到的活路径；实际=$($json.path)"
+    Assert-True ([bool]$jsonResult.found) '失效首选路径修复后 found 应为 true'
+    Assert-True ($jsonResult.path -ne $deadPath -and (Test-Path -LiteralPath $jsonResult.path -PathType Leaf)) "find 应返回现场找到的活路径；实际=$($jsonResult.path)"
 
     $result = Invoke-Map @('find', 'git', '-Json', '-SkipScan', '-MapFile', $mapFile)
-    $json = Get-JsonOutput $result
-    Assert-True ($result.ExitCode -eq 0 -and [bool]$json.found) '修复后的 git 条目应能在跳过现场搜索时继续使用'
-    Assert-True ($json.path -ne $deadPath -and (Test-Path -LiteralPath $json.path -PathType Leaf)) '地图修复结果没有持久化'
+    $jsonResult = Get-JsonOutput $result
+    Assert-True ($result.ExitCode -eq 0 -and [bool]$jsonResult.found) '修复后的 git 条目应能在跳过现场搜索时继续使用'
+    Assert-True ($jsonResult.path -ne $deadPath -and (Test-Path -LiteralPath $jsonResult.path -PathType Leaf)) '地图修复结果没有持久化'
 
     $result = Invoke-Map @('find', 'map-smoke-empty', '-Json', '-SkipScan', '-MapFile', $mapFile)
-    $json = Get-JsonOutput $result
+    $jsonResult = Get-JsonOutput $result
     Assert-True ($result.ExitCode -ne 0) '没有候选时 find 不应返回成功'
-    Assert-True (-not [bool]$json.found) '没有候选时 found 应为 false'
+    Assert-True (-not [bool]$jsonResult.found) '没有候选时 found 应为 false'
 
     $target = Join-Path (Join-Path $warehouse 'collision-tool') '1.0.0'
     $sentinel = Join-Path $target 'sentinel.txt'
@@ -123,9 +132,26 @@ try {
     Assert-True ($outputText -match '拒绝覆盖') 'install 应明确说明拒绝覆盖已有版本'
     Assert-True ((Get-Content -LiteralPath $sentinel -Raw).Trim() -eq 'keep me') '已有版本目录中的文件被改动'
 
+    $fakeWingetBin = Join-Path $scratch 'fake-winget'
+    New-Item -ItemType Directory -Force -Path $fakeWingetBin | Out-Null
+    $fakeWinget = Join-Path $fakeWingetBin 'winget.cmd'
+    "@echo off`r`necho fake winget failure`r`nexit /b 42" |
+        Set-Content -LiteralPath $fakeWinget -Encoding ASCII
+    $env:PATH = $fakeWingetBin + ';' + $oldPath
+    $result = Invoke-Map @('install', 'winget-smoke-tool', '-Via', 'winget', '-MapFile', $mapFile)
+    $outputText = ($result.Output | ForEach-Object { "$($_)" }) -join "`n"
+    Assert-True ($result.ExitCode -ne 0) 'winget 失败时 install 应返回非零退出码'
+    Assert-True ($outputText -match 'winget 安装失败') 'winget 失败时应明确报告安装失败，而不是继续登记'
+    $savedMap = Get-Content -LiteralPath $mapFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-True (-not $savedMap.tools.PSObject.Properties.Name.Contains('winget-smoke-tool')) 'winget 失败时不应把旧候选登记为新安装'
+
+    $tempMapFiles = @(Get-ChildItem -LiteralPath $scratch -Filter 'map.json.*.tmp' -File -ErrorAction SilentlyContinue)
+    Assert-True ($tempMapFiles.Count -eq 0) '地图原子写入留下了临时文件'
+
     Write-Host '  [通过] map.ps1 查找与安装边界冒烟测试' -ForegroundColor Green
 } finally {
     $env:TOOLCHAIN_ROOT = $oldToolchainRoot
+    $env:PATH = $oldPath
     if (Test-Path -LiteralPath $scratch) {
         Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
     }

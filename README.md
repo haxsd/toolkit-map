@@ -17,16 +17,16 @@
 ## 安装成技能
 
 仓库根目录有 `SKILL.md`，本身就是 Cursor / Claude 技能。下面固定到当前稳定版；需要跟随开发版时把
-`--branch v0.1.3` 改为 `main`：
+`--branch v0.1.4` 改为 `main`：
 
 ```powershell
-git clone --branch v0.1.3 --depth 1 https://github.com/haxsd/toolkit-map $env:USERPROFILE\Projects\toolkit-map
+git clone --branch v0.1.4 --depth 1 https://github.com/haxsd/toolkit-map $env:USERPROFILE\Projects\toolkit-map
 New-Item -ItemType Junction -Path "$env:USERPROFILE\.cursor\skills\toolkit-map" `
   -Target "$env:USERPROFILE\Projects\toolkit-map"
 ```
 
 ```bash
-git clone --branch v0.1.3 --depth 1 https://github.com/haxsd/toolkit-map ~/Projects/toolkit-map
+git clone --branch v0.1.4 --depth 1 https://github.com/haxsd/toolkit-map ~/Projects/toolkit-map
 ln -s ~/Projects/toolkit-map ~/.cursor/skills/toolkit-map
 ```
 
