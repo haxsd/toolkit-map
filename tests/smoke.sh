@@ -34,15 +34,14 @@ pass() { printf '  [通过] %s\n' "$1"; }
 fail() { printf '  [失败] %s\n' "$1"; FAIL=$((FAIL + 1)); }
 
 # ---------- 搭沙箱 ----------
-mkdir -p "$FX/home/.config/mise" "$FX/bin" "$FX/rt1/bin" "$FX/rt2/bin"
-
-# 假声明：与仓库模板相比少 python/java、多一个没装的 go
-# 注意放在 XDG 的全局配置位置（沙箱里设置了 XDG_CONFIG_HOME，mise 也会读这里）
-mkdir -p "$FX/home/mise"
+# 假声明：与仓库模板相比少 python/java、多一个"永远不可能存在"的工具
+# （用 go / jadx 这类真工具名会被 CI runner 上刚好装了的版本干扰——实测
+#  GitHub 的 ubuntu 镜像里有 /usr/bin/go，于是"声明了但没装"这条断言失效）。
+mkdir -p "$FX/home/mise" "$FX/bin" "$FX/rt1/bin" "$FX/rt2/bin"
 cat > "$FX/home/mise/config.toml" <<'EOF'
 [tools]
 node = ["22"]
-go = ["1.22"]
+census-absent-tool = ["1.0"]
 EOF
 
 # 假 node（会遮蔽 mise 的 node）与假约定 shim node22

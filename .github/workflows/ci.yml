@@ -30,12 +30,21 @@ jobs:
       - name: 一致性测试（census.ps1 vs census.sh）
         shell: powershell
         run: |
-          $out = & .\tests\parity.ps1 2>&1 | Out-String
+          # 输出同时进控制台和文件：失败时把文件尾部转成注解（注解可以匿名从 API 读到，
+          # job 日志需要鉴权——无人值守时这是唯一能自己看到失败原因的通道）。
+          $log = Join-Path $env:RUNNER_TEMP 'parity.log'
+          & .\tests\parity.ps1 *>&1 | Tee-Object -FilePath $log
           $code = $LASTEXITCODE
-          Write-Host $out
           if ($code -ne 0) {
-            # 只把尾部若干行转成注解，避免刷屏
-            ($out -split "`n" | Where-Object { $_.Trim() } | Select-Object -Last 35) |
+            $lines = @(Get-Content -LiteralPath $log -ErrorAction SilentlyContinue)
+            Write-Host "::error::parity.ps1 退出码 $code，输出 $($lines.Count) 行"
+            # 脚本可能在打印任何东西之前就退出（例如语法或宿主层面的问题），
+            # 那种情况下只有 $Error 里有线索，所以一并带出来。
+            foreach ($rec in @($Error | Select-Object -First 3)) {
+              $msg = ($rec.ToString() -replace "`r?`n", ' ')
+              if ($msg.Trim()) { Write-Host "::error::异常: $($msg.Trim())" }
+            }
+            $lines | Where-Object { $_.Trim() } | Select-Object -Last 30 |
               ForEach-Object { Write-Host "::error::$($_.Trim())" }
           }
           exit $code

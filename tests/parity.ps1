@@ -14,7 +14,7 @@
   沙箱里埋的雷：
     · 只写在文件名里的约定        node22（→ CONVENTION）
     · 声明与仓库模板不一致        （→ DRIFT）
-    · 声明要求了但没装            go（→ MISSING）
+    · 声明要求了但没装            census-absent-tool（→ MISSING）
     · PATH 里有重复条目           （→ PATH_DIRT）
     · 同一个运行时被遮蔽          两份不在 PATH 上的 node 副本（→ SHADOWED / STRAY）
 
@@ -53,11 +53,13 @@ $leaf = 'census-parity-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $fx = Join-Path $env:LOCALAPPDATA "Temp\$leaf"
 New-Item -ItemType Directory -Force -Path "$fx\home\.config\mise", "$fx\bin", "$fx\rt1\bin", "$fx\rt2\bin" | Out-Null
 
-# 假机器声明：与仓库模板不一致（少 python/java），且要求一个没装的 go
+# 假机器声明：与仓库模板不一致（少 python/java），且要求一个"永远不可能存在"的工具。
+# 刻意不用 go / jadx 这类真实工具名：CI runner 上可能刚好装了它（实测 GitHub 的
+# ubuntu 镜像里有 /usr/bin/go），那样"声明了但没装"这条断言就会失效。
 @'
 [tools]
 node = ["22"]
-go = ["1.22"]
+census-absent-tool = ["1.0"]
 '@ | Set-Content -LiteralPath "$fx\home\.config\mise\config.toml" -Encoding ASCII
 
 # 会遮蔽 mise 的 node（给 census.ps1 走 Windows 解析），以及一个只存在于文件名里的约定。
@@ -173,7 +175,7 @@ foreach ($impl in @(@{ Name = 'census.ps1'; Data = $ps1 }, @{ Name = 'census.sh'
 
     Check "$name 发现约定 node22（CONVENTION）"      (Has-KindContaining $d 'CONVENTION' 'node22')
     Check "$name 发现声明漂移（DRIFT）"             (Has-KindContaining $d 'DRIFT'      'config.toml')
-    Check "$name 发现声明了却没装（MISSING / go）"   (Has-KindContaining $d 'MISSING'    'go')
+    Check "$name 发现声明了却没装（MISSING）"        (Has-KindContaining $d 'MISSING'    'census-absent-tool')
     Check "$name 发现 PATH 重复条目（PATH_DIRT）"    (Has-KindContaining $d 'PATH_DIRT'  $leaf)
     Check "$name 发现被遮蔽的副本（SHADOWED）"       (Has-KindContaining $d 'SHADOWED'   'rt1')
     Check "$name 发现游离运行时（STRAY）"            (Has-KindContaining $d 'STRAY'      'rt2')
