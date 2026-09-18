@@ -98,7 +98,7 @@ CI 里的 `tests/parity.ps1` 每次都会在同一个沙箱里对两种实现各
 
 - 声明漂移时默认**只报告、不覆盖**（部署副本里可能有你手工加的工具）。要覆盖请加
   `-RefreshConfig` / `--refresh-config`，覆盖前自动备份。
-- `scripts/verify-shell.ps1` 用真 bash（Git Bash，否则退回容器）对所有 `.sh` 执行
+- `tests/verify-shell.ps1` 用真 bash（Git Bash，否则退回容器）对所有 `.sh` 执行
   `bash -n`——Windows 上 PATH 里的 `bash` 往往是 WSL 转发壳，导致 `.sh` 从来没被验证过。
 
 ### 场景三：项目里锁定运行时版本

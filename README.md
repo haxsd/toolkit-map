@@ -8,10 +8,10 @@
 Find every **tool** that actually exists on this machine — language runtimes are just one
 kind of tool — and manage them declaratively.
 
-`node --version` tells you **which one is active**. It does not tell you **what is installed**.
-That gap is where confident, wrong answers like "this machine only has Node 16" come from —
-while another copy of the same command, a tool bundled inside an IDE, a conda environment,
-a CLI you installed by hand last year and a reversing tool you forgot about all sit on disk.
+`node --version` tells you **which one is active**. It does not tell you **what is
+installed** — so "this machine only has Node 16" is usually wrong, while another copy of
+the same command, an IDE's bundled JDK, a conda environment and a CLI you installed by
+hand last year all sit on disk.
 
 ## Quick start
 
@@ -41,23 +41,16 @@ PATH with thousands of entries — `--timing` prints the per-stage cost. Excerpt
   NODE   2 found
     16.20.2        <system drive>:\nodejs\node.exe                 [system install]
     22.23.2        %USERPROFILE%\tools\node22\node.exe             [custom location]
-  PYTHON 3 found
-    3.12.10        %LOCALAPPDATA%\Programs\Python\Python312\python.exe
-    3.14.7         %USERPROFILE%\miniconda3\python.exe             [conda]
   JAVA   3 found
-    1.8.0_144      C:\Program Files\Java\jdk1.8.0_144\bin\java.exe
     11.0.6         ...\IntelliJ IDEA\jbr\bin\java.exe              [bundled with IDE]
-    25.0.3         ...\PyCharm\jbr\bin\java.exe                    [bundled with IDE]
 
  6. Warnings — things that need a human decision
   [SHADOWED]   'node' exists 2 times on disk; 1 of them is not reachable via PATH
   [CONVENTION] found naming convention 'node22' — record it or it will be lost
 ```
 
-Add `--json` for machine-readable output.
-
-> The CLI currently prints in Chinese. The block above shows the output *structure*,
-> translated for readability. Translations are welcome.
+Add `--json` for machine-readable output, or `--lang en` / `CENSUS_LANG=en` for English
+prose — the block above uses the English wording.
 
 ## Why this exists
 
@@ -72,14 +65,13 @@ PATH. Treating them as **inventories** hides most of what is installed. Four com
 | Bundled with a host | An IDE's `jbr/` contains a full JDK that never registers as a system tool |
 
 census walks all four categories, keeping **which one** and **which ones** as separate
-questions. It is not limited to language runtimes: anything you can declare (a compiler, a
-CLI, a reversing tool) gets the same treatment — resolution, version, placement, drift.
+questions. It is not limited to language runtimes: anything you can declare — a compiler,
+a CLI, a reversing tool — gets the same treatment.
 
-## Per-project version switching
+## Per-project versions, if you want them
 
-`census` is a zero-dependency single-file script — clone and run, nothing else needed.
-If you also want each project to automatically use its own runtime versions, add a
-version manager on top:
+`census` is a zero-dependency single-file script — clone and run, nothing else needed. To
+also make each project switch runtimes by itself, add a version manager on top:
 
 ```powershell
 .\scripts\bootstrap.ps1 -DryRun   # see what it would change
@@ -91,168 +83,16 @@ version manager on top:
 ./scripts/bootstrap.sh
 ```
 
-bootstrap does five things, all idempotent:
-
-1. Installs [mise](https://mise.jdx.dev) (winget → scoop → choco → npm; `mise.run` → brew on Unix)
-2. Writes `templates/mise-config.toml` as the global machine manifest. If nothing is deployed yet it copies the template; if the deployed copy differs, it reports the drift (which `[tools]` keys differ) and **leaves your file alone** — add `-RefreshConfig` / `--refresh-config` to overwrite it, backing up first
-3. Creates the canonical root for hand-installed runtimes (`~/toolchains`, override with `TOOLCHAIN_ROOT` or `-ToolsRoot` / `--tools-root`)
-4. Puts mise's shims directory at the **front** of the user-level PATH (appended, it loses to every pre-existing direct tool dir) and lists machine-level dirs that still shadow it
-5. Runs `mise install` to fetch the declared runtimes
-
-What it deliberately does **not** do: touch machine-level environment variables, delete
-existing PATH entries, or modify runtimes bundled with your IDE.
-
-### Read-only audit vs. side-effecting apply
-
-`census` never writes anything — treat it as the default entry point. `bootstrap` is the
-opposite: it changes machine state on purpose, so start with `-DryRun` / `--dry-run` and
-read the plan before running it for real.
-
-| `bootstrap` changes | How to undo |
-|---|---|
-| Installs mise (winget → scoop → choco → npm; `mise.run` → brew) | Uninstall it with the same package manager |
-| Writes the machine manifest `~/.config/mise/config.toml` | A `config.toml.bak-<timestamp>` backup is kept next to it; delete the file to leave no machine manifest |
-| Moves mise's shims to the front of the **user-level** PATH | Remove that entry in *Edit environment variables for your account*, then reopen terminals |
-| Appends the activation line to PowerShell profiles (both hosts when `pwsh` exists) | Delete the two lines marked `runtime-census` in those profile files |
-| Runs `mise install` (downloads the declared runtimes) | `mise uninstall <tool>@<version>`; versions that were already there are untouched |
-| — | It never touches machine-level environment variables, never deletes PATH entries, never modifies IDE-bundled runtimes |
-
-## Declaring versions in a project
-
-```toml
-# mise.toml at the project root
-[tools]
-node   = "22"
-python = "3.12"
-
-[env]
-NODE_ENV = "development"
-
-[tasks]
-test  = "npm test"
-build = "npm run build"
-```
-
-```bash
-mise trust && mise install
-mise exec -- npm test        # one-shot activation, no global state changed
-```
-
-One file covers every language. asdf's `.tool-versions` is supported too — see
-`examples/` for both formats.
-
-**The direction matters**: make the machine satisfy the project's declaration, not the
-other way round. Editing `engines` or downgrading dependencies to match whatever happens
-to be installed produces the nastiest class of bug — passes locally, fails in CI.
-
-## Command reference
-
-### census
-
-Both implementations take the same flags. `census.ps1` accepts one or two dashes
-(`-Json` or `--json`); `census.sh` uses two.
-
-| Flag | Description |
-|---|---|
-| *(none)* | Human-readable report |
-| `--json` | JSON output for programs and agents — schema described below |
-| `--deep` | Also scan common install roots (bounded depth 4, capped results; slower) |
-| `--timing` | Per-stage timings |
-| `-Lang en` / `--lang en` | English output (also via `CENSUS_LANG`); default `zh` |
-
-### JSON output
-
-`--json` prints one object; both implementations emit the **same schema** (checked by
-`tests/parity.ps1` in CI) so an agent or CI job does not need a per-platform parser:
-
-| Field | Contents |
-|---|---|
-| `schemaVersion` | `1` — bumped when the field set or semantics change |
-| `generatedAt`, `host` | Timestamp and `{os, arch, user, cwd}` |
-| `declarations` | Every `mise.toml` / `.tool-versions` found: `{scope, path, tools}` |
-| `toolsRoot` | Canonical root for hand-installed runtimes |
-| `mise` | `{available, tools[]}` for the managed layer |
-| `conventions`, `runtimes`, `resolution` | The inventory stages, same fields on both platforms |
-| `warnings` | `[{kind, tool, message, action, detail}]` — `kind` is a stable ASCII code |
-| `timings`, `summary` | Per-stage milliseconds (with `--timing`) and counts |
-
-`kind` codes (`STUB`, `PATH_ORDER`, `DRIFT`, …) never change with the language; `message`
-and `action` follow `--lang`.
-
-It inventories in five stages:
-
-| Stage | What it covers |
-|---|---|
-| 1. Declarations | `mise.toml` / `.tool-versions` in the project and globally |
-| 2. Managed | Runtimes that mise manages |
-| 3. Conventions | Version-suffixed shims on PATH — and the file each one actually points to |
-| 4. Inventory | Version manager dirs, system installs, IDE-bundled JBRs, conda envs |
-| 5. Resolution | What common commands actually resolve to, their version, and whether they run |
-
-Then it reports these warnings:
-
-| Warning | Meaning | What to do |
-|---|---|---|
-| `STUB` | The command resolves to a Store app-execution alias whose target app is not installed — probing it gives no output and exit code 9009 | The command does not work; use another |
-| `PATH_ORDER` | Declaration and mise agree on a version, but PATH resolves the command to a different copy | Put mise's shims first in the user PATH (bootstrap does); machine-level dirs need admin rights |
-| `SHADOWED` | Multiple versions exist, PATH exposes only one | Use an absolute path or activate via a version manager |
-| `CONVENTION` | A version convention exists only in a filename | Record it in a declaration file, or it will be lost |
-| `PATH_DIRT` | The user PATH has duplicate or quoted entries | Clean them up — they eat into the PATH length limit and hide "I changed it but nothing took effect" bugs |
-| `DRIFT` | The deployed global declaration differs from `templates/mise-config.toml` | `bootstrap.ps1 -RefreshConfig` / `bootstrap.sh --refresh-config` (backs up first) |
-| `XDG_SHIFT` | `XDG_CONFIG_HOME` is set, so mise's global config moved and `~/.config/mise/config.toml` became a path-dependent config | Unset the variable, or move the declaration |
-| `STRAY` | Runtime sits in a non-standard location with no manager tracking it | Record it in a declaration file — **do not migrate** it (see below) |
-| `UNDECLARED` | The current project has an `engines` constraint but no readable declaration | Add `mise.toml` / `.tool-versions` — see "Taking over a legacy project" below |
-| `MISSING` | Declared but not installed | `mise install` |
-
-### Convention: where unmanaged runtimes live
-
-Runtimes you install by hand — a zip download, a side-by-side install kept for a legacy
-project — belong under one root, arranged as `<tool>/<version>/`:
-
-```
-~/toolchains/
-├── node/22.23.2/
-└── python/3.12.10/
-```
-
-Override the location with `TOOLCHAIN_ROOT`. This buys two things: a single place to
-look, and a predictable path so the next agent or teammate can find it without asking.
-
-**Runtimes that are already elsewhere are not migrated.** Their paths may be hard-coded
-in project config, IDE settings, or CI scripts, and moving them breaks things days later.
-The fix is to *record* them — `census` lists them under `[STRAY]` — not to move them.
-A non-standard location is not the real problem; the real problem is that a runtime only
-reachable through PATH is lost the moment PATH changes.
-
-### bootstrap
-
-The one-time setup script. Flags are the same on both platforms, spelled with one dash on
-PowerShell and two on the shell script:
-
-| Flag | Description |
-|---|---|
-| `-DryRun` / `--dry-run` | Print what would change, touch nothing |
-| `-RefreshConfig` / `--refresh-config` | Overwrite the deployed machine manifest with the template (backing up first). Without it, drift is only reported |
-| `-SkipTools` / `--skip-tools` | Install mise and write the manifest, but do not run `mise install` |
-| `-NoProfile` / `--no-rc` | Do not touch shell startup files |
-| `-ToolsRoot` / `--tools-root` | Override the canonical root for hand-installed runtimes (default `~/toolchains`) |
-
-The five idempotent steps it performs — and what it deliberately leaves alone — are
-described under [Per-project version switching](#per-project-version-switching).
-
-### verify-shell.ps1
-
-Windows only. `bash` on PATH is usually the WSL relay; without a distro installed it fails
-with `execvpe(/bin/bash) failed: No such file or directory`, which looks like a syntax
-error in your script but is not. This script finds a real bash (Git Bash, otherwise a
-`bash` container) and runs `bash -n` over every `.sh` in `scripts/` — parse only, never
-execute.
+It installs [mise](https://mise.jdx.dev), deploys a machine-level manifest, moves mise's
+shims to the front of the **user** PATH, and runs `mise install`. It never touches
+machine-level environment variables, never deletes PATH entries, and never modifies
+IDE-bundled runtimes. Every step it takes — and how to undo it — is listed in the
+[reference](docs/reference.md#what-bootstrap-changes-and-how-to-undo-it).
 
 ## Install as a skill
 
-The repo root contains `SKILL.md`, so the repository *is* a Cursor / Claude skill.
-Install by **linking** the skills directory to this clone rather than copying it — that
-way `git pull` upgrades the skill.
+The repo root contains `SKILL.md`, so the repository itself is a Cursor / Claude skill.
+Link it rather than copying, so that `git pull` upgrades the skill:
 
 ```powershell
 git clone https://github.com/haxsd/runtime-census $env:USERPROFILE\Projects\runtime-census
@@ -266,87 +106,33 @@ git clone https://github.com/haxsd/runtime-census ~/Projects/runtime-census
 ln -s ~/Projects/runtime-census ~/.cursor/skills/runtime-census
 ```
 
-Once installed, asking "which tools and versions are on this machine" or "why does this
-command resolve to the wrong version", or hitting an unexpected version mismatch, will
-load it automatically.
+`AGENTS.md` is the companion **discovery contract** — the rules an agent must follow when
+judging tool availability. Copy it into your own project's rules file; it works standalone.
+Both files are written in Chinese.
 
-`AGENTS.md` is the companion **discovery contract** — the rules an agent must follow
-when judging tool availability. Copy it into your own project's rules file; it works
-standalone.
+## Documentation
 
-## Platform notes
-
-- **`mise activate` cannot auto-switch directories on PowerShell 5.1**: its `chpwd` hook
-  requires PowerShell 7 or newer. On 5.1, activation only prepends mise's versions as the
-  global default — `cd`-ing into a project does not switch anything, which is the only
-  reason to use `activate` in the first place. PowerShell profiles are **per-host**
-  (5.1 reads `WindowsPowerShell`, 7 reads `PowerShell`), so bootstrap writes the
-  activation line into **both** hosts' profiles when PowerShell 7 is available, and tells
-  you to open `pwsh` instead. Detect it with a probe, not by looking for the file: the
-  `pwsh.exe` in `WindowsApps` is a 0-byte alias.
-- **Windows composes PATH as machine entries first, user entries second.** Commands are
-  resolved by walking that combined list, so a machine-level direct tool directory
-  (`C:\ProgramData\Oracle\Java\javapath`) or a legacy directory early in the user PATH
-  always beats mise's shims, which scripts usually append at the end. `mise activate`
-  prepends the shims **inside the session only**: interactive shells get the declared
-  version, while cmd, GUI apps, IDE tasks and `-NoProfile` scripts silently get the old
-  one. That gap is what `[PATH_ORDER]` reports. bootstrap now moves the shims to the
-  *front* of the user PATH and lists the machine-level directories, which need admin
-  rights to change.
-- **Exists ≠ usable (Windows), refined**: `WindowsApps\python3.exe` is a 0-byte Microsoft
-  Store app-execution alias; `Get-Command` finds it, `where.exe` lists it, and running it
-  produces no output and exits with code 9009. But a 0-byte alias is not automatically
-  broken — `pwsh.exe` and `winget.exe` are 0-byte aliases that work, because their target
-  apps are installed. File length means "suspect", not "unusable": confirm by running a
-  version command and checking for output.
-- **Verifying the shell scripts on Windows**: `bash` on PATH is usually
-  `C:\WINDOWS\system32\bash.exe`, the WSL relay. Without a distro installed it fails with
-  `execvpe(/bin/bash) failed: No such file or directory`, which looks like a syntax error
-  in your script but is not. Run `.\scripts\verify-shell.ps1`: it finds a real bash (Git
-  Bash, otherwise a `bash` container) and runs `bash -n` over every `.sh` — parse only,
-  never execute.
-- **ZIP downloads lose the executable bit (Linux/macOS)**: GitHub's ZIP archive does not
-  carry file modes, so `./scripts/census.sh` fails with `Permission denied` even though the
-  repository has it marked executable. Either clone instead, or run `chmod +x scripts/*.sh`
-  once after unpacking.
-- **The PowerShell 5.1 `@()` trap**: `@($list)` on a `List[object]` throws
-  `Argument types do not match` — use `$list.ToArray()`. If the script also sets
-  `$ErrorActionPreference = 'SilentlyContinue'`, the error is swallowed entirely and only
-  surfaces later as an object mysteriously becoming `$null`, which is very hard to trace.
+- [docs/reference](docs/reference.md) — every flag, the JSON schema, all warning codes, the tools-root convention
+- [docs/platform-notes](docs/platform-notes.md) — Windows PATH order, 0-byte aliases, known limitations
+- [docs/contributing](docs/contributing.md) — local checks, CI, encoding and line-ending rules
 
 ## FAQ
 
 **Why not just use mise?**
 mise can only manage what it installed itself. It will never know about
 `<system drive>:\nodejs`, conda's Python, or an IDE's bundled JDK. Managed and
-pre-existing layers have to be viewed separately — doing only the former makes people
+pre-existing layers have to be viewed separately — looking at only the former makes people
 believe the inventory is complete.
 
-**Why not Docker?**
-Containers are a different approach: stronger isolation, at the cost of building an image
-per project and more friction sharing the host filesystem. This project's goal is to make
-**the native machine predictable**. The two can coexist.
-
 **Isn't a directory scan slow?**
-census uses targeted probing rather than a full walk — one `stat` is one to two orders of
-magnitude cheaper than a directory enumeration. What it does cost is spawning processes
-for the things it *does* find, so a run takes a few seconds on a small PATH and up to
-about half a minute on a Windows PATH with thousands of entries; `--timing` shows where
-the time goes. The trade-off is that it only covers known install layouts — unusual
-locations need `--deep` (bounded: depth 4, results capped), which is the slow path.
+It uses targeted probing rather than a full walk: one `stat` is one to two orders of
+magnitude cheaper than a directory enumeration. What does cost time is spawning processes
+for what it finds, hence `--deep` being the slow path.
 
-## Known limitations
-
-- Targeted probing only covers **known install layouts**. Runtimes in completely
-  non-standard locations require `--deep`.
-- `census.sh` only detects JBRs inside `.app` bundles on macOS under common naming;
-  non-standard JetBrains Toolbox install paths may be missed.
-- mise's native Windows support is less mature than on Unix. Some plugins' build scripts
-  assume a Unix-like environment; use WSL or a container for those.
-- The `mise.run` installer does not work on Windows (macOS/Linux only) — use
-  winget / scoop / choco / npm / a manual download instead.
-- CLI output is currently Chinese-only. The warning codes (`STUB`, `SHADOWED`,
-  `CONVENTION`, `MISSING`) and the `--json` output are language-neutral.
+**Why not Docker?**
+Containers are a different trade-off: stronger isolation, at the cost of an image per
+project. This project's goal is to make **the native machine predictable**. The two can
+coexist.
 
 ## License
 

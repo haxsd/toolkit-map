@@ -13,14 +13,14 @@
   -n 只做语法解析、不执行，所以对 bootstrap.sh 这种有副作用的脚本也安全。
 
 .PARAMETER Targets
-  要校验的文件或目录，默认为仓库的 scripts 目录。
+  要校验的文件或目录，默认为仓库的 scripts 与 tests 两个目录。
 
 .EXAMPLE
-  .\scripts\verify-shell.ps1
-  校验 scripts 下所有 .sh。
+  .\tests\verify-shell.ps1
+  校验 scripts 与 tests 下所有 .sh。
 
 .EXAMPLE
-  .\scripts\verify-shell.ps1 -Targets .\scripts\census.sh
+  .\tests\verify-shell.ps1 -Targets .\scripts\census.sh
   只校验一个文件。
 #>
 [CmdletBinding()]
@@ -53,7 +53,7 @@ if (-not $bash) {
 # 3) 收集目标文件
 if ($Targets.Count -eq 0) {
     $repoRoot = Split-Path $PSScriptRoot -Parent
-    $Targets = @(Join-Path $repoRoot 'scripts')
+    $Targets = @(Join-Path $repoRoot 'scripts'), (Join-Path $repoRoot 'tests')
 }
 
 $files = New-Object System.Collections.Generic.List[string]

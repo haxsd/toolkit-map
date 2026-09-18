@@ -30,6 +30,11 @@ jobs:
       - name: 脚本编码检查（.ps1 必须有 UTF-8 BOM）
         shell: powershell
         run: .\tests\check-encodings.ps1
+      # 文档检查同样没有本地症状：只改了中英其中一份、或者搬动文件后留下失效链接，
+      # 都要等别人打开仓库才发现。
+      - name: 文档检查（中英成对、相对链接可解析）
+        shell: powershell
+        run: .\tests\check-docs.ps1
       # 用 Windows PowerShell 5.1（系统自带）跑，因为这是 Windows 上最常见的宿主；
       # parity.ps1 自己会去找 Git Bash（windows-latest 自带）来跑 shell 版。
       - name: 一致性测试（census.ps1 vs census.sh）
