@@ -286,16 +286,23 @@ stable_key() {
 }
 
 # ---------- 数据收集 ----------
-RUNTIME_ROWS=""      # tool|version|path|source|placement|usable
+RUNTIME_ROWS=""      # tool|version|path|source|placement|usable|root|pattern
 CONV_ROWS=""         # shim|shimVersion|actualVersion|target|usable
 WARN_JSON="[]"
 WARN_TEXT=""
 WARN_JSON_ITEMS=""   # 逐条拼出来的 JSON 片段，供 --json 输出使用
 
-# 运行时行的字段顺序：tool|version|path|source|placement|usable
+# 当前探测起点与发现阶段，写进每条记录的 root / pattern 字段。
+# 与 census.ps1 的 -Root / -Pattern 参数一一对应：JSON 契约要求两个平台的
+# runtimes 记录字段完全一致，缺字段会让按文档写的消费者在某一侧拿到 null。
+CUR_ROOT=""
+CUR_PATTERN="定向探测"
+
+# 运行时行的字段顺序：tool|version|path|source|placement|usable|root|pattern
 # 注意必须收满 6 个字段：下游的去重（NF>=6）、[STRAY]（$6=="yes"）、
 # 位置分布统计、§4 的标记全都依赖第 6 列。少收一个字段会让整节静默变空。
-add_runtime() { RUNTIME_ROWS="${RUNTIME_ROWS}${1}|${2}|${3}|${4}|${5}|${6}
+# 后两列刻意追加在末尾（而不是插在中间）：$1..$6 的既有含义不能动。
+add_runtime() { RUNTIME_ROWS="${RUNTIME_ROWS}${1}|${2}|${3}|${4}|${5}|${6}|${7}|${8}
 "; }
 add_conv()    { CONV_ROWS="${CONV_ROWS}${1}|${2}|${3}|${4}|${5}
 "; }
@@ -404,6 +411,33 @@ short_tool() {
   esac
 }
 
+# 判断解析到的实际版本是否已经满足声明要求。规则与 census.ps1 的 Test-VersionSatisfies
+# 完全一致（两个实现必须给出同样的结论，否则同一台机器会得出两套告警）：
+#   声明 "3.12" 满足 "3.12.10"、声明 "22" 满足 "22.23.2"（按数字段比前缀）；
+#   带发行版前缀的声明先剥前缀（temurin-21 -> 21）；
+#   声明是一串时（TOML 数组去掉括号后的 "22, 20"）任意一条满足即可；
+#   latest / stable 这类判断不出来的一律当作满足——宁可漏报，也不要在用户本来就
+#   满足声明时喊"版本不对"（实测：Windows 的 py 启动器不受 mise 管，改 PATH 也不会消失）。
+version_satisfies() {
+  local actual="$1" wanted="$2" one w v
+  [ -n "$wanted" ] || return 0
+  [ -n "$actual" ] || return 1
+  v="$(printf '%s' "$actual" | sed -E 's/[^0-9]+/./g; s/^\.+//; s/\.+$//')"
+  # 注意必须用 printf '%s\n'（带结尾换行）：while read 在 EOF 处不会执行最后一行，
+  # 少这个换行会把"最后一个候选版本"整个丢掉——单词声明（temurin-21）就只有一个候选，
+  # 丢了它等于这条判定永远返回"不满足"。
+  while IFS= read -r one; do
+    one="$(printf '%s' "$one" | tr -d ' \t"')"
+    [ -n "$one" ] || continue
+    case "$one" in latest|stable|lts|system|any|'*') return 0 ;; esac
+    w="${one#*-}"                                            # 发行版前缀：temurin-21 -> 21
+    w="$(printf '%s' "$w" | sed -E 's/[^0-9]+/./g; s/^\.+//; s/\.+$//')"
+    [ -n "$w" ] || return 0
+    case "$v" in "$w"|"$w".*) return 0 ;; esac
+  done < <(printf '%s\n' "$wanted" | tr ',;' '\n')
+  return 1
+}
+
 # ---------- 阶段计时（--timing）----------
 # 用 date +%s 而不是 GNU 的 %N：macOS 的 date 不认 %N，粒度到秒对本脚本足够。
 TIMING_ROWS=""
@@ -416,7 +450,10 @@ tick() {
   elapsed=$((now - LAST_TICK))
   TIMING_ROWS="${TIMING_ROWS}${1}|${elapsed}
 "
-  TIMING_JSON_ITEMS="${TIMING_JSON_ITEMS}${TIMING_JSON_ITEMS:+,}{\"phase\":\"$(stable_key "$1")\",\"seconds\":${elapsed}}"
+  # JSON 里的字段名与单位必须与 census.ps1 一致（毫秒）：文档承诺的是 per-stage milliseconds，
+  # 消费者读 timings[i].ms。本脚本计时粒度是秒（为了兼容 macOS 的 date），所以换算成毫秒输出——
+  # 值会是 1000 的整数倍，精度如实反映，但字段名和单位不能两边各写各的。
+  TIMING_JSON_ITEMS="${TIMING_JSON_ITEMS}${TIMING_JSON_ITEMS:+,}{\"phase\":\"$(stable_key "$1")\",\"ms\":$((elapsed * 1000))}"
   LAST_TICK="$now"
 }
 
@@ -506,7 +543,7 @@ tick '2. mise 纳管层'
 # 形如 node22 / node-22 / python312 / java8。这类约定只保存在文件名里，
 # 换台机器、换个 agent 就彻底失传，所以要主动发现并提醒写进声明文件。
 scan_conventions() {
-  local dir base tool decl target actual
+  local dir base tool decl target actual ok
   local IFS_OLD="$IFS"
   # 先给 PATH 去重：重复条目（PATH_DIRT 会单独报告）会让同一目录被扫两遍，
   # 同一个约定就会重复上报一次。
@@ -567,7 +604,11 @@ scan_conventions() {
           java|javac)             actual="$("$target" -version 2>&1 | head -n1 || true)" ;;
           *)                      actual="$("$target" --version 2>&1 | head -n1 || true)" ;;
         esac
-        add_conv "$base" "$decl" "$actual" "$target" "yes"
+        # targetOk：约定入口最终指向的文件是否真的可执行（对应 census.ps1 的同名字段）。
+        # 命中 shim 内容里的目标时 target 就是那个文件；没命中就退回 shim 自身。
+        ok="yes"
+        [ -x "$target" ] || ok="no"
+        add_conv "$base" "$decl" "$actual" "$target" "$ok"
       fi
     done <<EOF
 $(ls -1 "$dir" 2>/dev/null | grep -iE '^(node|nodejs|npm|npx|pnpm|yarn|python|python3|py|pip|uv|java|javac|mvn|gradle|go|cargo|rustc|deno|bun|dotnet|php|ruby)[-_]?v?[0-9]' | head -n 200)
@@ -604,12 +645,14 @@ probe_path() {
     python) ver="$("$p" --version 2>/dev/null | head -n1 | sed -E 's/^Python //' || true)" ;;
     java)   ver="$("$p" -version 2>&1 | head -n1 | sed -E 's/.*version "([^"]+)".*/\1/' || true)" ;;
   esac
-  add_runtime "$tool" "$ver" "$p" "$src" "$(placement_of "$p")" "yes"
+  add_runtime "$tool" "$ver" "$p" "$src" "$(placement_of "$p")" "yes" "$CUR_ROOT" "$CUR_PATTERN"
 }
 
 probe_root() {
   local root="$1" rel
   [ -d "$root" ] || return 0
+  # 记下这棵树的起点，probe_path 会把它写进记录的 root 字段
+  CUR_ROOT="$root"
   for rel in node.exe bin/node python.exe bin/python bin/python3 Scripts/python.exe \
              java.exe bin/java jbr/bin/java jre/bin/java; do
     probe_path "$root/$rel"
@@ -676,12 +719,14 @@ for app in /Applications/*.app /Applications/JetBrains/*.app "$HOME"/Application
   [ -d "$app" ] || continue
   case "$app" in
     *PyCharm*|*IntelliJ*|*WebStorm*|*GoLand*|*Android*Studio*|*IDEA*)
+      CUR_ROOT="$app"
       probe_path "$app/Contents/jbr/Contents/Home/bin/java" ;;
   esac
 done
 # Linux 上的 JetBrains Toolbox 安装位置
 for d in "$HOME"/.local/share/JetBrains/Toolbox/apps/*/*/; do
   [ -d "$d" ] || continue
+  CUR_ROOT="${d%/}"
   probe_path "${d%/}/jbr/bin/java"
 done
 
@@ -694,8 +739,12 @@ RUNTIME_ROWS="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' 'NF>=6 { key=tolower($3)
 # 默认关闭：这是唯一非线性的开销来源，所以要限深度、限文件名、限结果条数。
 # （census.ps1 的 -Deep 是同一件事：对每个盘符做有深度上限的扫描。）
 if [ "$DEEP" -eq 1 ]; then
+  # 深扫产出的记录标记为 deep-scan，与 census.ps1 的 -Pattern '(深度扫描)' 对齐：
+  # 消费者据此区分"定向探测找到的"和"只有深扫才看得见的"。
+  CUR_PATTERN="(深度扫描)"
   for _root in /usr/local /opt /usr/lib "$HOME/.local" "$HOME/opt" "$HOME/.opt" /Applications; do
     [ -d "$_root" ] || continue
+    CUR_ROOT="$_root"
     while IFS= read -r hit; do
       [ -n "$hit" ] || continue
       probe_path "$hit"
@@ -705,17 +754,22 @@ EOF
   done
   # 深扫结果同样按路径去重
   RUNTIME_ROWS="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' 'NF>=6 { key=tolower($3); if (!(key in seen)) { seen[key]=1; print } }')"
+  # 深扫结束，恢复默认标记（后面还有别的记录来源，不该继承深扫标记）
+  CUR_PATTERN="定向探测"; CUR_ROOT=""
 fi
 tick '4. 定向探测'
 
 # ---------- 第 5 阶段：解析层 ----------
 RESOLVE_ROWS=""
 probe_cmd() {
-  local name="$1" resolved ver hits hit hitcount=0
+  local name="$1" resolved ver hits hit hitcount=0 hitlist=""
   resolved="$(command -v "$name" 2>/dev/null || true)"
   [ -n "$resolved" ] || return 0
-  # 数一数 PATH 上有几个同名命令
-  hits="$(type -a -p "$name" 2>/dev/null | awk '!seen[tolower($0)]++' | wc -l | tr -d ' ')"
+  # PATH 上有几个同名命令，以及它们分别是谁。只报数量等于把"PATH 是单值命名空间"
+  # 这个核心事实丢掉一半：消费者想知道的是"另外那几个在哪儿"。
+  # census.ps1 的 allHits 就是这个列表，两边字段必须一一对应。
+  hitlist="$(type -a -p "$name" 2>/dev/null | awk '!seen[tolower($0)]++' | tr '\n' ';' | sed 's/;$//')"
+  hits="$(printf '%s' "$hitlist" | awk -F';' 'NF{print NF}')"
   hitcount="${hits:-1}"
   ver=""
   case "$name" in
@@ -727,9 +781,12 @@ probe_cmd() {
   esac
   # usable 作为第 5 列一起记下来：判断"装没装"要用它，
   # 而且 JSON 里与 census.ps1 的 resolution 记录对齐。
+  # 第 6 列是这条命令在 PATH 上的全部命中（与 PS 的 allHits 对应）。
+  # 注意：第 6 列追加在末尾，读取端必须一起收满，否则最后一个变量会吞掉剩余字段
+  # （bash 的 read 把余下内容全给最后一个变量，`[ "$usable" = "no" ]` 这种比较会静默失效）。
   usable="yes"
   is_real "$resolved" || usable="no"
-  RESOLVE_ROWS="${RESOLVE_ROWS}${name}|${resolved}|${ver}|${hitcount}|${usable}
+  RESOLVE_ROWS="${RESOLVE_ROWS}${name}|${resolved}|${ver}|${hitcount}|${usable}|${hitlist}
 "
   # 解析到不可执行的文件 → 高危告警
   if [ "$usable" = "no" ]; then
@@ -829,7 +886,8 @@ if [ -n "$PATH_DUPES" ]; then
     "parts=$d_parts"
 fi
 
-# 9) 声明被 PATH 顺序遮蔽：声明要求某个版本、mise 也装了，但解析到别的副本。
+# 9) 声明被 PATH 顺序遮蔽：声明要求某个版本、mise 也装了，但解析到的副本连"满足声明"
+#    都谈不上（解析到的版本本来就符合声明就不报，见 version_satisfies）。
 #    Unix 上同样成立——/usr/local/bin/node 之类排在 mise 的 shims 之前就会这样。
 #    用 < <(...) 而不是管道：管道里的循环是子 shell，add_warn 写进去的告警会丢掉。
 while IFS='|' read -r d_tool d_ver d_src; do
@@ -839,16 +897,23 @@ while IFS='|' read -r d_tool d_ver d_src; do
   [ -n "$m_ver" ] || continue
   case "$s_tool" in
     node)   d_cmds="node npm npx pnpm yarn" ;;
-    python) d_cmds="python python3 py pip" ;;
+    # 注意不含 pip：pip --version 报的是 pip 自己的版本（如 25.0.1），
+    # 拿它和"声明要求 python 3.12"比是范畴错误，只会造成误报。
+    # 下面的清单必须与 census.ps1 的解析名单完全一致。
+    python) d_cmds="python python3 py" ;;
     *)      d_cmds="$s_tool" ;;
   esac
   for c in $d_cmds; do
     r_path="$(printf '%s' "$RESOLVE_ROWS" | awk -F'|' -v c="$c" '$1==c {print $2; exit}')"
     [ -n "$r_path" ] || continue
     case "$r_path" in */mise/*) continue ;; esac
+    r_ver="$(printf '%s' "$RESOLVE_ROWS" | awk -F'|' -v c="$c" '$1==c {print $3; exit}')"
+    # 解析到的副本本来就满足声明就不报（版本是对的，只是不是 mise 那一份）；
+    # 与 census.ps1 的 Test-VersionSatisfies 判断一致。
+    version_satisfies "$r_ver" "$d_ver" && continue
     add_warn "PATH_ORDER" "$c" "" \
       "tool=$d_tool" "wanted=$d_ver" "file=$d_src" "have=$m_ver" \
-      "command=$c" "path=$r_path" "version=$(printf '%s' "$RESOLVE_ROWS" | awk -F'|' -v c="$c" '$1==c {print $3; exit}')"
+      "command=$c" "path=$r_path" "version=$r_ver"
   done
 done < <(declared_tools)
 
@@ -874,12 +939,28 @@ if [ "$JSON" -eq 1 ]; then
   # 会让整个 JSON 非法，ConvertFrom-Json / jq 直接报 "Unrecognized escape sequence"。
   # awk 的 esc() 负责反斜杠、双引号和控制字符，三个数组块共用。
   AWK_ESC='function esc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/[\r\n\t]/, " ", s); return s }
+           # 从 shim 路径里取出文件名（census.ps1 的 shimName）
+           function bname(s) { sub(/.*\//, "", s); return s }
+           # 从 shim 文件名反推工具名：node22.cmd -> node、python3.12 -> python
+           function toolof(s,   b) {
+             b = bname(s); sub(/\.[A-Za-z0-9]+$/, "", b); sub(/[-_]?[vV]?[0-9].*/, "", b)
+             return tolower(b)
+           }
+           # 把 "a;b;c" 形式的列表变成 JSON 字符串数组。空值输出 []（不是 [""]）。
+           function arr(s,   n, i, parts, out) {
+             if (s == "") return ""
+             n = split(s, parts, ";"); out = ""
+             for (i = 1; i <= n; i++) { if (parts[i] == "") continue; out = out (out == "" ? "" : ", ") "\"" esc(parts[i]) "\"" }
+             return out
+           }
            function sk(s) {
              if (s == "托管") return "managed"; if (s == "宿主") return "host";
              if (s == "公认") return "standard"; if (s == "规范根") return "canonical";
              if (s == "游离") return "stray"; if (s == "系统安装") return "system";
              if (s == "IDE 内置") return "ide"; if (s == "自定义位置") return "custom";
              if (s == "版本管理器") return "version-manager";
+             # 发现阶段标记：必须与上面的 stable_key() 保持一致（两份表各自漂移过一次）
+             if (s == "定向探测") return "probe"; if (s == "(深度扫描)") return "deep-scan";
              return s
            }'
   printf '{\n'
@@ -911,13 +992,13 @@ if [ "$JSON" -eq 1 ]; then
   printf '%s' "$MISE_TOOLS" | awk -F'[ \t]+' "$AWK_ESC"' NF>=2 {printf "%s{\"tool\": \"%s\", \"version\": \"%s\", \"requested\": \"%s\"}", (NR>1?", ":""), esc($1), esc($2), esc($NF)}'
   printf ']},\n'
   printf '  "conventions": [\n'
-  printf '%s' "$CONV_ROWS" | awk -F'|' "$AWK_ESC"' NF>=4 {printf "%s    {\"shim\": \"%s\", \"nameVersion\": \"%s\", \"actualVersion\": \"%s\", \"target\": \"%s\"}", (NR>1?",\n":""), esc($1), esc($2), esc($3), esc($4)}'
+  printf '%s' "$CONV_ROWS" | awk -F'|' "$AWK_ESC"' NF>=4 {printf "%s    {\"shim\": \"%s\", \"shimName\": \"%s\", \"tool\": \"%s\", \"nameVersion\": \"%s\", \"target\": \"%s\", \"targetOk\": %s, \"actualVersion\": \"%s\", \"source\": \"convention\", \"managed\": false}", (NR>1?",\n":""), esc($1), esc(bname($1)), esc(toolof($1)), esc($2), esc($4), ($5 == "no" ? "false" : "true"), esc($3)}'
   printf '\n  ],\n'
   printf '  "runtimes": [\n'
-  printf '%s' "$RUNTIME_ROWS" | awk -F'|' "$AWK_ESC"' NF>=6 {printf "%s    {\"tool\": \"%s\", \"version\": \"%s\", \"path\": \"%s\", \"source\": \"%s\", \"placement\": \"%s\", \"managed\": %s, \"real\": %s}", (NR>1?",\n":""), esc($1), esc($2), esc($3), sk($4), sk($5), ($3 ~ /\/mise\// ? "true" : "false"), ($6 == "yes" ? "true" : "false")}'
+  printf '%s' "$RUNTIME_ROWS" | awk -F'|' "$AWK_ESC"' NF>=6 {printf "%s    {\"tool\": \"%s\", \"version\": \"%s\", \"path\": \"%s\", \"source\": \"%s\", \"placement\": \"%s\", \"managed\": %s, \"real\": %s, \"root\": \"%s\", \"pattern\": \"%s\"}", (NR>1?",\n":""), esc($1), esc($2), esc($3), sk($4), sk($5), ($3 ~ /\/mise\// ? "true" : "false"), ($6 == "yes" ? "true" : "false"), esc($7), sk($8)}'
   printf '\n  ],\n'
   printf '  "resolution": [\n'
-  printf '%s' "$RESOLVE_ROWS" | awk -F'|' "$AWK_ESC"' NF>=4 {printf "%s    {\"command\": \"%s\", \"resolvesTo\": \"%s\", \"version\": \"%s\", \"hitCount\": %s, \"usable\": %s}", (NR>1?",\n":""), esc($1), esc($2), esc($3), $4, ($5 == "no" ? "false" : "true")}'
+  printf '%s' "$RESOLVE_ROWS" | awk -F'|' "$AWK_ESC"' NF>=4 {printf "%s    {\"command\": \"%s\", \"resolvesTo\": \"%s\", \"version\": \"%s\", \"allHits\": [%s], \"hitCount\": %s, \"stub\": %s, \"usable\": %s}", (NR>1?",\n":""), esc($1), esc($2), esc($3), arr($6), $4, ($5 == "no" ? "true" : "false"), ($5 == "no" ? "false" : "true")}'
   printf '\n  ],\n'
   printf '  "warnings": [%s],\n' "$WARN_JSON_ITEMS"
   printf '  "timings": [%s],\n' "$TIMING_JSON_ITEMS"
@@ -981,7 +1062,7 @@ sec "$(T 'sec.inv')"
 # 显示时经 label_text 映射到当前语言（JSON 那边则换成 ASCII 键）。
 # inv_current 必须在循环前初始化：脚本开着 set -u，未定义变量会让整个循环直接退出。
 inv_current=""
-while IFS='|' read -r r_tool r_ver r_path r_src r_place r_usable; do
+while IFS='|' read -r r_tool r_ver r_path r_src r_place r_usable r_root r_pattern; do
   [ -n "$r_tool" ] || continue
   if [ "$r_tool" != "$inv_current" ]; then
     inv_current="$r_tool"
@@ -1000,7 +1081,7 @@ while IFS='|' read -r r_tool r_ver r_path r_src r_place r_usable; do
 done < <(printf '%s\n' "$RUNTIME_ROWS" | sort -t'|' -k1,1)
 
 sec "$(T 'sec.res')"
-while IFS='|' read -r cmd resolved ver hits usable; do
+while IFS='|' read -r cmd resolved ver hits usable hitlist; do
   [ -n "$cmd" ] || continue
   if [ "${hits:-1}" -gt 1 ]; then
     echo "  $(T 'res.hits' "command=$cmd" "path=$resolved" "version=$ver" "hits=$hits")"

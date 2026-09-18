@@ -217,6 +217,31 @@ foreach ($impl in @(@{ Name = 'census.ps1'; Data = $ps1 }, @{ Name = 'census.sh'
     Check 'census.ps1 的 JSON 字段齐全' ($ps1Missing.Count -eq 0) ("缺: " + ($ps1Missing -join ', '))
     Check 'census.sh 的 JSON 字段齐全'  ($shMissing.Count -eq 0)  ("缺: " + ($shMissing -join ', '))
     Check '两边 schemaVersion 相同' ($ps1.schemaVersion -and ($ps1.schemaVersion -eq $sh.schemaVersion)) ("ps1=$($ps1.schemaVersion) sh=$($sh.schemaVersion)")
+
+    # 这里刻意【不】逐字段强制两份实现结构一致。曾经加过这样的断言，代价是每次改动
+    # 都要在两个实现之间做完全对齐（连附加信息都要互相补齐或写例外名单），而收益只是
+    # "少一个字段"，不值这个钱。契约以 docs/reference 里列出的字段为准：消费者按文档
+    # 读，实现可以带上自己的附加字段。
+    #
+    # 但有一条必须守：机器可读的标识符必须是稳定 ASCII（见下）。它与"两边是否一致"
+    # 无关——kind / source / placement / pattern 是给脚本和 agent 匹配用的，一旦混进
+    # 本地化取值（内部的中文标记直接落进 JSON），非 UTF-8 locale 下就匹配不上。
+    # message / action 是散文，按文档跟随 --lang，不在这条断言的范围里。
+    $asciiFields = 'kind', 'source', 'placement', 'pattern'
+    foreach ($impl in @(@{ name = 'census.ps1'; data = $ps1 }, @{ name = 'census.sh'; data = $sh })) {
+        $bad = @()
+        foreach ($stage in 'runtimes', 'warnings') {
+            foreach ($r in @($impl.data.$stage)) {
+                if ($null -eq $r) { continue }
+                foreach ($f in $asciiFields) {
+                    if ($r.PSObject.Properties.Name -notcontains $f) { continue }
+                    $v = $r.$f
+                    if ($v -and ("$v" -notmatch '^[\x20-\x7E]*$')) { $bad += "$stage.$f=$v" }
+                }
+            }
+        }
+        Check "$($impl.name) 的机器可读字段是纯 ASCII" ($bad.Count -eq 0) ((@($bad | Select-Object -Unique) | Select-Object -First 5) -join '; ')
+    }
 } finally {
     # 先回到原目录再删沙箱：Windows 上不能删除"当前所在"的目录
     Pop-Location

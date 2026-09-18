@@ -671,6 +671,34 @@ function Test-IsMiseManaged {
     return ($Path -match '\\mise\\(installs|shims)\\' -or $Path -match '/mise/(installs|shims)/')
 }
 
+# 判断"解析到的实际版本"是否已经满足声明里的要求。
+# 声明里可能是 "3.12"、"22"，也可能是一串（TOML 数组去掉括号后的 "22, 20"）；
+# 实际版本可能是 "3.12.10" / "22.23.2" / "1.8.0_144"。
+# 规则：逐段比数字前缀——声明 "3.12" 满足 "3.12.10"，声明 "22" 满足 "22.23.2"；
+# 带发行版前缀的声明（temurin-21）先剥掉前缀再比。声明是一串时任意一条满足即可。
+# 判断不出来的一律当作满足（latest / stable / 空值）：宁可漏报，也不要在用户本来
+# 就满足声明时喊"版本不对"——那种告警按它自己的建议改完也不会消失。
+function Test-VersionSatisfies {
+    param([string]$Version, [string]$Wanted)
+    if ([string]::IsNullOrWhiteSpace($Wanted)) { return $true }
+    if ([string]::IsNullOrWhiteSpace($Version)) { return $false }
+    $actual = @([regex]::Matches($Version, '\d+') | ForEach-Object { [int]$_.Value })
+    if ($actual.Count -eq 0) { return $true }
+    foreach ($one in ($Wanted -split '[,;]')) {
+        $w = "$one".Trim() -replace '"', ''
+        if ([string]::IsNullOrWhiteSpace($w)) { continue }
+        if ($w -match '^(?i)(latest|stable|lts|system|any|\*)$') { return $true }
+        $w = $w -replace '^[A-Za-z][A-Za-z0-9]*[-_]', ''      # temurin-21 -> 21
+        $want = @([regex]::Matches($w, '\d+') | ForEach-Object { [int]$_.Value })
+        if ($want.Count -eq 0) { return $true }
+        $n = [Math]::Min($want.Count, $actual.Count)
+        $ok = $true
+        for ($i = 0; $i -lt $n; $i++) { if ($want[$i] -ne $actual[$i]) { $ok = $false; break } }
+        if ($ok) { return $true }
+    }
+    return $false
+}
+
 # ---------- 规范根与位置基准 ----------
 # 规范根：非托管的手装运行时应该放在这里，按 <工具>/<版本>/ 排列。
 # 它不是一个强制约束，而是给 census 一个判断"位置是否规范"的基准。
@@ -1328,7 +1356,8 @@ function Get-Warnings {
         }
     }
 
-    # --- 8) 声明被 PATH 顺序遮蔽：声明要求某个版本，mise 也确实装了，但解析到别的副本 ---
+    # --- 8) 声明被 PATH 顺序遮蔽：声明要求某个版本，mise 也确实装了，但解析到的副本
+    #        连"满足声明"都谈不上（解析到的版本本来就符合声明就不报，见 Test-VersionSatisfies）---
     # 根因不在运行时，而在 Windows 组合 PATH 的规则：机器级 PATH 在前、用户级在后，
     # 于是 legacy 的直接工具目录（D:\nodejs、C:\ProgramData\Oracle\Java\javapath）
     # 永远排在 mise 的 shims 之前。交互式会话靠 `mise activate` 在会话内临时把 shims
@@ -1343,13 +1372,18 @@ function Get-Warnings {
 
             $resolved = @($Resolution | Where-Object {
                 if ($short -eq 'node')        { $_.command -in @('node', 'npm', 'npx', 'pnpm', 'yarn') }
-                elseif ($short -eq 'python')  { $_.command -eq 'python' -or $_.command -eq 'py' }
+                elseif ($short -eq 'python')  { $_.command -in @('python', 'python3', 'py') }
                 else                          { $_.command -eq $short }
             })
             foreach ($r in $resolved) {
                 if (-not $r.usable) { continue }
                 # 已经解析到 mise 的 shims / installs 就不是问题
                 if ($r.resolvesTo -match '\\mise\\(shims|installs)\\') { continue }
+                # 解析到的副本本来就满足声明，就算不上"用错版本"：
+                # 声明 python "3.12, 3.13"、解析到 Windows 的 py 启动器（3.12.10）就是这种情况——
+                # 版本是对的，只是不是 mise 那一份。而且 mise 不会为 py 生成 shim，
+                # 按告警建议去调 PATH 顺序也永远不会让它消失，只会白费一轮排查。
+                if (Test-VersionSatisfies -Version $r.version -Wanted "$($d.tools[$tool])") { continue }
                 if (-not $seenInert.Add("$($r.command)|$($r.resolvesTo)")) { continue }
 
                 $warnings.Add((New-Warning -Kind 'PATH_ORDER' -Tool $r.command -Facts @{
@@ -1533,16 +1567,26 @@ Add-ReportField $report 'runtimes'     { ,@($unmanaged | ForEach-Object {
         managed   = $_.managed
         real      = $_.real
         root      = $_.root
-        pattern   = $_.pattern
+        # pattern 也必须过 Get-StableKey：它是发现阶段标记（probe / deep-scan），
+        # 内部值「定向探测」是中文。漏转会让 JSON 里混进本地化取值，
+        # 而 census.sh 侧没有这个字段——按文档写的消费者会在 Windows 上
+        # 拿到中文、在 Unix 上拿到 null。
+        pattern   = (Get-StableKey $_.pattern)
     }
 }) }
 Add-ReportField $report 'resolution'   { ,@($resolution) }
 Add-ReportField $report 'warnings'     { ,@($warnings) }
 # 注意不能写 @($TimingItems)：在 Windows PowerShell 5.1 上，
 # @() 作用于 List[object] 会抛 "Argument types do not match"，必须走 ToArray()
-Add-ReportField $report 'timings'      { ,@($TimingItems | ForEach-Object {
-    [pscustomobject]@{ phase = (Get-StableKey $_.phase); ms = $_.ms }
-}) }
+Add-ReportField $report 'timings'      {
+    # 与 census.sh 对齐：timings 只在 -Timing 时填充。bash 侧每阶段要起一个 date 进程，
+    # 默认不测；两边不一致会让同一份 JSON 在一个平台上是 8 条、另一个平台上是 0 条，
+    # 而文档承诺的是"配合 --timing 的各阶段毫秒数"。
+    if (-not $Timing) { return ,@() }
+    return ,@($TimingItems | ForEach-Object {
+        [pscustomobject]@{ phase = (Get-StableKey $_.phase); ms = $_.ms }
+    })
+}
 Add-ReportField $report 'summary'      {
     [pscustomobject]@{
         runtimeCount = @($unmanaged).Count
