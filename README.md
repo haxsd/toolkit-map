@@ -1,9 +1,9 @@
 [中文](README.zh-CN.md) ｜ **English**
 
-[![CI](https://github.com/haxsd/runtime-census/actions/workflows/ci.yml/badge.svg)](https://github.com/haxsd/runtime-census/actions/workflows/ci.yml)
+[![CI](https://github.com/haxsd/toolkit-map/actions/workflows/ci.yml/badge.svg)](https://github.com/haxsd/toolkit-map/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-# runtime-census
+# toolkit-map
 
 Find every **tool** that actually exists on this machine — language runtimes are just one
 kind of tool — and manage them declaratively.
@@ -17,15 +17,15 @@ hand last year all sit on disk.
 
 ```powershell
 # Windows
-git clone https://github.com/haxsd/runtime-census
-cd runtime-census
+git clone https://github.com/haxsd/toolkit-map
+cd toolkit-map
 .\scripts\census.ps1
 ```
 
 ```bash
 # macOS / Linux
-git clone https://github.com/haxsd/runtime-census
-cd runtime-census
+git clone https://github.com/haxsd/toolkit-map
+cd toolkit-map
 ./scripts/census.sh
 ```
 
@@ -95,15 +95,15 @@ The repo root contains `SKILL.md`, so the repository itself is a Cursor / Claude
 Link it rather than copying, so that `git pull` upgrades the skill:
 
 ```powershell
-git clone https://github.com/haxsd/runtime-census $env:USERPROFILE\Projects\runtime-census
+git clone https://github.com/haxsd/toolkit-map $env:USERPROFILE\Projects\toolkit-map
 New-Item -ItemType Junction `
-  -Path "$env:USERPROFILE\.cursor\skills\runtime-census" `
-  -Target "$env:USERPROFILE\Projects\runtime-census"
+  -Path "$env:USERPROFILE\.cursor\skills\toolkit-map" `
+  -Target "$env:USERPROFILE\Projects\toolkit-map"
 ```
 
 ```bash
-git clone https://github.com/haxsd/runtime-census ~/Projects/runtime-census
-ln -s ~/Projects/runtime-census ~/.cursor/skills/runtime-census
+git clone https://github.com/haxsd/toolkit-map ~/Projects/toolkit-map
+ln -s ~/Projects/toolkit-map ~/.cursor/skills/toolkit-map
 ```
 
 `AGENTS.md` is the companion **discovery contract** — the rules an agent must follow when

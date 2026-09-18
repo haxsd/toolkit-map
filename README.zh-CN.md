@@ -1,9 +1,9 @@
 **中文** ｜ [English](README.md)
 
-[![CI](https://github.com/haxsd/runtime-census/actions/workflows/ci.yml/badge.svg)](https://github.com/haxsd/runtime-census/actions/workflows/ci.yml)
+[![CI](https://github.com/haxsd/toolkit-map/actions/workflows/ci.yml/badge.svg)](https://github.com/haxsd/toolkit-map/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-# runtime-census
+# toolkit-map
 
 找出这台机器上**真正存在**的每一个**工具**——语言运行时只是其中一类——并用声明式方式管理它们。
 
@@ -15,15 +15,15 @@
 
 ```powershell
 # Windows
-git clone https://github.com/haxsd/runtime-census
-cd runtime-census
+git clone https://github.com/haxsd/toolkit-map
+cd toolkit-map
 .\scripts\census.ps1
 ```
 
 ```bash
 # macOS / Linux
-git clone https://github.com/haxsd/runtime-census
-cd runtime-census
+git clone https://github.com/haxsd/toolkit-map
+cd toolkit-map
 ./scripts/census.sh
 ```
 
@@ -88,15 +88,15 @@ PATH 首位，并执行 `mise install`。它不动机器级环境变量、不删
 skills 目录**链接**到这份克隆上，而不是复制一份 —— 这样以后 `git pull` 就等于升级 skill：
 
 ```powershell
-git clone https://github.com/haxsd/runtime-census $env:USERPROFILE\Projects\runtime-census
+git clone https://github.com/haxsd/toolkit-map $env:USERPROFILE\Projects\toolkit-map
 New-Item -ItemType Junction `
-  -Path "$env:USERPROFILE\.cursor\skills\runtime-census" `
-  -Target "$env:USERPROFILE\Projects\runtime-census"
+  -Path "$env:USERPROFILE\.cursor\skills\toolkit-map" `
+  -Target "$env:USERPROFILE\Projects\toolkit-map"
 ```
 
 ```bash
-git clone https://github.com/haxsd/runtime-census ~/Projects/runtime-census
-ln -s ~/Projects/runtime-census ~/.cursor/skills/runtime-census
+git clone https://github.com/haxsd/toolkit-map ~/Projects/toolkit-map
+ln -s ~/Projects/toolkit-map ~/.cursor/skills/toolkit-map
 ```
 
 `AGENTS.md` 是配套的**发现契约**，写清了 agent 在判断工具可用性时必须遵守的规则。

@@ -610,32 +610,55 @@ function Invoke-Update {
 
 # ---------- 动作：install ----------
 
-# portable 归档的来源。只收录"官方发布 zip/tar.gz"的常见工具；其它工具用 -Url 指定。
+# portable 归档的来源。只收录"官方发布 zip"的常见工具；其它工具用 -Url 指定直链。
+# tag/asset 两个模板分开写：同一个项目里"发布 tag"和"资产文件名"的 v 前缀经常不一致
+# （jadx 的 tag 是 v1.5.1，资产却叫 jadx-1.5.1.zip），所以版本号统一按裸版本处理。
 $Recipes = @{
-    'gh'       = @{ url = 'https://github.com/cli/cli/releases/download/v{ver}/gh_{ver}_windows_amd64.zip'; exe = 'bin\gh.exe' }
-    'jadx'     = @{ url = 'https://github.com/skylot/jadx/releases/download/v{ver}/jadx-{ver}.zip'; exe = 'bin\jadx.bat' }
-    'ripgrep'  = @{ url = 'https://github.com/BurntSushi/ripgrep/releases/download/{ver}/ripgrep-{ver}-x86_64-pc-windows-msvc.zip'; exe = 'rg.exe' }
-    'fd'       = @{ url = 'https://github.com/sharkdp/fd/releases/download/v{ver}/fd-v{ver}-x86_64-pc-windows-msvc.zip'; exe = 'fd.exe' }
+    'gh'      = @{ repo = 'cli/cli'; tag = 'v{ver}'; asset = 'gh_{ver}_windows_amd64.zip'; exe = 'bin\gh.exe' }
+    'jadx'    = @{ repo = 'skylot/jadx'; tag = 'v{ver}'; asset = 'jadx-{ver}.zip'; exe = 'bin\jadx.bat' }
+    'ripgrep' = @{ repo = 'BurntSushi/ripgrep'; tag = '{ver}'; asset = 'ripgrep-{ver}-x86_64-pc-windows-msvc.zip'; exe = 'rg.exe' }
+    'fd'      = @{ repo = 'sharkdp/fd'; tag = 'v{ver}'; asset = 'fd-v{ver}-x86_64-pc-windows-msvc.zip'; exe = 'fd.exe' }
+}
+
+# 版本号不许猜：@latest 走 GitHub API 拿最新发布的 tag。
+# agent 不该凭记忆写版本号，机器也不该让它去猜。
+function Resolve-LatestVersion {
+    param([string]$Repo)
+    try {
+        $api = "https://api.github.com/repos/$Repo/releases/latest"
+        $rel = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent' = 'toolkit-map' } -TimeoutSec 30
+        return ("$($rel.tag_name)" -replace '^v', '')
+    } catch {
+        throw "拿不到 $Repo 的最新版本（$($_.Exception.Message)）。请显式给版本：install <tool>@<版本>"
+    }
 }
 
 function Invoke-Install {
-    if (-not $Tool) { throw "用法：map.ps1 install <tool>@<版本>（或 install <tool> -Url <zip 直链>）" }
+    if (-not $Tool) { throw "用法：map.ps1 install <tool>@<版本|latest>（或 install <tool> -Url <zip 直链>）" }
     $name = $Tool; $ver = $Version
     if ($Tool -match '@') { $parts = $Tool -split '@', 2; $name = $parts[0]; $ver = $parts[1] }
 
     $root = Get-WarehouseRoot
-    $target = Join-Path (Join-Path $root $name) $ver
     $url = $Url
     $exeRel = ''
     if (-not $url) {
         if (-not $Recipes.ContainsKey($name)) {
             throw "没有 $name 的 portable 配方。请给直链：map.ps1 install $name -Url <zip 直链> -Version $ver（或用包管理器装，然后 map.ps1 add 登记）"
         }
-        if (-not $ver) { throw "install $name 需要版本号：map.ps1 install $name@<版本>" }
-        $url = $Recipes[$name].url -replace '\{ver\}', $ver
-        $exeRel = $Recipes[$name].exe
+        $recipe = $Recipes[$name]
+        # 版本号一律按裸版本处理：'v1.5.1' 和 '1.5.1' 等价；'latest' 去 API 查
+        $ver = "$ver" -replace '^v', ''
+        if (-not $ver -or $ver -eq 'latest') {
+            Write-Host "解析 $name 的最新版本（GitHub API）…" -ForegroundColor DarkGray
+            $ver = Resolve-LatestVersion -Repo $recipe.repo
+        }
+        $tag = $recipe.tag -replace '\{ver\}', $ver
+        $asset = $recipe.asset -replace '\{ver\}', $ver
+        $url = "https://github.com/$($recipe.repo)/releases/download/$tag/$asset"
+        $exeRel = $recipe.exe
     }
     if (-not $ver) { $ver = 'unversioned' }
+    $target = Join-Path (Join-Path $root $name) $ver
 
     Write-Host "将把 $name $ver 装到：$target" -ForegroundColor Cyan
     Write-Host "  下载：$url" -ForegroundColor DarkGray
