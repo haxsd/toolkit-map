@@ -37,6 +37,39 @@ ln -s ~/Projects/toolkit-map ~/.cursor/skills/toolkit-map
 ln -s ~/Projects/toolkit-map ~/.agents/skills/toolkit-map
 ```
 
+### 装完还要写规则，否则可能等于没装
+
+**技能装进目录，不等于模型看得见它。** 这取决于前端愿不愿意把技能递给模型，两条通道要分开看：
+
+| 通道 | 实测结果 |
+|---|---|
+| **技能目录**（`~/.cursor/skills`、`~/.agents/skills` …） | **有的前端会读，有的不会。** Devin 会——它的代码里明确在扫描 `.devin/skills`、`.agents/skills`、`.claude/skills`、`.github/skills` 并构建"名称 + 描述"的技能表；而某个 Cursor 构建**不会**：25 个技能全部就位、联接可读、`SKILL.md` 也在，模型上下文里**仍然没有任何技能清单**，工具表里也没有"读技能"这一类 |
+| **规则**（项目根 `AGENTS.md`、Cursor 的 User Rules、`~/.codex/AGENTS.md`） | **会注入**。同一台机器、同一个会话里实测：写进项目 `AGENTS.md` 的约定，被模型在 `<rules>` 区块中原样引用出来 |
+
+所以本产品的约定**必须同时写在规则里**——只装技能目录，在那类前端上等于没装，而且**不会报错**。
+
+三处各写一次（都是粘一段文本）：
+
+- **Cursor**：`Customize → Rules`（User Rules 存在账号里，不在文件系统上，所以只能手工粘一次）
+- **Codex**：`~%USERPROFILE%\.codex\AGENTS.md` 里加一节
+- **项目级兜底**：项目根放一个 `AGENTS.md`（Cursor 会读项目根与子目录，`Devin` 也认 `AGENTS.md`）
+
+现成文本，直接粘：
+
+```
+本机约定：要用工具之前先查工具地图，装工具只走统一仓库。
+  <map.ps1 的绝对路径> status
+  <map.ps1 的绝对路径> find <工具> -Json
+  <map.ps1 的绝对路径> install <工具>@<版本>
+不要用 where.exe / Get-Command 猜该用哪个；发现地图里没有的副本用 add 登记（不搬路径）；
+装完/卸完东西后跑 update。
+```
+
+**怎么验证写没写进去**（新开一个会话，问 agent 两句话）：
+
+1. "你上下文里有没有关于工具地图的规则？" —— 答"有"并引用出来，说明规则通道通了。
+2. "你上下文里有没有可用技能清单？" —— 把这一问和上一问分开问，才能区分"技能没被发现"和"发现了但没递给模型"。
+
 ## 六个动作
 
 ```powershell
