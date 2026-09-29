@@ -108,6 +108,64 @@ function Test-IsEnvInternal {
 
 # ---------- 版本探测（唯一会执行外部程序的地方）----------
 
+# 版本号长什么样：'v22.23.2' -> '22.23.2'、'Python 3.12.14' -> '3.12.14'、'1.8.0_504' 原样。
+$VersionTokenPattern = '\d+(\.\d+)+[A-Za-z0-9._+-]*'
+# 明显不是版本号的行——先试的 flag 不被支持时就是这种输出（Java 8 不认 --version）。
+# 这类文本既不能当版本，也不该留作兜底。
+$VersionNoisePattern = '(?i)unrecognized|unknown option|invalid|not found|no such|usage|error'
+
+# 跑一个外部程序，把 stdout 与 stderr 都当文本读回来（最多 MaxLines 行）。
+#
+# 为什么不用 `& $exe --version 2>&1`：map.ps1 全局把 $ErrorActionPreference 设为 Stop，
+# 原生命令往 stderr 写时 `2>&1` 会被 PowerShell 包装成**终止性错误**——于是"版本写在
+# stderr"的工具永远探不到版本，catch 还会把真实输出一起吞掉。实测：统一仓库里的
+# JDK 8（openjdk version "1.8.0_504"）被记成空版本，候选 id 跟着退化成 warehouse--bin。
+# 这里与 census.ps1 的 Get-FirstLine 用同一套做法：ProcessStartInfo + 两个流都读
+# （只读一个会在另一个缓冲区写满时死锁）+ 超时保护。
+function Get-ProbeText {
+    param([string]$Exe, [string[]]$Arguments, [int]$MaxLines = 1)
+    if (-not $Exe) { return '' }
+
+    $fileName = $Exe
+    $argLine = ($Arguments | ForEach-Object {
+        if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+    }) -join ' '
+
+    $ext = [System.IO.Path]::GetExtension($Exe).ToLowerInvariant()
+    if ($ext -eq '.cmd' -or $ext -eq '.bat') {
+        # .cmd/.bat 必须经由 cmd.exe 解释，不能直接当进程启动
+        $argLine = '/c "' + $Exe + '" ' + $argLine
+        $fileName = if ($env:ComSpec) { $env:ComSpec } else { 'cmd.exe' }
+    } elseif ($ext -eq '.ps1') {
+        return ''                       # 探测 PowerShell 脚本没有意义，还慢
+    }
+
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName               = $fileName
+        $psi.Arguments              = $argLine
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError  = $true
+        $psi.UseShellExecute        = $false
+        $psi.CreateNoWindow         = $true
+
+        $p  = [System.Diagnostics.Process]::Start($psi)
+        $so = $p.StandardOutput.ReadToEndAsync()
+        $se = $p.StandardError.ReadToEndAsync()
+        # 超时保护：某些损坏的安装会让 -version 永久挂住，一次探测不该拖死整次扫描
+        if (-not $p.WaitForExit(20000)) {
+            try { $p.Kill() } catch { }
+            return ''
+        }
+
+        return (@(("$($so.Result)`n$($se.Result)" -split "`r?`n") |
+                  Where-Object { $_.Trim() } |
+                  Select-Object -First $MaxLines) -join "`n").Trim()
+    } catch {
+        return ''
+    }
+}
+
 function Get-ExeVersion {
     param([string]$ExePath)
     if (-not $ExePath) { return '' }
@@ -115,19 +173,19 @@ function Get-ExeVersion {
     if (Test-IsStoreAlias $ExePath) { return '' }       # 护栏：不执行商店别名
     $item = Get-Item -LiteralPath $ExePath -ErrorAction SilentlyContinue
     if ($null -eq $item -or $item.PSIsContainer -or $item.Length -eq 0) { return '' }
-    foreach ($flag in @('--version', '-version')) {
-        try {
-            $out = & $ExePath $flag 2>&1 | Select-Object -First 1
-            if ($out) {
-                # 统一成裸版本号：'v22.23.2' -> '22.23.2'、'Python 3.12.14' -> '3.12.14'
-                $t = "$out".Trim()
-                $m = [regex]::Match($t, '\d+(\.\d+)+[A-Za-z0-9._+-]*')
-                if ($m.Success) { return $m.Value }
-                return $t
-            }
-        } catch { }
+
+    $fallback = ''
+    # flag 顺序与 census.ps1 一致：绝大多数工具认 --version，Java 只认 -version，
+    # 少数工具要裸 version。每个 flag 只看首行；取不到像版本号的，继续试下一个。
+    foreach ($flag in @('--version', '-version', 'version')) {
+        $line = Get-ProbeText -Exe $ExePath -Arguments @($flag) -MaxLines 1
+        if (-not $line) { continue }
+        # 统一成裸版本号：'v22.23.2' -> '22.23.2'、'Python 3.12.14' -> '3.12.14'
+        $m = [regex]::Match($line, $VersionTokenPattern)
+        if ($m.Success) { return $m.Value }
+        if (-not $fallback -and $line -notmatch $VersionNoisePattern) { $fallback = $line }
     }
-    return ''
+    return $fallback
 }
 
 # 声明里的 "3.12" 满足 "3.12.10"、"22" 满足 "22.23.2"；判断不出来一律当作满足。
@@ -340,6 +398,38 @@ function New-Candidate {
     }
 }
 
+# 保证同一工具内候选 id 唯一。契约见 docs/reference.md：`id` 是"工具内唯一标识，
+# preferred 指向它"，而 preferred 的解析是 `Where-Object { $_.id -eq $preferred }`——
+# id 一旦撞车，首选就指向了不确定的那一个。
+#
+# 实测踩到：统一仓库里 JDK 8 的 bin\java.exe 与 jre\bin\java.exe，只按"父目录名"区分时
+# 两者父目录都叫 bin，于是拿到同一个 id（warehouse--bin）。这里改成取两级目录名，
+# 仍撞车时再补序号兜底。
+function Set-UniqueCandidateIds {
+    param([object[]]$Candidates)
+    $dupes = @{}
+    foreach ($c in $Candidates) { $dupes[$c.id] = ($dupes[$c.id] + 1) }
+    $used = @{}
+    foreach ($c in $Candidates) {
+        if ($dupes[$c.id] -gt 1) {
+            $tail = New-Object System.Collections.Generic.List[string]
+            $d = Split-Path $c.path -Parent
+            for ($i = 0; $i -lt 2 -and $d; $i++) {
+                $seg = [IO.Path]::GetFileName($d)
+                if ($seg) { $tail.Add(($seg -replace '[^\w\.]', '_')) }
+                $d = Split-Path $d -Parent
+            }
+            $c.id = $c.id + '-' + ($tail -join '-')
+        }
+        if ($used.ContainsKey($c.id)) {
+            $n = 2
+            while ($used.ContainsKey("$($c.id)-$n")) { $n++ }
+            $c.id = "$($c.id)-$n"
+        }
+        $used[$c.id] = $true
+    }
+}
+
 # 收集某个工具的全部候选
 function Get-ToolCandidates {
     param([string]$Name, [hashtable]$RuntimeIndex)
@@ -368,14 +458,8 @@ function Get-ToolCandidates {
     # 过滤：依赖特定环境的副本不进地图
     $cands = @($cands | Where-Object { -not (Test-IsEnvInternal $_.path) })
 
-    # 归并同一路径的重复项，并给同工具的多个同来源条目补上区分的 id
-    $dupes = @{}
-    foreach ($c in $cands) { $dupes[$c.id] = ($dupes[$c.id] + 1) }
-    foreach ($c in $cands) {
-        if ($dupes[$c.id] -gt 1) {
-            $c.id = $c.id + '-' + ([IO.Path]::GetFileName((Split-Path $c.path -Parent)) -replace '[^\w\.]', '_')
-        }
-    }
+    # 最后一道：保证同工具内 id 唯一（preferred 靠 id 定位）
+    Set-UniqueCandidateIds -Candidates $cands
     return @($cands)
 }
 
@@ -750,16 +834,14 @@ function Resolve-LatestVersion {
 function Get-ExeVersionByPattern {
     param([string]$ExePath, [string]$Pattern)
     if (-not $Pattern) { return (Get-ExeVersion $ExePath) }
-    foreach ($flag in @('--version', '-version')) {
-        try {
-            $out = (& $ExePath $flag 2>&1 | Select-Object -First 4) -join "`n"
-            if ($out) {
-                $m = [regex]::Match($out, $Pattern)
-                if ($m.Success) {
-                    return $(if ($m.Groups.Count -gt 1) { $m.Groups[1].Value } else { $m.Value })
-                }
-            }
-        } catch { }
+    foreach ($flag in @('--version', '-version', 'version')) {
+        # 与通用探测共用同一个取输出的通道：stderr 也要读（Java 一类把版本写在 stderr）
+        $out = Get-ProbeText -Exe $ExePath -Arguments @($flag) -MaxLines 4
+        if (-not $out) { continue }
+        $m = [regex]::Match($out, $Pattern)
+        if ($m.Success) {
+            return $(if ($m.Groups.Count -gt 1) { $m.Groups[1].Value } else { $m.Value })
+        }
     }
     return ''
 }
