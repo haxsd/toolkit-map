@@ -265,8 +265,16 @@ elif ! command -v mise >/dev/null 2>&1; then
   warn 'mise 还不在当前 PATH 里，无法执行 mise install'
   warn '请重开终端后手工执行: mise install'
 else
-  run_action 'mise install（按机器声明拉取全部运行时）' mise install
-  done_msg '运行时已拉取'
+  # 空 [tools] 是"按需"形态（模板默认）：这时 mise install 什么也不会做，
+  # 说清楚比静默跳过好——否则使用者会以为"拉取过了"。
+  if [ -f "$MISE_CONFIG_FILE" ] && declare -F tools_keys >/dev/null 2>&1 && [ -z "$(tools_keys "$MISE_CONFIG_FILE")" ]; then
+    skip '机器声明里没有要常备的版本（按需模式）'
+    printf '    版本需求写在项目自己的 mise.toml / .tool-versions 里；进项目后执行\n'
+    printf '    mise install（只拉那个项目声明的版本），或用 mise x <工具>@<版本> -- <命令>。\n'
+  else
+    run_action 'mise install（按机器声明拉取全部运行时）' mise install
+    done_msg '运行时已拉取'
+  fi
 fi
 
 # ============================================================
