@@ -47,6 +47,10 @@
 | 项目根目录 | `.nvmrc` / `.python-version` / `package.json` 的 `engines` | 语言各自的传统声明 |
 | 用户全局 | `~/.config/mise/config.toml` | 这台机器**提供**哪些版本 |
 
+**默认按需**：全局声明留空，版本需求写进项目；只有确实要常备的版本才写进
+`~/.config/mise/config.toml`——写进去的每一项都会被 `mise install` 立刻拉下来，
+声明了却没装还会被 census 报 `[MISSING]`。
+
 **项目声明比机器声明更具体**：项目内有声明时以项目为准，用 `mise exec -- <命令>` 执行；
 地图给的是"机器事实"，项目声明是"项目意图"，两者冲突时意图优先。
 
