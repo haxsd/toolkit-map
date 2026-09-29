@@ -695,13 +695,50 @@ $Recipes = @{
                    versionPattern = '(?m)^Version\s+(\d+(?:\.\d+)*)' }
 }
 
+# ---------- 网络访问：容忍"证书吊销服务器不可达"的机器 ----------
+#
+# 实测环境：受限网络里连不上 CRL/OCSP 服务器时，.NET 默认的吊销检查会让
+# Invoke-WebRequest / Invoke-RestMethod 直接失败，报"基础连接已经关闭: 未能为
+# SSL/TLS 安全通道建立信任关系"，看起来像网络不通，实际只是本地无法确认证书有
+# 没有被吊销（同一台机器的 curl 报的是 CRYPT_E_REVOCATION_OFFLINE，能对上）。
+#
+# 处理：先按默认设置请求一次；只有错误确实像证书/信任问题时，才在【本进程内】临时
+# 关掉吊销检查重试一次，并明确告知使用者——不静默降级，也不写任何系统设置。
+# 非证书类错误（404、超时、校验失败……）原样抛出，避免把真实错误掩盖成"重试也没用"。
+$RevocationErrorPattern = 'SSL|TLS|schannel|certificate|trust|证书|信任|吊销|revocation'
+
+function Invoke-NetRetry {
+    param(
+        [Parameter(Mandatory)][scriptblock]$Action,
+        [string]$What = '网络请求'
+    )
+    try {
+        return & $Action
+    } catch {
+        $first = $_
+    }
+    if ("$($first.Exception.Message)" -notmatch $RevocationErrorPattern) { throw $first }
+
+    $before = [Net.ServicePointManager]::CheckCertificateRevocationList
+    try {
+        [Net.ServicePointManager]::CheckCertificateRevocationList = $false
+        Write-Warning "$What 失败：$($first.Exception.Message)"
+        Write-Warning '本机可能连不上证书吊销服务器，已在本进程内临时关闭吊销检查后重试（不改系统设置）'
+        return & $Action
+    } finally {
+        [Net.ServicePointManager]::CheckCertificateRevocationList = $before
+    }
+}
+
 # 版本号不许猜：@latest 走 GitHub API 拿最新发布的 tag。
 # agent 不该凭记忆写版本号，机器也不该让它去猜。
 function Resolve-LatestVersion {
     param([string]$Repo)
     try {
         $api = "https://api.github.com/repos/$Repo/releases/latest"
-        $rel = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent' = 'toolkit-map' } -TimeoutSec 30
+        $rel = Invoke-NetRetry -What "读取 $Repo 的发布信息" -Action {
+            Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent' = 'toolkit-map' } -TimeoutSec 30
+        }
         return ("$($rel.tag_name)" -replace '^v', '')
     } catch {
         throw "拿不到 $Repo 的最新版本（$($_.Exception.Message)）。请显式给版本：install <tool>@<版本>"
@@ -845,7 +882,7 @@ function Invoke-Install {
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
     try {
         $zip = Join-Path $stage 'pkg.zip'
-        Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+        Invoke-NetRetry -What "下载 $url" -Action { Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing }
         Assert-ArchiveSha256 -ArchivePath $zip -Expected $Sha256
         $extract = Join-Path $stage 'x'
         Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force

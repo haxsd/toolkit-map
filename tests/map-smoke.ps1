@@ -106,6 +106,32 @@ try {
     Write-AtomicUtf8 -Path $atomicProbe -Content 'atomic-ok'
     Assert-True ((Get-Content -LiteralPath $atomicProbe -Raw).Trim() -eq 'atomic-ok') '原子 UTF-8 写入器没有写出完整内容'
 
+    # 证书吊销服务器不可达时的重试：受控网络里复现不了 schannel 的失败，
+    # 所以用"第一次抛证书类错误、第二次成功"的假动作验证边界（不触网）。
+    Assert-True ($null -ne (Get-Command Invoke-NetRetry -ErrorAction SilentlyContinue)) 'map.ps1 缺少 Invoke-NetRetry'
+
+    $script:netCalls = 0
+    $beforeRevoke = [Net.ServicePointManager]::CheckCertificateRevocationList
+    $retried = & Invoke-NetRetry -What '冒烟测试' -Action {
+        $script:netCalls++
+        if ($script:netCalls -eq 1) { throw 'The underlying connection was closed: Could not establish trust relationship for the SSL/TLS secure channel.' }
+        'retried-ok'
+    } 3>$null
+    Assert-True ($retried -eq 'retried-ok') '证书类错误应被重试，而不是直接抛出'
+    Assert-True ($script:netCalls -eq 2) "证书类错误应恰好重试一次；实际请求 $($script:netCalls) 次"
+    Assert-True ([Net.ServicePointManager]::CheckCertificateRevocationList -eq $beforeRevoke) '重试后应还原吊销检查设置'
+
+    $script:netCalls = 0
+    $threw = $false
+    try {
+        & Invoke-NetRetry -What '冒烟测试' -Action {
+            $script:netCalls++
+            throw 'Response status code does not indicate success: 404 (Not Found).'
+        } 3>$null | Out-Null
+    } catch { $threw = $true }
+    Assert-True $threw '非证书类错误应原样抛出'
+    Assert-True ($script:netCalls -eq 1) "非证书类错误不该重试；实际请求 $($script:netCalls) 次"
+
     $result = Invoke-Map @('find', 'git', '-Json', '-MapFile', $mapFile)
     $jsonResult = Get-JsonOutput $result
     Assert-True ($result.ExitCode -eq 0) "失效首选路径修复后 find 应成功，退出码为 $($result.ExitCode)"
