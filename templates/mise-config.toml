@@ -1,5 +1,5 @@
 # ============================================================================
-# 全局机器声明 —— 这台机器想要哪些工具链
+# 全局机器声明 —— 这台机器要【预先备齐】哪些工具链
 # ============================================================================
 #
 # 放置位置：
@@ -7,30 +7,36 @@
 #   macOS   : ~/.config/mise/config.toml
 #   Linux   : ~/.config/mise/config.toml
 #
-# 作用：这是"机器层"的声明。新机器上装好 mise 后执行一次 `mise install`，
-#       这里列出的全部运行时都会被拉取到位，不需要手工一个个装。
+# 作用：这是"机器层"的声明。`mise install`（bootstrap 的第 4 步会执行）会把
+#       [tools] 里列出的每一项【立刻下载】——它决定的是"预先备齐多少"，
+#       而不是"允许用什么版本"。
+#
+# 两种用法，选一种：
+#   · 预先备齐：在 [tools] 里列出这台机器常备的版本。适合要长期离线可用、或多个
+#     项目共用同一批版本的机器。代价是磁盘占用与升级负担，而且"声明了但没装"
+#     会被 census 报成 [MISSING]。
+#   · 按需（默认，推荐）：[tools] 留空，版本需求写进项目自己的 mise.toml /
+#     .tool-versions；进项目后 `mise install` 只拉那一个项目要的版本。
 #
 # 与项目声明的分工：
-#   本文件     —— 这台机器上"想要有哪些版本可用"（可用集合）
+#   本文件     —— 这台机器上"预先准备了哪些版本可用"（可用集合）
 #   项目 mise.toml / .tool-versions —— 某个项目"必须用哪一个"（选择结果）
 #
-# 只列出你确实需要的版本。每多一个版本就多一份磁盘占用和升级负担。
+# 只列出你确实需要常备的版本。每多一个版本就多一份磁盘占用和升级负担。
 
 [tools]
-# ---- 语言运行时（按需保留/增删，版本写你确实需要的）----
-# 同一个工具可以声明多个版本：项目用哪个由项目自己的 mise.toml / .tool-versions 决定。
-node = ["22", "20"]
-
-# Python：交给 uv 后端拉取官方预编译版本，比系统包管理器干净得多。
-python = ["3.12", "3.13"]
-
-# Java：用 Temurin 发行版。注意 IDE 自带的 JBR（JetBrains Runtime）不受这里管理，
-# 它属于 IDE 的一部分，census 会把它单独标为「宿主内置」。
-java = ["temurin-21"]
+# ---- 语言运行时 ----
+# 下面是示例：想让这台机器常备某些版本时，取消对应的注释。
+# node   = ["22", "20"]
+# python = ["3.12", "3.13"]   # 交给 uv 后端拉官方预编译版本，比系统包管理器干净得多
+# java   = ["temurin-21"]     # Temurin 发行版。IDE 自带的 JBR（JetBrains Runtime）不归这里管，
+#                             # 它属于 IDE 的一部分，census 会把它单独标为「宿主内置」。
 
 # ---- 非运行时的命令行工具（同样是"工具"，一样值得声明）----
 # mise 认很多后端：core、npm、pipx、cargo、go、ubi、aqua、github…
 # 只要能被声明，census 就会盘点它：解析到哪、什么版本、有没有漂移。
+# 注意：raw backend（ubi: / npm: / pipx: / cargo:）没有 bins 元数据，
+#       "命令不存在时自动安装"反查不到它们，这类只能显式 `mise install` / `mise x`。
 #
 # jq     = "latest"
 # ripgrep = "latest"
@@ -50,10 +56,20 @@ java = ["temurin-21"]
 # bun    = ["latest"]
 
 [settings]
-# 允许 mise 在执行命令前自动检查自身更新，保持解析规则与上游仓库同步。
-# mise 需要连接大量外部 registry，长期不更新容易遇到安装失败。
-auto_update = true
+# mise 是否自动替换自己的二进制（self-update）。官方默认就是 false。
+# 保持关闭的理由：这份声明由包管理器（winget / scoop / choco / npm）或手工安装部署，
+# 让 mise 自己把 exe 换成别的版本，会和包管理器的记录打架——它记的是装的那个版本，
+# 文件却已经不是了。升级走当初装它的那条路，例如：
+#   winget upgrade --id jdx.mise -e   /   scoop update mise   /   choco upgrade mise
+auto_update = false
 
-# 让 mise 在切换目录时打印变更信息，便于确认"以为切了其实没切"这类问题。
-# 如果觉得吵，改成 false。
-not_found_auto_install = false
+# "命令不存在时自动安装缺失版本"的处理器，官方默认 true。
+# 它按 mise registry 的 bins 元数据反查"这个命令归哪个工具"，能补装"声明了但还没装"
+# 的版本，是"用到什么才下载什么"的一环。但它的生效前提是 shell 侧真的接管了那条命令：
+#   · shim 路径 —— 需要有对应的 shim（mise 按已安装的工具生成）；
+#   · activate 的 chpwd —— PowerShell 7 才有；Windows PowerShell 5.1 下 activate 只相当于
+#     设一次全局默认，不会跟着工作目录切版本。
+# 所以在还没装 PowerShell 7、shims 里也还没有该工具的机器上，可靠的按需入口是
+# `mise install`（进项目后执行，只拉该项目声明的版本）或 `mise x <工具>@<版本> -- <命令>`。
+# 除非"命令找不到"时 shell 里真的出现异常行为，否则不要关掉它。
+not_found_auto_install = true
