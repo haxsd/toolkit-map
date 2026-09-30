@@ -3,7 +3,7 @@
 param()
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
-$scratch = Join-Path $env:TEMP ('toolkit-map-install-' + [guid]::NewGuid().ToString('N'))
+$scratch = [IO.Path]::GetFullPath((Join-Path $env:TEMP ('toolkit-map-install-' + [guid]::NewGuid().ToString('N'))))
 $oldRoot = $env:TOOLCHAIN_ROOT; $oldPath = $env:PATH
 function Assert { param([bool]$Ok, [string]$Message) if (-not $Ok) { throw $Message } }
 function Make-Package {
