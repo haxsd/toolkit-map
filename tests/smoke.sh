@@ -65,7 +65,7 @@ export XDG_CONFIG_HOME="$FX/home"    # 同时触发 XDG_SHIFT，并统一两个�
 # 非默认目录中的 shim 是可发现路径，但任何扫描阶段都不能执行它。
 printf '#!/bin/sh\necho executed > "%s"\necho v99.0.0\n' "$FX/shim-executed" > "$FX/custom-shims/node"
 chmod +x "$FX/custom-shims/node"
-export MISE_SHIMS_DIR="$FX/custom-shims"
+export MISE_SHIMS_DIR="$FX/custom-shims/"
 
 # ---------- 跑一遍 ----------
 printf '\n census.sh 冒烟测试\n'
