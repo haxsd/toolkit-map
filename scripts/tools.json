@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "tools": {
+    "rg": {
+      "aliases": [
+        "ripgrep"
+      ],
+      "warehouseNames": [
+        "rg",
+        "ripgrep"
+      ],
+      "probe": [
+        [
+          "--version"
+        ]
+      ]
+    },
+    "java": {
+      "probe": [
+        [
+          "-version"
+        ]
+      ]
+    },
+    "javac": {
+      "probe": [
+        [
+          "-version"
+        ]
+      ]
+    },
+    "adb": {
+      "probe": [
+        [
+          "version"
+        ]
+      ],
+      "versionPattern": "(?m)^Version\\s+(\\d+(?:\\.\\d+)*)(?:-[0-9]+)?"
+    },
+    "go": {
+      "probe": [
+        [
+          "version"
+        ]
+      ]
+    },
+    "openssl": {
+      "probe": [
+        [
+          "version"
+        ]
+      ]
+    },
+    "powershell": {
+      "probe": [
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "$PSVersionTable.PSVersion.ToString()"
+        ]
+      ]
+    },
+    "pwsh": {
+      "probe": [
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "$PSVersionTable.PSVersion.ToString()"
+        ]
+      ]
+    },
+    "bash": {
+      "locations": [
+        "%ProgramFiles%\\Git\\bin\\bash.exe",
+        "%ProgramFiles(x86)%\\Git\\bin\\bash.exe",
+        "%LOCALAPPDATA%\\Programs\\Git\\bin\\bash.exe"
+      ],
+      "probe": [
+        [
+          "--version"
+        ]
+      ]
+    }
+  },
+  "recipes": {
+    "gh": {
+      "asset": "gh_{ver}_windows_amd64.zip",
+      "tag": "v{ver}",
+      "exe": "bin\\gh.exe",
+      "repo": "cli/cli"
+    },
+    "fd": {
+      "asset": "fd-v{ver}-x86_64-pc-windows-msvc.zip",
+      "tag": "v{ver}",
+      "exe": "fd.exe",
+      "repo": "sharkdp/fd"
+    },
+    "rg": {
+      "asset": "ripgrep-{ver}-x86_64-pc-windows-msvc.zip",
+      "tag": "{ver}",
+      "exe": "rg.exe",
+      "repo": "BurntSushi/ripgrep"
+    },
+    "adb": {
+      "url": "https://dl.google.com/android/repository/platform-tools-latest-windows.zip",
+      "exe": "adb.exe",
+      "versionPattern": "(?m)^Version\\s+(\\d+(?:\\.\\d+)*)"
+    },
+    "jadx": {
+      "asset": "jadx-{ver}.zip",
+      "tag": "v{ver}",
+      "exe": "bin\\jadx.bat",
+      "repo": "skylot/jadx"
+    }
+  }
+}
