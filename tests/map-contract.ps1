@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $hostExe = (Get-Process -Id $PID).Path
-$scratch = Join-Path $env:TEMP ('toolkit-map-contract-' + [guid]::NewGuid().ToString('N'))
+$scratch = [IO.Path]::GetFullPath((Join-Path $env:TEMP ('toolkit-map-contract-' + [guid]::NewGuid().ToString('N'))))
 $original = @{}
 foreach ($name in @('USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'MISE_DATA_DIR', 'MISE_SHIMS_DIR', 'MISE_CONFIG_FILE', 'MISE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'TOOLCHAIN_ROOT', 'PATH')) { $original[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 function Assert {
