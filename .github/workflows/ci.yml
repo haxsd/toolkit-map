@@ -32,12 +32,24 @@ jobs:
         run: .\tests\check-encodings.ps1
       # 文档检查同样没有本地症状：只改了中英其中一份、或者搬动文件后留下失效链接，
       # 都要等别人打开仓库才发现。
-      - name: 文档检查（中英成对、相对链接可解析）
+      - name: 文档检查（单语与相对链接）
         shell: powershell
         run: .\tests\check-docs.ps1
       - name: 地图动作回归（失效路径与安装覆盖护栏）
         shell: powershell
         run: .\tests\map-smoke.ps1
+      - name: 项目选择与接入契约（PowerShell 5.1）
+        shell: powershell
+        run: .\tests\map-contract.ps1
+      - name: 项目选择与接入契约（PowerShell 7）
+        shell: pwsh
+        run: .\tests\map-contract.ps1
+      - name: 扫描 shim 护栏
+        shell: powershell
+        run: .\tests\scan-guards.ps1
+      - name: Portable 安装契约（不触网）
+        shell: powershell
+        run: .\tests\install-contract.ps1
       # 用 Windows PowerShell 5.1（系统自带）跑，因为这是 Windows 上最常见的宿主；
       # parity.ps1 自己会去找 Git Bash（windows-latest 自带）来跑 shell 版。
       - name: 一致性测试（census.ps1 vs census.sh）

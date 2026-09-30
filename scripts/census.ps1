@@ -54,6 +54,7 @@ param(
 
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
+. (Join-Path $PSScriptRoot 'toolkit-common.ps1')
 
 # ============================================================
 # 语言与文案
@@ -376,6 +377,7 @@ function Get-FileLength {
 # 同时读取两个流是必须的：只读一个的话，另一个管道缓冲区写满就会死锁。
 function Get-FirstLine {
     param([string]$Exe, [string[]]$Arguments)
+    if (Test-ToolkitShimPath $Exe) { return '' }
     if (-not (Test-FileQuick $Exe)) { return '' }
 
     $fileName = $Exe
@@ -432,6 +434,7 @@ function Invoke-CaptureWithTimeout {
     param([string]$Exe, [string[]]$Arguments, [int]$TimeoutMs = 20000)
     $cmd = Get-Command $Exe -ErrorAction SilentlyContinue
     if (-not $cmd) { return '' }
+    if (Test-ToolkitShimPath $cmd.Source) { return '' }
     try {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $cmd.Source
@@ -443,6 +446,8 @@ function Invoke-CaptureWithTimeout {
         $psi.UseShellExecute        = $false
         $psi.CreateNoWindow         = $true
         $psi.EnvironmentVariables['MISE_AUTO_UPDATE'] = '0'
+        $psi.EnvironmentVariables['MISE_AUTO_INSTALL'] = '0'
+        $psi.EnvironmentVariables['MISE_NOT_FOUND_AUTO_INSTALL'] = '0'
 
         $p  = [System.Diagnostics.Process]::Start($psi)
         $so = $p.StandardOutput.ReadToEndAsync()
@@ -489,6 +494,8 @@ function Get-NormalizedVersion {
     param([string]$Tool, [string]$Raw)
     if ([string]::IsNullOrWhiteSpace($Raw)) { return '' }
     switch ($Tool) {
+        'powershell' { $raw = Get-FirstLine $ExePath @('-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()') }
+        'pwsh' { $raw = Get-FirstLine $ExePath @('-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()') }
         'java' {
             # openjdk version "25.0.3" 2026-04-21  ->  25.0.3
             $m = [regex]::Match($Raw, 'version\s+"([^"]+)"')
@@ -525,6 +532,7 @@ function Get-NormalizedVersion {
 $script:VersionCache = @{}
 function Get-RuntimeVersion {
     param([string]$Tool, [string]$ExePath)
+    if (Test-ToolkitShimPath $ExePath) { return '' }
     $key = "$Tool|$ExePath"
     if ($script:VersionCache.ContainsKey($key)) { return $script:VersionCache[$key] }
 
@@ -772,41 +780,7 @@ function Get-Placement {
 # ============================================================
 
 function Get-Declarations {
-    $decls = New-Object System.Collections.Generic.List[object]
-
-    # 全局声明。注意 XDG_CONFIG_HOME：一旦它被设置，mise 的全局配置目录就跟着搬家，
-    # 下面那个 ~/.config/mise/config.toml 会降级成"从工作目录向上发现的"配置，
-    # 只有工作目录在用户目录之下时才生效（census 的 [XDG_SHIFT] 告警专门盯这个）。
-    $globalCandidates = @(
-        (Join-Path $env:USERPROFILE '.config\mise\config.toml'),
-        (Join-Path $env:APPDATA     'mise\config.toml'),
-        (Join-Path $env:USERPROFILE '.tool-versions')
-    )
-    if ($env:XDG_CONFIG_HOME) {
-        $globalCandidates = @((Join-Path $env:XDG_CONFIG_HOME 'mise\config.toml')) + $globalCandidates
-    }
-    foreach ($p in $globalCandidates) {
-        if (Test-Path -LiteralPath $p) {
-            $decls.Add([pscustomobject]@{ scope = 'global'; path = $p; tools = (Read-DeclaredTools $p) })
-        }
-    }
-
-    # 当前目录向上逐级找项目声明（最近的最优先，但全部列出便于排查）
-    $dir = (Get-Location).Path
-    $guard = 0
-    while ($dir -and $guard -lt 20) {
-        $guard++
-        foreach ($name in @('mise.toml', '.mise.toml', '.tool-versions')) {
-            $f = Join-Path $dir $name
-            if (Test-Path -LiteralPath $f) {
-                $decls.Add([pscustomobject]@{ scope = 'project'; path = $f; tools = (Read-DeclaredTools $f) })
-            }
-        }
-        $parent = Split-Path $dir -Parent
-        if (-not $parent -or $parent -eq $dir) { break }
-        $dir = $parent
-    }
-    return $decls
+    return (Get-ToolkitDeclarations)
 }
 
 # 尽力解析声明文件里的"工具 -> 期望版本"。
@@ -814,38 +788,7 @@ function Get-Declarations {
 # 这里是尽力而为的轻量解析，不追求覆盖 TOML 全部语法。
 function Read-DeclaredTools {
     param([string]$Path)
-    $result = @{}
-    try {
-        $lines = Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue
-    } catch { return $result }
-
-    $base = [System.IO.Path]::GetFileName($Path)
-    $inToolsSection = $false
-
-    foreach ($line in $lines) {
-        $t = "$line".Trim()
-        if ([string]::IsNullOrWhiteSpace($t) -or $t.StartsWith('#')) { continue }
-
-        if ($base -like '*.toml') {
-            if ($t -match '^\[(.+)\]$') {
-                $inToolsSection = ($Matches[1] -eq 'tools')
-                continue
-            }
-            if (-not $inToolsSection) { continue }
-            # node = "22"    /    node = ["16", "22"]
-            $m = [regex]::Match($t, '^([A-Za-z0-9_\-]+)\s*=\s*(.+)$')
-            if ($m.Success) {
-                $key = $m.Groups[1].Value
-                $val = $m.Groups[2].Value -replace '[\[\]"]', ''
-                $result[$key] = $val.Trim()
-            }
-        } else {
-            # .tool-versions: "nodejs 20.11.0"
-            $parts = $t -split '\s+'
-            if ($parts.Count -ge 2) { $result[$parts[0]] = $parts[1] }
-        }
-    }
-    return $result
+    return (Read-ToolkitDeclaredTools $Path).tools
 }
 
 # 取出某个 [section] 里的键名列表（极简扫描，够用来比较"声明了哪些工具"）。
@@ -1222,7 +1165,8 @@ function Get-Resolution {
         else                                              { $probeTool = $name }
 
         $ver = ''
-        if ($probeTool -and $usable) { $ver = Get-RuntimeVersion -Tool $probeTool -ExePath $first }
+        $shim = Test-ToolkitShimPath $first
+        if ($probeTool -and $usable -and -not $shim) { $ver = Get-RuntimeVersion -Tool $probeTool -ExePath $first }
 
         $records.Add([pscustomobject]@{
             command    = $name
@@ -1232,6 +1176,7 @@ function Get-Resolution {
             hitCount   = $pathList.Count
             stub       = (-not $usable)   # true 表示解析到不可执行的文件
             usable     = $usable
+            isShim     = $shim
         })
     }
     return $records
@@ -1336,7 +1281,7 @@ function Get-Warnings {
     # package.json 的 engines 只在版本不符时给一条警告，它不会切换版本。
     # 于是"这个项目需要 Node 22"这个事实只存在于 engines 里，用上 22 得靠人
     # 记住某个路径——这正是当初需要 node22.cmd 那类私有约定的原因。
-    $hasProjectDeclaration = @($Declarations | Where-Object { $_.scope -eq 'project' }).Count -gt 0
+    $hasProjectDeclaration = @($Declarations | Where-Object { $_.scope -eq 'project' -and [IO.Path]::GetFileName($_.path) -in @('mise.toml', '.mise.toml', '.tool-versions', '.nvmrc', '.node-version') }).Count -gt 0
     if (-not $hasProjectDeclaration) {
         $pkgPath = Join-Path (Get-Location).Path 'package.json'
         if (Test-Path -LiteralPath $pkgPath) {

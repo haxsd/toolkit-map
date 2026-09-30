@@ -157,6 +157,14 @@ JetBrains 系 IDE 的 `jbr/` 里有完整 JDK，版本常常比用户自己装�
 
 ---
 
+## v0.2 查询契约
+
+完整地图动作支持 Windows PowerShell 5.1/7。接入用 `setup -Project <目录>`，诊断用 `doctor`；技能中的脚本路径必须按技能实际位置确定，不能按项目工作目录猜。
+
+查询用 `find <工具> -Project <项目目录> -Json`，检查 `ok`、`status`、`verification` 和 `requirement`。版本不匹配或要求无法判断时失败，不降级。搜索失败只说明本次范围未发现合适副本，不说明整台机器没有。shim 永不作首选，未验证与 IDE 副本需要明确选择策略。
+
+地图 v2 的 `scannedAt` 是完整扫描时间，`updatedAt` 是局部更新时间；重扫保留已登记副本、备注与偏好。所有动作的 JSON stdout 是一个对象。
+
 ## 开工前的工具预检
 
 ```powershell
