@@ -62,7 +62,7 @@ param([switch]$Json)
     [IO.File]::WriteAllText((Join-Path $homeDir '.config\mise\config.toml'), "[tools]`nnode = `"16`"`n")
     [IO.File]::WriteAllText((Join-Path $project 'mise.toml'), "[tools]`nnode = `"22`"`n")
     $r = Run-Map @('find', 'node', '-Project', $project, '-SkipScan')
-    Assert ($r.code -eq 0 -and $r.value.path -eq $two -and $r.value.requirement.scope -eq 'project') '项目声明必须覆盖全局声明和用户偏好'
+    Assert ($r.code -eq 0 -and $r.value.path -eq $two -and $r.value.requirement.scope -eq 'project') "项目声明必须覆盖全局声明和用户偏好。实际结果：$($r.output -join '`n')"
     $r = Run-Map @('find', 'node', '-Project', $project, '-Version', '20', '-SkipScan')
     Assert ($r.code -ne 0 -and $r.value.status -eq 'version_mismatch' -and -not $r.value.path) '缺少要求版本时不许降级'
     $r = Run-Map @('find', 'node', '-Project', $project, '-Version', '>=22 <23', '-SkipScan')
