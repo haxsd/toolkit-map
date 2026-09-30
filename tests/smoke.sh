@@ -37,7 +37,7 @@ fail() { printf '  [失败] %s\n' "$1"; FAIL=$((FAIL + 1)); }
 # 假声明：与仓库模板相比少 python/java、多一个"永远不可能存在"的工具
 # （用 go / jadx 这类真工具名会被 CI runner 上刚好装了的版本干扰——实测
 #  GitHub 的 ubuntu 镜像里有 /usr/bin/go，于是"声明了但没装"这条断言失效）。
-mkdir -p "$FX/home/mise" "$FX/bin" "$FX/rt1/bin" "$FX/rt2/bin"
+mkdir -p "$FX/home/mise" "$FX/bin" "$FX/rt1/bin" "$FX/rt2/bin" "$FX/custom-shims"
 cat > "$FX/home/mise/config.toml" <<'EOF'
 [tools]
 node = ["22"]
@@ -61,6 +61,11 @@ MISE_BIN="${MISE_BIN:-$FX/__no_mise_here__}"
 export PATH="$FX/bin:$FX/bin:$MISE_BIN:/usr/bin:/bin"
 export HOME="$FX/home"
 export XDG_CONFIG_HOME="$FX/home"    # 同时触发 XDG_SHIFT，并统一两个实现的部署路径口径
+
+# 非默认目录中的 shim 是可发现路径，但任何扫描阶段都不能执行它。
+printf '#!/bin/sh\necho executed > "%s"\necho v99.0.0\n' "$FX/shim-executed" > "$FX/custom-shims/node"
+chmod +x "$FX/custom-shims/node"
+export MISE_SHIMS_DIR="$FX/custom-shims/"
 
 # ---------- 跑一遍 ----------
 printf '\n census.sh 冒烟测试\n'
@@ -96,6 +101,8 @@ fi
 # 先确认 python3 真的能跑：有些环境里 `command -v python3` 成功，但它指向一个失效的
 # shim（实测踩过），那属于环境问题，不该被算成 JSON 校验失败。
 "$CENSUS" --json --lang en > "$FX/out.json" 2>/dev/null
+PATH="$FX/custom-shims:$PATH" "$CENSUS" --json > "$FX/shim.json" 2>/dev/null
+[ ! -e "$FX/shim-executed" ] && pass "自定义 shim 未被扫描执行" || fail "扫描执行了 shim"
 if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys' >/dev/null 2>&1; then
   python3 - "$FX/out.json" <<'PY' || FAIL=$((FAIL + 1))
 import json, sys

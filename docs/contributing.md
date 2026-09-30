@@ -1,66 +1,55 @@
 # 贡献指南
 
-## 仓库结构
+## 结构
 
-```text
-scripts/    产品：map.ps1（地图）、census.ps1|sh（扫描内核）、bootstrap.ps1|sh（可选：mise 与 PATH）
-templates/  mise-config.toml，bootstrap 部署的机器级声明模板
-examples/   声明文件示例（两种格式）
-tests/      开发检查，不属于产品面
-docs/       参考手册、平台说明、本文件（单语中文）
-AGENTS.md   发现契约：agent 判断工具在哪、哪个会生效时的规则
-SKILL.md    使用协议：find / install 的硬规矩
-```
-
-## 本地检查
-
-| 检查 | 做什么 |
+| 路径 | 职责 |
 |---|---|
-| `.\tests\check-encodings.ps1` | 每个 `.ps1` 带 UTF-8 BOM、每个 `.sh` 都不带，且 `.ps1` 按 cp1252 读法也能解析。加 `-Fix` 可补 BOM |
-| `.\tests\check-docs.ps1` | 文档单语（禁止 `.zh-CN.md` 回潮）、所有相对链接与锚点可解析 |
-| `.\tests\parity.ps1` | 在同一个沙箱里跑两份扫描内核，断言它们发现同一批人造问题 |
-| `.\tests\map-smoke.ps1` | 用临时地图验证失效首选会修复、已有安装不会被覆盖 |
-| `bash tests/smoke.sh` | 扫描内核（shell 版）的冒烟测试 |
-| `.\tests\verify-shell.ps1` | 对所有 `.sh` 执行 `bash -n`——只解析、不执行 |
+| scripts/map.ps1 | 命令入口、安装与 JSON 结果 |
+| scripts/map-core.ps1 | 候选、验证、存储、锁、项目选择、setup/doctor |
+| scripts/toolkit-common.ps1 | 地图和 Windows 扫描内核共享的护栏、声明读取 |
+| scripts/tools.json | 命令别名、安装位置提示、探测参数、portable 配方 |
+| scripts/census.ps1 / census.sh | Windows / Unix 扫描内核 |
+| scripts/bootstrap.ps1 / bootstrap.sh | 可选的 mise 环境配置，会修改机器 |
+| tests/ | 隔离回归测试 |
+| AGENTS.md / SKILL.md | 发现契约与 agent 使用协议 |
 
-**该跑多少**：只跑覆盖你改动的那几项——改文档 → `check-docs`；动 `.sh` → `verify-shell`；
-改告警或解析逻辑 → `parity`；动 `map.ps1` → `map-smoke`，必要时再手动跑一遍 `scan` + `find`。**发布前才跑全套**。
-`parity.ps1` 要把两份实现各跑一遍（约一分钟），每改一处就全套跑一遍，正是让这个仓库
-显得又慢又重的原因。
+## 开发检查
 
-想确认"别人克隆下来能不能用"：把跟踪的文件复制到一个干净目录（不要 `.git`），按 README 走一遍，
-不必天天做。
+先按 AGENTS.md 查地图拿到 Git、PowerShell、Bash 的绝对路径。需要项目版本时用一次性激活，不改全局 PATH。
 
-## 容易踩坏的红线
-
-- **每个 `.ps1` 带 UTF-8 BOM。** 没有 BOM 时，英文系统的 PowerShell 5.1 会按 cp1252 解码中文注释、
-  读成智能引号，脚本直接解析失败——中文系统的开发机上完全看不到这个问题。
-- **每个 `.sh` 用 LF 且不带 BOM。** BOM 会让 shebang 失效；CRLF 会让脚本报
-  `env: 'bash\r': No such file or directory`。`.gitattributes` 已把 `*.sh` 钉成 `eol=lf`。
-- **新增 `.sh` 要保住可执行位**：`git update-index --chmod=+x scripts/foo.sh`。Windows 上的检出
-  无法设置它，而 CI 会直接执行这些脚本。
-- **`scan` 必须保持只读。** 扫描/探测不得执行 shim（会触发管理器自动安装）、不得写 PATH、
-  不得卸载任何东西。只有 `install` 改状态，且只改统一仓库里的那一份。
-- **本机状态绝不入库。** 地图（`~/.toolkit/map.json`）、统一仓库（`~/toolchains/`）和当前机器的
-  工具清单都留在使用者本机；仓库只提交协议、脚本、配方、模板和通用示例。
-- **文档单语（中文）。** 消费方是 agent 与你自己；同时维护中英两份只会互相漂移。
-  `AGENTS.md` 与 `SKILL.md` 本来就是契约文件，同样保持单语。
-- **两份实现共享文档化的字段，但不要求结构逐字段一致。** `host.powershell` 这类
-  平台特有字段允许只在一边出现；字段表在 `docs/reference.md`，据此扩展 `tests/parity.ps1`。
-
-## CI 跑什么
-
-| 任务 | 步骤 |
+| 检查 | 覆盖 |
 |---|---|
-| `windows`（宿主 PowerShell 5.1） | 编码检查 → 文档检查 → `tests/map-smoke.ps1` → `tests/parity.ps1` |
-| `ubuntu` | 对 `scripts/*.sh` 与 `tests/*.sh` 执行 `bash -n` → `tests/smoke.sh` |
+| tests/check-encodings.ps1 | .ps1 的 UTF-8 BOM、英文系统解析；.sh 无 BOM |
+| tests/check-docs.ps1 | 中文单语文档与相对链接 |
+| tests/map-smoke.ps1 | 失效路径修复、版本 stderr、安装失败和拒绝覆盖 |
+| tests/map-contract.ps1 | 动态项目选择、验证状态、重扫保留、并发、接入和 JSON |
+| tests/install-contract.ps1 | portable 暂存、校验、版本验证、回滚与已有副本复用 |
+| tests/scan-guards.ps1 | 扫描解析层和底层执行器都跳过 shim |
+| tests/parity.ps1 | 两个扫描内核在同一沙箱识别相同问题 |
+| tests/verify-shell.ps1 | .sh 语法 |
+| tests/smoke.sh | Unix 扫描、JSON、语言和自定义 shim 护栏 |
 
-CI 刻意**不跑** `bootstrap`：它会真的改机器（写 PATH、动 profile、下载运行时）。
-失败信息以 `::error::` 注解输出，因为 job 日志需要鉴权、注解不需要——无人值守时这是唯一
-能自己看到失败原因的通道。
+按改动范围检查；发布前跑全套。map-contract 同时用 PowerShell 5.1 和 7 执行；真实扫描另用临时 -MapFile 验证，不污染本机地图。测试使用假工具、临时目录与独立地图，不安装工具。
 
-## 还没做的
+新增探测适配器时在 tools.json 定义 probe 参数数组；命令名和安装名不同时定义 aliases/warehouseNames。locations 可使用 Windows 环境变量提示常见安装位置。仅在成功退出并能提取版本时标为 verified。
 
-- `map.sh`（Unix 版）：macOS / Linux 上目前只有扫描内核可用，地图的动作还没移植。
-- `install` 的降级链：目前支持 GitHub portable 配方、固定 URL 配方和 `-Via winget` 兜底；
-  安装器管理的工具登记真实路径但不保证落在统一仓库，其他工具先人工装好再用 `map.ps1 add` 登记。
+## 必须守住的边界
+
+- .ps1 带 UTF-8 BOM；.sh 用 LF、无 BOM，保留 Git 可执行位。
+- 扫描不执行识别到的 shim、不安装工具、不写 PATH、不卸载已有副本。
+- 用户机器清单和工具仓库不入库，发布包只包含被 Git 跟踪的源码、协议和通用示例。
+- 项目要求在查询时计算；不能把某个项目要求缓存成机器全局选择。
+- 缺少匹配版本或无法判定要求时失败，不把未知当满足。
+- 地图写入必须经过完整读改写锁与原子写入；损坏/未来格式不能当空地图覆盖。
+- 新接入规则先预览，已有内容保留、备份，重复执行幂等。
+- 文档单语中文；扫描内核文案可保留已有英文输出。
+
+## 发布
+
+1. 更新 CHANGELOG、README 稳定标签和 help 版本。
+2. 全套检查与两个宿主的契约测试通过。
+3. 推送分支，PR CI 通过后合并 main。
+4. 从合并提交创建版本标签，用 git archive 生成源码 zip 与 SHA256 校验文件。
+5. 发布 GitHub Release，附兼容性说明；确认标签、main 与发布提交一致。
+
+仍待扩展：Unix 地图动作、更多管理器/平台适配器、复杂声明委托。bootstrap 的可选环境配置与 setup 的规则接入保持分开。

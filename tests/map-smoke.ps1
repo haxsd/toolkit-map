@@ -132,6 +132,42 @@ try {
     Assert-True $threw '非证书类错误应原样抛出'
     Assert-True ($script:netCalls -eq 1) "非证书类错误不该重试；实际请求 $($script:netCalls) 次"
 
+    # 版本写在 stderr 的工具也要探到版本：老实现用 `& $exe --version 2>&1`，而全局
+    # $ErrorActionPreference='Stop' 会把原生命令的 stderr 变成终止性错误、再被 catch 吞掉，
+    # 于是版本恒为空（实测：统一仓库里的 JDK 8 就被记成空版本）。用一个假 java 钉住边界。
+    $stubDir = Join-Path $scratch 'stub'
+    New-Item -ItemType Directory -Force -Path $stubDir | Out-Null
+    $fakeJava = Join-Path $stubDir 'java.cmd'
+    @(
+        '@echo off'
+        'if "%1"=="-version" goto ver'
+        'echo Unrecognized option: %1 1>&2'
+        'exit /b 1'
+        ':ver'
+        'echo openjdk version "1.8.0_504" 1>&2'
+        'exit /b 0'
+    ) -join "`r`n" | Set-Content -LiteralPath $fakeJava -Encoding ASCII
+    $probed = Get-ExeVersion -ExePath $fakeJava
+    Assert-True ($probed -eq '1.8.0_504') "版本写在 stderr 的工具应能探到版本；实际='$probed'"
+
+    # 只吐报错文本的"工具"不该把报错当版本记进地图（老实现会把首行原样返回）
+    $noisy = Join-Path $stubDir 'no-version.cmd'
+    @('@echo off', 'echo Unrecognized option: --version 1>&2', 'exit /b 1') -join "`r`n" |
+        Set-Content -LiteralPath $noisy -Encoding ASCII
+    $noisyVer = Get-ExeVersion -ExePath $noisy
+    Assert-True (-not $noisyVer) "不该把报错文本当成版本；实际='$noisyVer'"
+
+    # 候选 id 必须工具内唯一（docs/reference.md 的契约：preferred 指向 id）：
+    # java 8 的 bin\java.exe 与 jre\bin\java.exe 父亲目录同名，只按父目录名区分会撞车。
+    $idPair = @(
+        @{ id = 'warehouse-1.8.0_504'; path = 'X:\toolchains\java\8u504b01\bin\java.exe' },
+        @{ id = 'warehouse-1.8.0_504'; path = 'X:\toolchains\java\8u504b01\jre\bin\java.exe' }
+    )
+    Set-UniqueCandidateIds -Candidates $idPair
+    $ids = @($idPair | ForEach-Object { $_.id })
+    Assert-True (($ids | Sort-Object -Unique).Count -eq $ids.Count) "候选 id 必须唯一；实际=$($ids -join ' / ')"
+    Assert-True ($ids -notcontains 'warehouse-1.8.0_504') '撞车的 id 应被区分开，而不是原样保留'
+
     $result = Invoke-Map @('find', 'git', '-Json', '-MapFile', $mapFile)
     $jsonResult = Get-JsonOutput $result
     Assert-True ($result.ExitCode -eq 0) "失效首选路径修复后 find 应成功，退出码为 $($result.ExitCode)"
