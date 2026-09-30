@@ -340,6 +340,8 @@ is_shim_path() {
   for root in "${MISE_SHIMS_DIR:-}" "${VOLTA_HOME:-}"; do
     [ -n "$root" ] || continue
     root="$(printf '%s' "$root" | tr '\\' '/' | tr 'A-Z' 'a-z')"
+    root="${root%/}"
+    case "$root" in [a-z]:/*) root="/${root:0:1}/${root:3}" ;; esac
     case "$p" in "$root"/*) return 0 ;; esac
   done
   return 1
