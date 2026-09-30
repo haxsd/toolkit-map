@@ -147,7 +147,7 @@ function Invoke-Bounded {
     param([string]$Exe, [string[]]$Arguments, [int]$TimeoutSec = 300, [string]$Tag = 'cmd')
     $outFile = Join-Path $fx "$Tag.out.txt"
     $errFile = Join-Path $fx "$Tag.err.txt"
-    $p = Start-Process -FilePath $Exe -ArgumentList $Arguments -NoNewWindow -PassThru `
+    $p = Start-Process -FilePath $Exe -ArgumentList $Arguments -WindowStyle Hidden -PassThru `
                        -RedirectStandardOutput $outFile -RedirectStandardError $errFile
     if (-not $p.WaitForExit($TimeoutSec * 1000)) {
         try { $p.Kill() } catch { }

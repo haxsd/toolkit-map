@@ -1,124 +1,128 @@
 # 参考手册
 
-本文件描述三件事：`map.ps1` 的动作与参数、地图文件的格式、以及扫描内核 `census.ps1` 的输出契约。
+## 命令与结果
 
-## 1. map.ps1
+`map.ps1 <动作> [工具] [参数]`。完整地图动作支持 Windows PowerShell 5.1 和 PowerShell 7。
 
-```
-map.ps1 <动作> [参数] [开关]
-```
-
-| 动作 | 参数 | 做什么 |
+| 动作 | 参数 | 行为 |
 |---|---|---|
-| `scan` | — | 调用 census 扫描本机，重建地图（`~/.toolkit/map.json` 与同名 `.md`） |
-| `status` | — | 地图是否存在、扫描时间、候选失效数、PATH 是否变过；给出是否该重扫的建议 |
-| `find` | `<工具名>` | 返回首选绝对路径 + 版本 + 来源 + 其他候选；地图里没有就现场搜一次，找到即登记，找不到只报告缺失 |
-| `add` | `<工具名> -Path <绝对路径>` | 登记一个已有副本（不搬路径）。可选 `-Version`、`-Note`、`-Prefer` |
-| `update` | `[<工具名>]` | 重探：路径消失就移除、版本变了就更新、发现新副本就登记；省略工具名则全量 |
-| `install` | `<工具名>@<版本\|latest>` | 明确需要安装且确认本机没有后，装进统一仓库并登记为首选。也可 `install <工具名> -Url <zip 直链> [-Sha256 <校验值>]` |
+| `setup` | `-Project <目录>`、`-RulesFile <文件>`、`-WhatIf` | 地图不存在时首次扫描；生成接入规则；保留已有文件内容、修改前备份；重复执行幂等 |
+| `doctor` | `-Project`、`-RulesFile` | 只读检查宿主、地图、新鲜度与接入文件 |
+| `scan` | — | 调用 census，合并仍存在的已有登记，再完整重扫 |
+| `status` | `-MaxAgeHours`（默认 24） | 完整扫描年龄、最近更新、失效文件数、PATH 变化 |
+| `find` | `<工具>`、`-Project`、`-Version`、`-SkipScan` | 按当前或指定项目声明动态选择；不匹配不降级；没有合适候选时可做限定范围现场搜索 |
+| `add` | `<工具> -Path <文件>`、`-Version`、`-Note`、`-Prefer` | 登记已有副本；Version 是提示，不能把探测失败变成已验证；Prefer 保存路径偏好 |
+| `update` | `[工具]` | 重探已有文件与新候选，不刷新完整扫描时间 |
+| `install` | `<工具>@<版本>`、`-Url`、`-Sha256`、`-Via winget`、`-WingetId`、`-WhatIf` | 单独的明确安装动作；portable 版本验证后落仓库；安装器由包管理器管理 |
+| `help` | — | 版本、动作与用法 |
 
-通用开关：
+通用：`-Json` 输出机器结果；`-MapFile` 覆盖地图路径；`-LockTimeoutSeconds` 控制更新锁等待（默认 60 秒，0–300）。
 
-| 开关 | 作用 |
-|---|---|
-| `-Json` | 机器可读输出（agent 用这个） |
-| `-MapFile <路径>` | 覆盖地图位置（默认 `~/.toolkit/map.json`，也可用环境变量 `TOOLKIT_MAP`） |
-| `-SkipScan` | `find` 时不要现场搜索，只在现有地图里查 |
-| `-WhatIf` | `install` 只打印计划，不下载不安装 |
-| `-Sha256 <校验值>` | `install` 下载归档后校验 SHA256；接受 64 位十六进制值，可带 `sha256:` 前缀 |
-| `-MaxAgeHours <小时>` | `status` 判断"过旧"的阈值，默认 24 |
+`-AllowUnverified` 仅在明确需要时允许选择未验证的普通副本，不允许 shim、跳过探测的商店别名或不可用文件。`-AllowIdeHost` 允许已验证的 IDE 内置运行时。conda 环境副本不作默认首选。
 
-退出码：`0` 成功；`find` 找不到工具时退出码 `1`。这只表示本次查找没有发现可用副本，
-不会自动安装；只有明确需要安装时，才另行执行 `install`。
+## JSON 输出协议 v2
 
-地图文件和统一仓库都是使用者本机状态，不会写入或随 GitHub 仓库发布；本手册中的路径和工具名均为通用示例。
-
-## 2. 地图文件
+所有动作的 stdout 恰好一个 JSON 对象。成功退出码 0，失败或 doctor 需要处理时为 1。未知动作与异常同样输出结构化结果。
 
 ```jsonc
 {
-  "schemaVersion": 1,
-  "scannedAt": "2026-09-18T13:55:57+08:00",
-  "warehouse": "C:\\Users\\<你>\\toolchains",
-  "pathSnapshot": "……当时的 PATH，用于检测机器是否变过",
-  "censusSummary": { "warnings": ["SHADOWED", "STRAY"], "counts": { "runtimes": 22, "declarations": 1 } },
+  "schemaVersion": 2,
+  "action": "find",
+  "ok": true,
+  "status": "ok",
+  "tool": "node",
+  "requestedTool": "node",
+  "found": true,
+  "path": "C:\\tools\\node\\22\\node.exe",
+  "version": "22.23.2",
+  "verification": "verified",
+  "reason": "requirement_match",
+  "requirement": { "version": "22", "scope": "project", "source": "D:\\project\\mise.toml" },
+  "invocation": { "executable": "C:\\tools\\node\\22\\node.exe", "arguments": [], "cwd": "D:\\project" },
+  "candidates": [],
+  "search": { "performed": false, "complete": false, "scope": ["map", "PATH", "warehouse", "mise-installs"] }
+}
+```
+
+关键状态：
+
+| status | 含义 |
+|---|---|
+| `ok` | 动作成功；find 默认返回已验证候选 |
+| `planned` | WhatIf 计划，未执行变更或联网 |
+| `already_available` | 已有合适的已验证副本，复用而不重复安装 |
+| `unverified` | 用户显式允许未验证候选；不能报告为已验证 |
+| `not_found` | 本次搜索范围未找到副本，不代表全盘不存在 |
+| `no_usable_candidate` | 存在副本，但没有符合选择策略的可用候选 |
+| `version_mismatch` | 没有满足要求的已验证副本，或下载版本不符 |
+| `requirement_unsupported` | 声明/版本表达式无法判定；需显式版本或管理器处理 |
+| `map_missing` / `map_corrupt` / `schema_unsupported` | 地图缺失、损坏或版本不支持；损坏文件不会被覆盖 |
+| `map_busy` | 其他进程持有更新锁；可重试 |
+| `attention_required` | doctor 有检查项未通过 |
+| `operation_failed` | 未分类异常；message 保留原因 |
+
+`found` 表示选到了符合当前策略的候选。检查 `ok`、`verification` 和 `requirement` 后再执行。`search.complete:false` 明确表示不是穷尽全盘搜索。
+
+## 声明与选择
+
+优先级：`-Version` > 最近项目声明 > 父目录声明 > 全局声明。同一目录依次读取 mise.toml、.mise.toml、.tool-versions、.nvmrc、.node-version、.python-version、package.json engines。
+
+支持数值前缀（22、3.12）、完整版本、逗号/分号或 `||` 候选、数值通配符、`^`、`~` 和组合比较（`>=20 <23`）。latest/stable/system/any/* 表示不限制已验证版本，不会联网解析最新版本；LTS 别名等无法确定的要求会失败。带发行版前缀的 Java 要求必须能从候选路径或版本证实发行版。
+
+读取器不实现完整 TOML / mise 语义。复杂工具表会报告不支持；includes、模板和环境专属配置等需交给管理器处理。二进制选择也不等同于加载项目完整环境。
+
+选取步骤：排除 shim、不可用文件、默认不允许的未验证/IDE/conda-env 副本 → 筛选项目要求 → 显式路径偏好 → 已验证 → 仓库 → PATH 可达 → 来源 → 版本 → 路径确定性排序。用户偏好不能绕过版本要求和护栏。
+
+## 地图存储 v2
+
+```jsonc
+{
+  "schemaVersion": 2,
+  "scannedAt": "2026-09-30T10:00:00+08:00",
+  "updatedAt": "2026-09-30T10:05:00+08:00",
+  "warehouse": "C:\\Users\\<用户>\\toolchains",
+  "pathSnapshot": "扫描时的 PATH",
   "tools": {
-    "gh": {
-      "preferred": "system-2.101.0",
-      "candidates": [
-        {
-          "id": "system-2.101.0",
-          "version": "2.101.0",
-          "path": "C:\\Program Files\\GitHub CLI\\gh.exe",
-          "source": "system",
-          "reachable": true,
-          "isShim": false,
-          "note": ""
-        }
-      ]
+    "node": {
+      "preferred": "path-<规范化路径的 SHA256>",
+      "preferredPath": "用户显式偏好的路径",
+      "candidates": []
     }
   }
 }
 ```
 
+地图只保存机器事实和路径偏好，项目选择在 find 时计算。读取 v1 地图时保留原首选路径作为迁移偏好和既有备注；写入时升级到 v2。需要重算默认排序时可重新登记目标路径或调整 preferredPath。未知未来格式不覆盖。
+
 候选字段：
 
 | 字段 | 含义 |
 |---|---|
-| `id` | 工具内唯一标识，`preferred` 指向它 |
-| `version` | 版本号（探测不到则为空，例如 shim 与商店别名不探测） |
-| `path` | **绝对路径**——agent 要执行的就是它 |
-| `source` | `warehouse`（统一仓库）｜`manager`（mise 等）｜`manual`（手装）｜`system`（系统安装）｜`ide-host`（IDE 自带）｜`conda-base` / `conda-env` |
-| `reachable` | 该文件所在目录是否在 PATH 上。**存在 ≠ 可用 ≠ 会生效**，三层分开记 |
-| `isShim` | 是间接层（如 `mise\shims\`）。只登记、**不执行**：执行 shim 可能触发管理器自动安装 |
-| `note` | 为什么这条要小心（IDE 自带、conda 环境内、shim、商店别名占位……） |
+| `id` | 规范化绝对路径的稳定 SHA256 ID，同版本副本不会撞车 |
+| `path`、`version`、`source` | 文件路径、实际版本（或登记提示）、来源 |
+| `verification` | verified / unverified / unavailable / skipped |
+| `usable` | verified 为 true，unavailable 为 false，其他为 null |
+| `reachable` | 所在目录在 PATH 中；不代表该命令会赢得解析 |
+| `isShim` | 间接层，不执行版本探测，不作首选 |
+| `checkedAt`、`size`、`modifiedAt` | 验证时间与文件指纹；文件变化或旧格式时重新验证 |
+| `registered`、`userNote`、`note` | 手工登记标识、用户备注与说明 |
 
-**首选规则**（`Select-Preferred`）：
+探测只接受成功退出且可提取版本的输出。普通零字节文件不可用；商店执行别名不探测、状态 skipped。文件指纹是大小与修改时间，不是完整内容哈希。
 
-1. 若该工具在某份声明里被点名 → 只在**满足声明的具体二进制**里选（shim 不参与这一步）
-2. 环境内的副本（`conda-env`）默认不参选
-3. 排序：仓库里装的 → 能被 PATH 解析的具体二进制 → 能被 PATH 解析的 shim → 其余
-4. 同层比来源：`warehouse` → `manager` → `manual` → `system` → `ide-host` → `conda-base`
-5. 最后比版本，高者优先
+完整扫描与局部更新分别计时。读改写全程持有同一登录会话中的命名 mutex，随后原子替换 JSON 和 Markdown；两文件不是联合事务，JSON 是权威文件。可在摘要写入失败后重试刷新。
 
-## 3. 安装配方
+## 适配器与安装
 
-`install` 内置四个 GitHub portable 配方（`gh`、`jadx`、`ripgrep`、`fd`）和一个固定 URL 配方（`adb`）。
-只能走安装器的工具可用 `-Via winget` 兜底；这类工具登记真实安装路径，但不保证落在统一仓库。
-其他 portable 工具用 `-Url` 给直链，或人工安装后再用 `map.ps1 add` 登记。提供 `-Sha256` 时，
-下载归档必须通过校验；目标版本目录已存在时安装会直接失败，不会删除或覆盖已有目录。
-配方把 **发布 tag** 与 **资产文件名** 分开写——同一个项目的这两者 `v` 前缀经常不一致
-（jadx 的 tag 是 `v1.5.6`，资产却叫 `jadx-1.5.6.zip`）。版本号一律按裸版本处理，
-`@latest` 走 GitHub API 解析最新发布。
+`scripts/tools.json` 定义 aliases、warehouseNames、locations 安装位置提示、probe 参数数组、可选 versionPattern，以及 portable recipes。未知工具仅尝试 `--version`；不盲试裸 `version`。为不支持该参数的工具添加适配器。
 
-落点固定为 `<TOOLCHAIN_ROOT>/<工具>/<版本>/`；归档里若多一层同名目录会被压平，
-保证"仓库里一律长这样"。
+内置 GitHub portable：gh、jadx、rg（ripgrep 别名）、fd；固定 URL：adb。当前资产为 Windows x64。自定义 zip 用 `-Url`，`-Sha256` 可校验归档。目录名不能含路径；已有目标拒绝覆盖；下载工具须成功探测并满足声明版本后才完成安装。没有可执行文件或版本验证失败时返回失败。
 
-## 4. 扫描内核：census.ps1 / census.sh
+winget 是显式安装动作，通过找到的绝对入口调用，跳过 shim 安装器；商店执行别名可在明确的 winget 安装动作中被调用。安装位置由 winget 决定，升级卸载交给 winget。安装成功但无法发现文件会返回 installed_not_discovered，不能把它报告为完整成功。
 
-`map.ps1 scan` 直接调用 `census.ps1 -Json`，不重复实现盘点。两者也可以单独使用。
+## 扫描内核
 
-| 参数 | 作用 |
-|---|---|
-| `-Json` / `--json` | 机器可读输出（`schemaVersion` 目前为 1） |
-| `-Timing` / `--timing` | 各阶段耗时（随语言与平台，阶段集合略有差异） |
-| `-Lang en` / `--lang en` | 英文输出；默认中文 |
-| `-Deep` / `--deep` | 宽松深扫（慢，默认关闭） |
-| `-ToolsRoot` / `--tools-root` | 覆盖规范根（默认 `~/toolchains`） |
+`census.ps1 -Json [-Timing] [-Lang en] [-Deep]`；Unix 用 `census.sh --json [--timing] [--lang en] [--deep]`。
 
-JSON 字段：`schemaVersion`、`generatedAt`、`host`、`declarations`、`toolsRoot`、`mise`、
-`conventions`、`runtimes`、`resolution`、`warnings`、`timings`、`summary`。
-`runtimes[].pattern`、`source`、`placement`、`warnings[].kind` 都是**稳定的 ASCII 标识符**；
-`warnings[].message` / `action` 是散文，跟随 `--lang`。
+扫描内核 JSON 协议仍为 v1：schemaVersion、generatedAt、host、declarations、toolsRoot、mise、conventions、runtimes、resolution、warnings、timings、summary。机器标识字段是稳定 ASCII，文案随语言变化。两平台有意保留平台字段差异。
 
-告警代码：`STUB`（命令指向跑不起来的文件）、`PATH_ORDER`（解析到的版本不满足声明）、
-`SHADOWED`（同一工具存在多份副本）、`CONVENTION`（只存在于文件名的命名约定）、
-`PATH_DIRT`（PATH 里有重复或带引号的条目）、`DRIFT`（模板与部署副本不一致）、
-`XDG_SHIFT`（`XDG_CONFIG_HOME` 让 mise 全局配置搬了家）、`STRAY`（游离副本）、
-`UNDECLARED`（项目有版本约束却没有声明文件）、`MISSING`（声明了但没装）。
-
-## 5. 平台差异（有意保留）
-
-两份实现共享一份文档化的字段，但不要求结构逐字段一致：
-`host.powershell` 与 `mise.tools[].installPath/source/managed` 只在 PowerShell 版里出现，
-因为它们描述的是 Windows 上才有的事实。消费按上面的字段表读即可。
+告警：STUB、PATH_ORDER、SHADOWED、CONVENTION、PATH_DIRT、DRIFT、XDG_SHIFT、STRAY、UNDECLARED、MISSING、NO_MISE。它们只诊断工具层，不诊断端口、.env、应用依赖或后台服务。

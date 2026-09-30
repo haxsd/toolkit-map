@@ -137,7 +137,7 @@ try {
     # 于是版本恒为空（实测：统一仓库里的 JDK 8 就被记成空版本）。用一个假 java 钉住边界。
     $stubDir = Join-Path $scratch 'stub'
     New-Item -ItemType Directory -Force -Path $stubDir | Out-Null
-    $fakeJava = Join-Path $stubDir 'fake-java.cmd'
+    $fakeJava = Join-Path $stubDir 'java.cmd'
     @(
         '@echo off'
         'if "%1"=="-version" goto ver'

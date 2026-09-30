@@ -332,6 +332,19 @@ is_real() {
   [ -f "$1" ] && [ -s "$1" ] && [ -x "$1" ]
 }
 
+# 所有版本探测路径共用护栏；自定义数据/分发目录也不能执行 shim。
+is_shim_path() {
+  local p root
+  p="$(printf '%s' "$1" | tr '\\' '/' | tr 'A-Z' 'a-z')"
+  case "$p" in */shims/*|*/.volta/bin/*) return 0 ;; esac
+  for root in "${MISE_SHIMS_DIR:-}" "${VOLTA_HOME:-}"; do
+    [ -n "$root" ] || continue
+    root="$(printf '%s' "$root" | tr '\\' '/' | tr 'A-Z' 'a-z')"
+    case "$p" in "$root"/*) return 0 ;; esac
+  done
+  return 1
+}
+
 # 带超时地运行命令并捕获 stdout。
 # 为什么需要它：census 是只读诊断工具，不能跟着别的进程卡死——实测 mise 会因为
 # 陈旧的锁或联网自检无限等待，`mise ls` 一挂，整份报告就出不来。
@@ -339,6 +352,9 @@ is_real() {
 # 顺带把 MISE_AUTO_UPDATE 关掉：诊断不该等着检查更新，结果才可复现。
 run_with_timeout() {
   local secs="$1"; shift
+  local resolved
+  resolved="$(command -v "$1" 2>/dev/null || true)"
+  is_shim_path "$resolved" && return 0
   if command -v timeout >/dev/null 2>&1; then
     MISE_AUTO_UPDATE=0 timeout "$secs" "$@" 2>/dev/null
     return 0
@@ -598,12 +614,14 @@ scan_conventions() {
             ;;
         esac
         actual=""
+        if ! is_shim_path "$target" && [ "$target" != "$f" ]; then
         case "$tool" in
           node|npm|npx|pnpm|yarn) actual="$("$target" --version 2>&1 | head -n1 || true)" ;;
           python|pip)             actual="$("$target" --version 2>&1 | head -n1 || true)" ;;
           java|javac)             actual="$("$target" -version 2>&1 | head -n1 || true)" ;;
           *)                      actual="$("$target" --version 2>&1 | head -n1 || true)" ;;
         esac
+        fi
         # targetOk：约定入口最终指向的文件是否真的可执行（对应 census.ps1 的同名字段）。
         # 命中 shim 内容里的目标时 target 就是那个文件；没命中就退回 shim 自身。
         ok="yes"
@@ -626,6 +644,7 @@ tick '3. 约定层'
 probe_path() {
   local p="$1" tool ver src
   [ -f "$p" ] || return 0
+  is_shim_path "$p" && return 0
   case "$(basename "$p")" in
     node*)   tool=node ;;
     python*) tool=python ;;
@@ -772,6 +791,7 @@ probe_cmd() {
   hits="$(printf '%s' "$hitlist" | awk -F';' 'NF{print NF}')"
   hitcount="${hits:-1}"
   ver=""
+  if ! is_shim_path "$resolved"; then
   case "$name" in
     node)   ver="$("$name" --version 2>/dev/null | head -n1 | sed 's/^v//' || true)" ;;
     npm|npx|pnpm|yarn) ver="$("$name" --version 2>/dev/null | head -n1 || true)" ;;
@@ -779,6 +799,7 @@ probe_cmd() {
     java|javac) ver="$("$name" -version 2>&1 | head -n1 | sed -E 's/.*version "([^"]+)".*/\1/' || true)" ;;
     *)      ver="$("$name" --version 2>/dev/null | head -n1 || true)" ;;
   esac
+  fi
   # usable 作为第 5 列一起记下来：判断"装没装"要用它，
   # 而且 JSON 里与 census.ps1 的 resolution 记录对齐。
   # 第 6 列是这条命令在 PATH 上的全部命中（与 PS 的 allHits 对应）。
