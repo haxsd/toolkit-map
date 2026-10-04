@@ -27,6 +27,8 @@ try {
     Assert ($result.ok -and $result.verification -eq 'verified' -and [IO.File]::Exists($result.path)) 'portable 安装没有完成验证与登记'
     $saved = Read-Map
     Assert ($saved.tools['install-ok'].candidates.Count -eq 1) '安装结果未登记'
+    $result = Invoke-Install
+    Assert ($result.status -eq 'already_available' -and (Read-Map).tools['install-ok'].candidates.Count -eq 1) '重复安装仓库内已验证版本应复用且不重复登记'
     $Tool = 'bad-version'; $Version = '2.0.0'; $Sha256 = ''
     $script:Archive = Make-Package 'bad-version' '1.0.0'
     $failed = $false
@@ -41,6 +43,16 @@ try {
     $failed = $false
     try { $null = Invoke-Install } catch { $failed = ($_.Exception.Data['code'] -eq 'executable_missing') }
     Assert $failed '归档缺少可执行文件时不能报告成功'
+    # 可执行文件可能依赖安装位置：暂存验证成功不代表移动后仍然可用。
+    $Tool = 'relocation'; $Version = '1.0.0'
+    $script:Archive = Make-Package 'relocation' '1.0.0'
+    $relocationCmd = Join-Path $scratch 'pkg-relocation\relocation.cmd'
+    [IO.File]::WriteAllText($relocationCmd, "@echo off`r`nsetlocal EnableDelayedExpansion`r`nset here=%~dp0`r`nif not `"!here:warehouse=!`"==`"!here!`" exit /b 1`r`necho relocation 1.0.0`r`nexit /b 0`r`n", [Text.Encoding]::ASCII)
+    Compress-Archive -LiteralPath (Split-Path $relocationCmd -Parent) -DestinationPath $script:Archive -Force
+    $failed = $false
+    try { $null = Invoke-Install } catch { $failed = ($_.Exception.Data['code'] -eq 'probe_failed') }
+    Assert ($failed -and -not [IO.Directory]::Exists((Join-Path $env:TOOLCHAIN_ROOT 'relocation\1.0.0'))) '移动后不可用必须失败并回滚目标目录'
+    Assert (-not (Read-Map).tools.ContainsKey('relocation')) '失败副本不能登记到地图'
     $Tool = 'external'; $Version = '1.0.0'
     $script:Archive = Make-Package 'external' '1.0.0'
     $external = Join-Path $scratch 'pkg-external\external.cmd'

@@ -67,8 +67,21 @@ function Read-ToolkitDeclaredTools {
                 }
                 continue
             }
-            if ($t -match '^\[(.+)\]') { $inTools = ($Matches[1] -eq 'tools'); continue }
+            if ($t -match '^\[\[?\s*(.+?)\s*\]\]?') {
+                $section = $Matches[1]
+                $inTools = ($section -match '^(tools|"tools"|''tools'')$')
+                if ($section -match '^(?:tools|"tools"|''tools'')\s*\.\s*([A-Za-z0-9_-]+|"[^"]+"|''[^'']+'')') {
+                    $key = Get-ToolkitCanonicalName ($Matches[1].Trim('"').Trim("'"))
+                    if ($key -eq 'python3') { $key = 'python' }
+                    $unsupported.Add($key)
+                }
+                continue
+            }
             if (-not $inTools) { continue }
+            if ($t -match '^([A-Za-z0-9_-]+|"[^"]+"|''[^'']+'')\s*\.') {
+                $unsupported.Add((Get-ToolkitCanonicalName ($Matches[1].Trim('"').Trim("'"))))
+                continue
+            }
             if ($t -match '^([A-Za-z0-9_-]+|"[^"]+"|''[^'']+'')\s*=\s*(.+)$') {
                 $key = Get-ToolkitCanonicalName ($Matches[1].Trim('"').Trim("'"))
                 if ($key -eq 'python3') { $key = 'python' }
@@ -76,7 +89,7 @@ function Read-ToolkitDeclaredTools {
                 if ($value -match '^(["'']).*\1$' -or $value -match '^\[\s*(?:["''][^"'']+["'']\s*,?\s*)*\]$') {
                     $tools[$key] = ($value -replace '[\[\]"'']', '').Trim()
                 } else { $unsupported.Add($key) }
-            } else { $unsupported.Add($t) }
+            } else { $unsupported.Add('*') }
         }
     }
     return @{ tools = $tools; unsupported = $unsupported.ToArray() }
@@ -150,14 +163,18 @@ function Test-ToolkitVersionSatisfies {
         } elseif ($w -match '^(?:\s*(?:>=|<=|>|<|=)\s*\d+(?:\.\d+){0,2}\s*)+$') {
             $ok = ($suffix -notmatch '^-')
             foreach ($term in [regex]::Matches($w, '(>=|<=|>|<|=)\s*(\d+(?:\.\d+){0,2})')) {
-                $pad = @($term.Groups[2].Value.Split('.')) + @('0', '0', '0')
+                $digits = @($term.Groups[2].Value.Split('.'))
+                $pad = $digits + @('0', '0', '0')
                 $bound = [version](($pad[0..2]) -join '.')
+                $partial = ($digits.Count -lt 3)
+                $upper = if ($digits.Count -eq 1) { [version]"$([int]$pad[0]+1).0.0" }
+                         else { [version]"$($pad[0]).$([int]$pad[1]+1).0" }
                 switch ($term.Groups[1].Value) {
                     '>=' { $ok = $ok -and ($actual -ge $bound) }
-                    '<=' { $ok = $ok -and ($actual -le $bound) }
-                    '>'  { $ok = $ok -and ($actual -gt $bound) }
+                    '<=' { $ok = $ok -and $(if ($partial) { $actual -lt $upper } else { $actual -le $bound }) }
+                    '>'  { $ok = $ok -and $(if ($partial) { $actual -ge $upper } else { $actual -gt $bound }) }
                     '<'  { $ok = $ok -and ($actual -lt $bound) }
-                    '='  { $ok = $ok -and ($actual -eq $bound) }
+                    '='  { $ok = $ok -and $(if ($partial) { $actual -ge $bound -and $actual -lt $upper } else { $actual -eq $bound }) }
                 }
             }
             if ($ok) { return $true }

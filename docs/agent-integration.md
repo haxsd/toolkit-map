@@ -16,6 +16,8 @@ $map="$env:USERPROFILE\Projects\toolkit-map\scripts\map.ps1"   # 按实际情况
 $project = 'D:\your-project'  # 替换成真实存在的当前项目目录
 ```
 
+Windows 默认策略可能禁止直接执行 `.ps1`。检查源码后，可在当前终端运行 `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`，或单次使用 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File $map <动作与参数>`；无需修改全局策略。agent 新建终端或子进程时应重新采用单次宿主调用；组织组策略的限制需遵循组织要求。
+
 ## 1. 核心契约（所有平台一致）
 
 1. `& $map status -Json`；无地图、过旧或 PATH 变化时执行 `& $map scan -Json`。
