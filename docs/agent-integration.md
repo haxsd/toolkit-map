@@ -16,6 +16,8 @@ $map="$env:USERPROFILE\Projects\toolkit-map\scripts\map.ps1"   # 按实际情况
 $project = 'D:\your-project'  # 替换成真实存在的当前项目目录
 ```
 
+Windows 默认策略可能禁止直接执行 `.ps1`。检查源码后，可在当前终端运行 `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`，或单次使用 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File $map <动作与参数>`；无需修改全局策略。agent 新建终端或子进程时应重新采用单次宿主调用；组织组策略的限制需遵循组织要求。
+
 ## 1. 核心契约（所有平台一致）
 
 1. `& $map status -Json`；无地图、过旧或 PATH 变化时执行 `& $map scan -Json`。
@@ -91,7 +93,7 @@ $claudeRules = Join-Path $env:USERPROFILE '.claude\CLAUDE.md'
 
 ## 6. 验收（真实验收，而非“是否遵守”）
 
-升级 toolkit-map 不会自动刷新已经粘贴的规则。升级到 v0.2.1 后，文件接入重新执行 `setup` 更新标记块；Cursor 全局 UI 接入重新生成 `preview` 并替换旧区块。随后新开会话验收。
+升级 toolkit-map 不会自动刷新已经粘贴的规则。每次升级后，文件接入重新执行 `setup` 更新标记块；Cursor 全局 UI 接入重新生成 `preview` 并替换旧区块。随后新开会话验收。
 
 让 agent 按本项目声明去查 `node`，要求它报告：**项目要求什么、发现哪些候选、所选 `path` 及 `verification`**，
 并且**先不安装**。新开一个 agent 会话，观察它实际执行了哪些命令与输出，不要只问“你遵守了吗”。若它直接调用裸 `node`，排查规则是否加载、脚本路径与权限是否正确，以及更具体的规则是否冲突。全局规则含本机路径，账号同步到另一台机器后应重新生成或替换路径。

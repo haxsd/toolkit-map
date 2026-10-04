@@ -408,7 +408,7 @@ function Get-Requirement {
     if ($Version) { return @{ version = $Version; source = 'argument'; scope = 'argument' } }
     foreach ($declaration in @(Get-ToolkitDeclarations $Project)) {
         $key = if ($Name -eq 'python3') { 'python' } else { $Name }
-        if ($declaration.unsupported -contains $key) { Throw-MapError 'requirement_unsupported' "声明语法尚不支持：$($declaration.path) 的 $key；请用 -Version 明确指定。" }
+        if ($declaration.unsupported -contains $key -or $declaration.unsupported -contains '*') { Throw-MapError 'requirement_unsupported' "声明语法尚不支持：$($declaration.path) 的 $key；请用 -Version 明确指定。" }
         if ($declaration.tools.ContainsKey($key)) { return @{ version = "$($declaration.tools[$key])"; source = $declaration.path; scope = $declaration.scope } }
     }
     return @{ version = ''; source = ''; scope = '' }
@@ -522,6 +522,7 @@ function Get-RulesBlock {
 
 调用工具前，先用下面的绝对路径查询工具地图；使用 JSON 返回的路径与 requirement、verification。
 工具地图脚本：$script:MapScriptPath
+Windows 策略禁止直接执行脚本时，用当前 PowerShell 宿主以 -NoProfile -ExecutionPolicy Bypass -File 单次调用；不修改全局执行策略，遵循组织组策略。
 在 PowerShell 中执行：
 ``````powershell
 & '$command' status -Json
