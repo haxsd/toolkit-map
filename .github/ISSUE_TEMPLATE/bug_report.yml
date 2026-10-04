@@ -1,0 +1,83 @@
+name: Bug 报告
+description: 报告 toolkit-map 的错误行为、崩溃或结果不符预期
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先按 README 设置脚本和项目路径，运行 doctor；Unix 扫描问题可提供 census.sh 的相关输出。
+        请只提交与问题相关的诊断结果，**务必删除凭据、令牌、私有地图与仓库内容**。
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      description: 你运行 map.ps1 的操作系统
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - 其他（请在描述中说明）
+    validations:
+      required: true
+  - type: dropdown
+    id: powershell
+    attributes:
+      label: PowerShell 版本
+      description: 完整 map 动作目前仅支持 Windows PowerShell 5.1 / PowerShell 7
+      options:
+        - Windows PowerShell 5.1
+        - PowerShell 7
+        - 不适用（非 Windows 或未使用 PowerShell）
+    validations:
+      required: true
+  - type: input
+    id: frontend
+    attributes:
+      label: 使用前端
+      description: 你通过哪个 agent 前端使用 toolkit-map
+      placeholder: 例如 Cursor、Codex、Claude Code；直接运行脚本时填“CLI”
+    validations:
+      required: true
+  - type: input
+    id: toolkit_map_version
+    attributes:
+      label: toolkit-map 版本
+      description: 运行 map.ps1 help -Json 查看 version，或提供 Release 标签/源码提交号
+      placeholder: 例如 v0.2.3 或完整 Git commit；无法获取时写“不确定”
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 列出你执行的确切命令与顺序，并注明期望的完整脚本路径
+      placeholder: |
+        1. 运行 ...
+        2. 运行 ...
+        3. 观察到 ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+      description: 你认为应该发生什么，可引用返回的 requirement、status 或 verification
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 实际发生了什么，包含退出码和关键输出
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 可选：去标识诊断
+      description: |
+        粘贴命令输出（优先 `-Json`）。请**去标识并删减**：只保留与问题相关的字段和片段，
+        不要包含凭据、令牌、完整私有地图、私有项目路径或仓库内容。
+      render: text
+    validations:
+      required: false
