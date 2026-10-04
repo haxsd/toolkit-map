@@ -73,6 +73,21 @@ param([switch]$Json)
     Assert ($r.code -ne 0) '补丁版本必须精确匹配'
     $r = Run-Map @('find', 'node', '-Project', $project, '-Version', 'lts/unknown', '-SkipScan')
     Assert ($r.code -ne 0 -and $r.value.status -eq 'requirement_unsupported') '未知版本表达式不能当成满足'
+    foreach ($range in @('>=22 <=22', '=22.23')) {
+        $r = Run-Map @('find', 'node', '-Project', $project, '-Version', $range, '-SkipScan')
+        Assert ($r.code -eq 0 -and $r.value.path -eq $two) "部分版本比较应接受 22.23.2：$range"
+    }
+    $r = Run-Map @('find', 'node', '-Project', $project, '-Version', '>22', '-SkipScan')
+    Assert ($r.code -ne 0) '>22 不应接受 22.x'
+    foreach ($header in @('[tools.node]', '[tools."node"]', '[[tools.node]]', '["tools".node]')) {
+        [IO.File]::WriteAllText((Join-Path $project 'mise.toml'), "$header`nversion = '22'`n")
+        $r = Run-Map @('find', 'node', '-Project', $project, '-SkipScan')
+        Assert ($r.code -ne 0 -and $r.value.status -eq 'requirement_unsupported' -and -not $r.value.path) "复杂声明不得被忽略并降级到全局 Node 16：$header"
+    }
+    [IO.File]::WriteAllText((Join-Path $project 'mise.toml'), "[tools]`nnode.version = '22'`n")
+    $r = Run-Map @('find', 'node', '-Project', $project, '-SkipScan')
+    Assert ($r.code -ne 0 -and $r.value.status -eq 'requirement_unsupported') '点号工具表不得被忽略'
+    [IO.File]::WriteAllText((Join-Path $project 'mise.toml'), "[tools]`nnode = `"22`"`n")
     $r = Run-Map @('update', 'node'); Assert ($r.code -eq 0 -and $r.value.scannedAt -eq $scanTime) '条目更新不得刷新完整扫描时间'
     $r = Run-Map @('scan'); Assert ($r.code -eq 0) '重扫失败'
     $r = Run-Map @('find', 'node', '-Project', $project, '-Version', '16', '-SkipScan')

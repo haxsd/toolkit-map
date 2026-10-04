@@ -270,7 +270,7 @@ function Invoke-Install {
 
     Write-MapMessage "将把 $name $(if ($ver) { $ver } else { '(版本装完探测)' }) 装到仓库：$(Join-Path $root $name)" -ForegroundColor Cyan
     Write-MapMessage "  下载：$url" -ForegroundColor DarkGray
-    if ($ver) {
+    if ($ver -and $WhatIf) {
         $knownTarget = Join-Path (Join-Path $root $name) $ver
         if (Test-Path -LiteralPath $knownTarget) {
             throw "目标版本已存在，拒绝覆盖：$knownTarget"
@@ -287,12 +287,16 @@ function Invoke-Install {
                 return (New-MapResult 'already_available' @{ tool = $name; path = $candidate.path; version = $candidate.version; verification = $candidate.verification })
             }
         }
+        $knownTarget = Join-Path (Join-Path $root $name) $ver
+        if (Test-Path -LiteralPath $knownTarget) { throw "目标版本已存在且没有可验证副本，拒绝覆盖：$knownTarget" }
     }
 
     # 先在暂存目录里下载+解压+验证，全部通过后再整体搬进仓库——
     # 这样失败不会在仓库里留下半个目录（半成品最难排查：它看起来像装好了）。
     $stage = [IO.Path]::GetFullPath((Join-Path $env:TEMP ("tk-" + [guid]::NewGuid().ToString('N'))))
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
+    $movedTarget = $false
+    $finalValidated = $false
     try {
         $zip = Join-Path $stage 'pkg.zip'
         Invoke-NetRetry -What "下载 $url" -Action { Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing }
@@ -346,20 +350,32 @@ function Invoke-Install {
         }
         New-Item -ItemType Directory -Force -Path (Split-Path $target -Parent) | Out-Null
         Move-Item -LiteralPath $extract -Destination $target
+        $movedTarget = $true
         $finalExe = Join-Path $target ($exe.Substring($extract.Length).TrimStart('\'))
+        $c = New-Candidate -P $finalExe -VersionHint $actualVersion
+        if ($c.verification -ne 'verified' -or -not (Test-CandidateRequirement $c $ver $name)) {
+            Throw-MapError 'probe_failed' '工具移动到最终位置后验证失败，安装未完成。'
+        }
+        $finalValidated = $true
+        $actualVersion = $c.version
         Write-MapMessage "  已安装：$finalExe" -ForegroundColor Green
 
         # 登记进地图并设为首选（同一工具的多个版本可以并存，目录并列）
         $map = Read-Map
         if ($null -eq $map) { $map = @{ schemaVersion = 1; warehouse = $root; tools = @{} } }
         if (-not $map.tools.ContainsKey($name)) { $map.tools[$name] = @{ preferred = ''; candidates = @() } }
-        $c = New-Candidate -P $finalExe -VersionHint $actualVersion
         $map.tools[$name].candidates = @($map.tools[$name].candidates) + @($c)
         $map.tools[$name].preferred = $c.id
         $map.tools[$name].preferredPath = $finalExe
         Save-Map $map
         Write-MapMessage "  已登记进地图并设为首选：map.ps1 find $name" -ForegroundColor Green
         return (New-MapResult 'ok' @{ tool = $name; path = $finalExe; version = $actualVersion; verification = $c.verification; mapFile = Get-MapPath })
+    } catch {
+        if ($movedTarget -and -not $finalValidated) {
+            if (-not (Test-ToolkitUnderRoot $target $root) -or (Get-ToolkitNormalizedPath $target) -eq (Get-ToolkitNormalizedPath $root)) { throw '安装目标越界，拒绝回滚。' }
+            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction Stop
+        }
+        throw
     } finally {
         if (-not (Test-ToolkitUnderRoot $stage ([IO.Path]::GetFullPath($env:TEMP)))) { throw '暂存目录不在 TEMP 内，拒绝清理。' }
         Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
@@ -380,7 +396,7 @@ try {
         'install' { Invoke-Install }
         'setup'   { Invoke-Setup }
         'doctor'  { Invoke-Doctor }
-        'help'    { New-MapResult 'ok' @{ version = '0.2.1'; actions = @('setup', 'doctor', 'scan', 'status', 'find', 'add', 'update', 'install'); hint = 'find <工具> [-Project <目录>] [-Version <版本>] -Json；setup [-Project <目录>] [-WhatIf]' } }
+        'help'    { New-MapResult 'ok' @{ version = '0.2.2'; actions = @('setup', 'doctor', 'scan', 'status', 'find', 'add', 'update', 'install'); hint = 'find <工具> [-Project <目录>] [-Version <版本>] -Json；setup [-Project <目录>] [-WhatIf]' } }
         default   { Throw-MapError 'invalid_action' "未知动作：$Action；执行 help 查看用法。" }
     }
     if ($null -eq $result) { $result = New-MapResult 'ok' @{ mapFile = Get-MapPath } }

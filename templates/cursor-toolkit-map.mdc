@@ -16,6 +16,7 @@ alwaysApply: true
 ```
 
 - 没有地图时先执行 `scan` 建图；地图过旧或 PATH 变化时重新 `scan`。不要为刷新地图反复修改规则文件。
+- Windows 策略禁止直接执行脚本时，用当前 PowerShell 宿主以 `-NoProfile -ExecutionPolicy Bypass -File` 单次调用；不修改全局执行策略，遵循组织组策略。
 - 检查退出码为 0、`ok:true`、`status:ok`、`verification:verified` 和 `requirement`，再使用返回的绝对 `path`。已在本次会话查证且配置未变的路径可以复用。
 - 版本不匹配或未验证时先诊断，不降级、不执行 shim、不自行加 `-AllowUnverified` / `-AllowIdeHost`。搜索失败只表示本次范围未找到，不表示整台机器没有。
 - `find` 不安装工具；明确需要时才另行 `install`，先用 `-WhatIf -Json` 预览。已有副本用 `add` 登记，不迁移、不改全局 PATH。

@@ -11,6 +11,8 @@ description: "AI agent 的本机工具发现与选择层：调用工具前查询
 
 ## 调用流程
 
+Windows 策略禁止直接执行脚本时，用当前 PowerShell 宿主以 `-NoProfile -ExecutionPolicy Bypass -File <地图脚本绝对路径> <动作与参数>` 单次调用；不修改全局执行策略，遵循组织组策略。
+
 1. 执行 `<地图脚本绝对路径> status -Json`。没有地图时执行 `setup -Project <项目目录>`，或只执行 `scan`；过旧或 PATH 变化时重扫。
 2. 执行 `<地图脚本绝对路径> find <工具> -Project <当前项目目录> -Json`。
 3. 检查退出码、`ok`、`status`、`requirement`、`verification`。只有成功且已验证的结果默认可以直接使用 `path`。
