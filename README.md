@@ -25,6 +25,10 @@
 git clone --branch main --depth 1 https://github.com/haxsd/toolkit-map "$env:USERPROFILE\Projects\toolkit-map"
 $map = "$env:USERPROFILE\Projects\toolkit-map\scripts\map.ps1"
 
+# Windows 默认执行策略若禁止脚本，仅为当前终端会话放行。
+# 先检查下载的源码；此设置不会修改用户级或系统级策略。
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
 # 先预览生成的接入规则；把目录替换成你的项目。
 & $map setup -Project 'D:\your-project' -WhatIf -Json
 & $map setup -Project 'D:\your-project'
@@ -33,6 +37,8 @@ $map = "$env:USERPROFILE\Projects\toolkit-map\scripts\map.ps1"
 ```
 
 `setup` 在地图不存在时首次扫描，随后在项目 `AGENTS.md` 中加入带绝对路径的规则。已有内容保留，修改前备份；重复执行不会产生重复区块。也可用 `-RulesFile <绝对路径>` 明确指定接入文件。`-WhatIf` 只返回计划，不扫描、不写文件、不联网。
+
+组织的组策略可能禁止会话级放行，此时遵循组织要求。也可单次调用 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File $map <动作与参数>`。从浏览器下载 ZIP 时，解压前先检查来源与 Release 校验值，再解除 ZIP 的下载标记（文件属性 → 解除锁定）。
 
 上面获取的是主分支源码和最新接入模板；固定版本源码包见 [GitHub Releases](https://github.com/haxsd/toolkit-map/releases)。v0.2.0 已支持 `setup` / `-RulesFile`；生成大工具位置确认规则需 v0.2.1，或者手工复制最新模板。升级后需刷新已接入的规则，具体步骤见 [agent 接入指南](docs/agent-integration.md)。
 
