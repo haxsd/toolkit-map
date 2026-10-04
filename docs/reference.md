@@ -1,5 +1,7 @@
 # 参考手册
 
+首次配置前端请先看 [agent 接入指南](agent-integration.md)：全局与项目规则是不同接入范围，`setup -RulesFile` 只维护本地文件，Cursor 账号内的 User Rules 需要手工粘贴。Cursor `.mdc` 文件应先具备有效 frontmatter，`setup` 不生成该头部。
+
 ## 命令与结果
 
 `map.ps1 <动作> [工具] [参数]`。完整地图动作支持 Windows PowerShell 5.1 和 PowerShell 7。
@@ -112,6 +114,8 @@
 完整扫描与局部更新分别计时。读改写全程持有同一登录会话中的命名 mutex，随后原子替换 JSON 和 Markdown；两文件不是联合事务，JSON 是权威文件。可在摘要写入失败后重试刷新。
 
 ## 适配器与安装
+
+统一仓库默认位于用户目录下的 `toolchains`，由 `TOOLCHAIN_ROOT` 覆盖；portable 暂存使用当前进程的 `TEMP`。管理器的数据/缓存目录不受 `TOOLCHAIN_ROOT` 控制。大工具下载前询问位置属于 agent 接入规则，CLI 不自动估算体积或交互拦截；详见 [存储与大工具安装](storage.md)。
 
 `scripts/tools.json` 定义 aliases、warehouseNames、locations 安装位置提示、probe 参数数组、可选 versionPattern，以及 portable recipes。未知工具仅尝试 `--version`；不盲试裸 `version`。为不支持该参数的工具添加适配器。
 
