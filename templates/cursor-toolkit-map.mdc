@@ -1,0 +1,25 @@
+---
+description: 调用本机工具前先查询 toolkit-map（使用前替换正文中的占位路径）
+alwaysApply: true
+---
+
+<!-- toolkit-map:begin -->
+## 本机工具发现
+
+调用本机工具前，先查询工具地图。地图脚本绝对路径：C:/Users/YOUR_USER/Projects/toolkit-map/scripts/map.ps1。
+
+在 PowerShell 中执行（每次将项目参数替换成当前项目目录）：
+
+```powershell
+& 'C:/Users/YOUR_USER/Projects/toolkit-map/scripts/map.ps1' status -Json
+& 'C:/Users/YOUR_USER/Projects/toolkit-map/scripts/map.ps1' find <工具> -Project '<当前项目目录>' -Json
+```
+
+- 没有地图时先执行 `scan` 建图；地图过旧或 PATH 变化时重新 `scan`。不要为刷新地图反复修改规则文件。
+- 检查退出码为 0、`ok:true`、`status:ok`、`verification:verified` 和 `requirement`，再使用返回的绝对 `path`。已在本次会话查证且配置未变的路径可以复用。
+- 版本不匹配或未验证时先诊断，不降级、不执行 shim、不自行加 `-AllowUnverified` / `-AllowIdeHost`。搜索失败只表示本次范围未找到，不表示整台机器没有。
+- `find` 不安装工具；明确需要时才另行 `install`，先用 `-WhatIf -Json` 预览。已有副本用 `add` 登记，不迁移、不改全局 PATH。
+- 下载前说明预计下载量、安装占用及实际目标目录，检查目标盘与暂存/缓存盘空间。仅预计安装占用 ≥1 GB 时询问位置，下载包大小不触发询问；等用户回答再下载。体积未知时先核实估算，Rust、Android SDK 等预计达到门槛的工具即使精确体积未知也先确认。已有明确位置偏好且空间足够时复用；用户指定门槛优先。
+- portable 仓库由 `TOOLCHAIN_ROOT` 指定（默认 `~/toolchains`），暂存使用 `TEMP`；管理器的数据/缓存目录分别配置。仅临时改变量不会成为永久偏好，持久化需用户明确选择，已有工具不自动迁移。
+- 项目需要完整工具链环境时，通过已登记的 mise 执行 `mise exec -- <命令>`。报告区分项目声明、发现的可用副本与当前 PATH 解析。
+<!-- toolkit-map:end -->
