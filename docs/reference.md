@@ -123,7 +123,7 @@
 
 `scripts/tools.json` 定义 aliases、warehouseNames、locations 安装位置提示、probe 参数数组、可选 versionPattern，以及 portable recipes。未知工具仅尝试 `--version`；不盲试裸 `version`。为不支持该参数的工具添加适配器。
 
-内置 GitHub portable：gh、jadx、rg（ripgrep 别名）、fd；固定 URL：adb。当前资产为 Windows x64。自定义 zip 用 `-Url`，`-Sha256` 可校验归档。目录名不能含路径；已有目标拒绝覆盖；下载工具须成功探测并满足声明版本后才完成安装。没有可执行文件或版本验证失败时返回失败。
+内置 GitHub portable：gh、jadx、rg（ripgrep 别名）、fd；固定 URL：adb。当前资产为 Windows x64。自定义 zip 用 `-Url`，`-Sha256` 可校验归档。目录名不能含路径；已有合适的已验证副本优先复用，其他已有目标拒绝覆盖。下载工具须在暂存和最终目录均成功探测并满足要求版本后才完成安装；移动后验证失败会删除该次新建目标，不登记失败副本。若工具已通过最终验证但地图写入失败，保留可用工具，通过 `add` 或 `scan` 恢复登记，不重复下载。没有可执行文件或版本验证失败时返回失败。
 
 winget 是显式安装动作，通过找到的绝对入口调用，跳过 shim 安装器；商店执行别名可在明确的 winget 安装动作中被调用。安装位置由 winget 决定，升级卸载交给 winget。安装成功但无法发现文件会返回 installed_not_discovered，不能把它报告为完整成功。
 

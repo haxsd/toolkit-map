@@ -117,7 +117,7 @@ $env:TOOLCHAIN_ROOT = 'D:\toolchains'
 
 声明支持常见 `mise.toml`、`.mise.toml`、`.tool-versions`、`.nvmrc`、`.node-version`、`.python-version` 和 `package.json` engines。轻量读取器不解释完整 mise 配置语义（包括 includes、模板、复杂表、环境专属配置）；不支持的要求不能据此降级，必要时显式给 `-Version` 或使用管理器。
 
-安装配方：gh、jadx、rg/ripgrep、fd（Windows x64 portable）与 adb。自定义 zip 用 `-Url` 与可选 `-Sha256`；安装器用 `-Via winget`，落在包管理器自己的位置。portable 下载版本需通过探测验证，已有目标目录拒绝覆盖。任意程序的版本参数仍可能有自己的副作用，本产品保证自己的扫描逻辑不安装工具、不执行识别到的 shim。
+安装配方：gh、jadx、rg/ripgrep、fd（Windows x64 portable）与 adb。自定义 zip 用 `-Url` 与可选 `-Sha256`；安装器用 `-Via winget`，落在包管理器自己的位置。portable 下载版本需在暂存和最终位置均通过探测验证；已有合适的已验证副本优先复用，其他已有目标目录拒绝覆盖。任意程序的版本参数仍可能有自己的副作用，本产品保证自己的扫描逻辑不安装工具、不执行识别到的 shim。
 
 ## 源码与贡献
 
