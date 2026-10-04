@@ -4,12 +4,25 @@
 
 **项目声明、机器可用副本、当前 PATH 解析是三件事。** `node --version` 只能说明当前命令运行了哪个版本，不能说明机器上只有这个版本。
 
+**安装后还需要接入 agent 的规则。** 想在所有项目中使用，配置前端的全局规则；只在某个项目使用，配置项目规则即可。克隆仓库或安装技能不会自动修改 Cursor 等前端的全局设置，也不能证明 agent 已开始查询地图。
+
+## 先选择接入位置
+
+| 前端 | 跨项目使用 | 只在当前项目使用 |
+|---|---|---|
+| Cursor | 在 Customize → Rules 的 User Rules 中粘贴参考规则 | `setup` 生成项目 `AGENTS.md`，或使用 `alwaysApply: true` 的 `.cursor/rules/toolkit-map.mdc` |
+| Codex | `CODEX_HOME/AGENTS.md`，默认 `~/.codex/AGENTS.md` | `setup` 生成项目 `AGENTS.md` |
+| Claude Code | `~/.claude/CLAUDE.md` | 用 `setup -RulesFile` 写入项目 `CLAUDE.md` |
+| 其他本机 agent | 其官方支持的全局指令入口 | 其官方支持的项目规则文件 |
+
+从 [通用参考规则](templates/agent-tool-rules.md) 开始，**将占位路径替换为你本机 `scripts/map.ps1` 的绝对路径**。Cursor 项目规则可用 [MDC 模板](templates/cursor-toolkit-map.mdc)。具体步骤、自动生成规则的命令和生效验收见 [agent 接入指南](docs/agent-integration.md)。规则针对能访问这台机器的 agent；远程/cloud agent 需要在自己的执行机器安装和建图。
+
 ## 三分钟接入（Windows）
 
 需要 Windows PowerShell 5.1 或 PowerShell 7，以及 Git。安装过程不改 PATH、不安装运行时。
 
 ```powershell
-git clone --branch v0.2.0 --depth 1 https://github.com/haxsd/toolkit-map "$env:USERPROFILE\Projects\toolkit-map"
+git clone --branch main --depth 1 https://github.com/haxsd/toolkit-map "$env:USERPROFILE\Projects\toolkit-map"
 $map = "$env:USERPROFILE\Projects\toolkit-map\scripts\map.ps1"
 
 # 先预览生成的接入规则；把目录替换成你的项目。
@@ -20,6 +33,8 @@ $map = "$env:USERPROFILE\Projects\toolkit-map\scripts\map.ps1"
 ```
 
 `setup` 在地图不存在时首次扫描，随后在项目 `AGENTS.md` 中加入带绝对路径的规则。已有内容保留，修改前备份；重复执行不会产生重复区块。也可用 `-RulesFile <绝对路径>` 明确指定接入文件。`-WhatIf` 只返回计划，不扫描、不写文件、不联网。
+
+上面获取的是主分支源码和最新接入模板；固定版本源码包见 [GitHub Releases](https://github.com/haxsd/toolkit-map/releases)。v0.2.0 已支持 `setup` / `-RulesFile`；生成大工具位置确认规则需 v0.2.1，或者手工复制最新模板。升级后需刷新已接入的规则，具体步骤见 [agent 接入指南](docs/agent-integration.md)。
 
 新开一个 agent 会话，请它查找一个工具。确认它实际先调用了地图，并依据返回的 `requirement`、`verification` 使用路径。`doctor` 能检查文件配置，不能证明前端已把规则交给模型或模型会遵守。
 
@@ -32,7 +47,7 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.agents\skills\toolkit-map" 
 # Cursor 可将联接放在 ~/.cursor/skills/toolkit-map。
 ```
 
-不同前端的技能发现方式不同，推荐同时用 `setup` 写入明确会被读取的规则文件。用户级规则可用 `-RulesFile` 指定，前端账号内的规则仍需手工接入。
+不同前端的技能发现方式不同。技能提供按需加载的使用说明；想持续执行“调用工具前先查地图”，仍建议用上面的全局或项目规则明确要求。用户级文件可用 `-RulesFile` 指定，Cursor 账号内的 User Rules 需手工粘贴。详见 [agent 接入指南](docs/agent-integration.md)。
 
 ## 常用动作
 
@@ -73,6 +88,20 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.agents\skills\toolkit-map" 
 - 统一仓库：`~/toolchains/<工具>/<版本>/`；`TOOLCHAIN_ROOT` 可覆盖。
 - `scannedAt` 只记录完整扫描；`updatedAt` 记录条目变更；候选有独立 `checkedAt`。
 - 地图与工具仓库都是使用者本机状态，不进入 GitHub 仓库或发布包。
+
+### 大工具不必放在 C 盘
+
+Windows 的用户目录通常在 C 盘，所以统一仓库默认也在那里。**源码放在哪个盘不决定工具装在哪个盘**。新 portable 工具可以用 `TOOLCHAIN_ROOT` 选择其他位置；已有副本继续留在原处，通过地图索引使用。
+
+```powershell
+# 在用户选定位置后设置；这里仅对当前 PowerShell 会话生效。
+$env:TOOLCHAIN_ROOT = 'D:\toolchains'
+& $map install rg@latest -WhatIf -Json  # 先看返回的 warehouse，不下载
+```
+
+接入规则要求 agent **仅在预计安装占用 ≥1 GB 时询问位置**，下载包大小不触发询问。体积未知时先核实估算；Rust、Android SDK 等预计达到门槛的工具即使精确体积未知也先确认。已有明确位置偏好且空间足够时复用，不重复询问。**这是 agent 的交互规则，CLI 本身不估算体积或弹出询问**。
+
+只改仓库根还不够：portable 下载/解压使用 `%TEMP%`；mise 和 rustup 有自己的数据、缓存目录。位置偏好如何持久化、C 盘暂存如何处理，以及 Rust 的安装边界见 [存储与大工具安装](docs/storage.md)。
 
 ## 支持范围与限制
 
