@@ -380,7 +380,7 @@ try {
         'install' { Invoke-Install }
         'setup'   { Invoke-Setup }
         'doctor'  { Invoke-Doctor }
-        'help'    { New-MapResult 'ok' @{ version = '0.2.0'; actions = @('setup', 'doctor', 'scan', 'status', 'find', 'add', 'update', 'install'); hint = 'find <工具> [-Project <目录>] [-Version <版本>] -Json；setup [-Project <目录>] [-WhatIf]' } }
+        'help'    { New-MapResult 'ok' @{ version = '0.2.1'; actions = @('setup', 'doctor', 'scan', 'status', 'find', 'add', 'update', 'install'); hint = 'find <工具> [-Project <目录>] [-Version <版本>] -Json；setup [-Project <目录>] [-WhatIf]' } }
         default   { Throw-MapError 'invalid_action' "未知动作：$Action；执行 help 查看用法。" }
     }
     if ($null -eq $result) { $result = New-MapResult 'ok' @{ mapFile = Get-MapPath } }
