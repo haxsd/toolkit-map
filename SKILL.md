@@ -56,3 +56,5 @@ portable 工具落在 `~/toolchains/<工具>/<版本>/`；`-Via winget` 由包�
 完整地图动作仅限 Windows PowerShell 5.1/7；Unix 目前只有 census.sh 扫描内核。复杂 mise 配置交给管理器，不猜测其含义。
 
 向用户报告时区分：项目要求什么、机器发现哪些副本、当前命令解析到谁。发现范围和验证状态都必须保留。
+
+首次使用见 [README](README.md#首次接入一个项目)；遇到问题见 [故障排查](docs/troubleshooting.md)，撤销见 [卸载指南](docs/uninstall.md)。不把本机环境告警或 doctor 待处理项误报为安装失败。
