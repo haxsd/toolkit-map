@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 排查指南
+    url: https://github.com/haxsd/toolkit-map/blob/main/docs/troubleshooting.md
+    about: 先按平台与宿主排查常见问题，确认完整 map 动作在当前平台是否受支持。
+  - name: agent 接入指南
+    url: https://github.com/haxsd/toolkit-map/blob/main/docs/agent-integration.md
+    about: 全局或项目规则如何接入 Cursor、Codex、Claude Code，以及升级后的验收步骤。
