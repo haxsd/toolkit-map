@@ -109,7 +109,37 @@ try {
     Assert ($failed -and -not (Read-Map).tools.ContainsKey('wtool2')) '多个新文件时不能猜测登记'
     Assert ($env:PATH -eq $wingetDir) 'winget 分支结束后必须恢复 PATH'
     $Via = ''
-    Write-Host '[通过] portable 安装暂存、校验、版本验证、失败回滚、已有副本复用与 winget 兜底登记'
+    # 配方安装：下载前必须拿到官方 SHA256（这里用 GitHub 资产 digest 的假响应），不符即失败；拿不到就不下载。
+    $Url = ''; $Sha256 = ''; $Version = ''
+    $Recipes['rtool'] = @{ repo = 'owner/rtool'; tag = 'v{ver}'; asset = 'rtool-{ver}.zip'; exe = 'rtool.cmd' }
+    $script:Archive = Make-Package 'rtool' '3.1.0'
+    $script:RecipeDigest = (Get-FileHash -LiteralPath $script:Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    function Invoke-RestMethod {
+        param($Uri, $Headers, $TimeoutSec)
+        $digest = if ($script:RecipeDigest) { "sha256:$($script:RecipeDigest)" } else { $null }
+        return [pscustomobject]@{ assets = @([pscustomobject]@{ name = 'rtool-3.1.0.zip'; digest = $digest; browser_download_url = 'https://example.invalid/rtool-3.1.0.zip' }) }
+    }
+    $script:downloadCalls = 0
+    function Invoke-WebRequest { param($Uri, $OutFile, [switch]$UseBasicParsing) $script:downloadCalls++; Copy-Item -LiteralPath $script:Archive -Destination $OutFile }
+    $Tool = 'rtool@3.1.0'
+    $script:RecipeDigest = ''
+    $failed = $false
+    try { $null = Invoke-Install } catch { $failed = ($_.Exception.Data['code'] -eq 'checksum_unavailable') }
+    Assert ($failed -and $script:downloadCalls -eq 0) '配方取不到官方 SHA256 时必须拒绝且不下载'
+    $script:RecipeDigest = ('c' * 64)
+    $failed = $false
+    try { $null = Invoke-Install } catch { $failed = ($_.Exception.Message -match 'SHA256') }
+    Assert ($failed -and $script:downloadCalls -eq 1 -and -not [IO.Directory]::Exists((Join-Path $env:TOOLCHAIN_ROOT 'rtool\3.1.0'))) '与官方 digest 不符时必须失败且不留下目录'
+    $Sha256 = (Get-FileHash -LiteralPath $script:Archive -Algorithm SHA256).Hash
+    $failed = $false
+    try { $null = Invoke-Install } catch { $failed = ($_.Exception.Data['code'] -eq 'checksum_conflict') }
+    Assert ($failed -and $script:downloadCalls -eq 1) '-Sha256 与官方值冲突时必须拒绝且不下载'
+    $Sha256 = ''
+    $script:RecipeDigest = (Get-FileHash -LiteralPath $script:Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $result = Invoke-Install
+    Assert ($result.ok -and $result.integrity.source -eq 'github-asset-digest' -and $result.integrity.sha256 -eq $script:RecipeDigest -and $result.version -eq '3.1.0') "配方安装应按官方 digest 校验后完成：$($result | ConvertTo-Json -Depth 5 -Compress)"
+    $Recipes.Remove('rtool')
+    Write-Host '[通过] portable 安装暂存、校验、版本验证、失败回滚、已有副本复用、winget 兜底登记与配方官方校验'
 } finally {
     $env:TOOLCHAIN_ROOT = $oldRoot; $env:PATH = $oldPath
     foreach ($name in $oldInstallerEnv.Keys) { [Environment]::SetEnvironmentVariable($name, $oldInstallerEnv[$name], 'Process') }

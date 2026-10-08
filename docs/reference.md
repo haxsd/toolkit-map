@@ -60,6 +60,8 @@
 | `requirement_unsupported` | 声明/版本表达式无法判定；需显式版本或管理器处理 |
 | `map_missing` / `map_corrupt` / `schema_unsupported` | 地图缺失、损坏或版本不支持；损坏文件不会被覆盖 |
 | `map_busy` | 其他进程持有更新锁；可重试 |
+| `checksum_unavailable` / `checksum_conflict` | 配方安装取不到官方 SHA256，或 `-Sha256` 与官方值不一致；未下载 |
+| `version_unavailable` | 固定版本配方不提供所请求的版本；改用 `-Url` 与 `-Sha256` |
 | `attention_required` | doctor 有检查项未通过 |
 | `operation_failed` | 未分类异常；message 保留原因 |
 
@@ -123,7 +125,7 @@
 
 `scripts/tools.json` 定义 aliases、warehouseNames、locations 安装位置提示、probe 参数数组、可选 versionPattern，以及 portable recipes。未知工具仅尝试 `--version`；不盲试裸 `version`。为不支持该参数的工具添加适配器。
 
-内置 GitHub portable：gh、jadx、rg（ripgrep 别名）、fd；固定 URL：adb。当前资产为 Windows x64。自定义 zip 用 `-Url`，`-Sha256` 可校验归档。目录名不能含路径；已有合适的已验证副本优先复用，其他已有目标拒绝覆盖。下载工具须在暂存和最终目录均成功探测并满足要求版本后才完成安装；移动后验证失败会删除该次新建目标，不登记失败副本。若工具已通过最终验证但地图写入失败，保留可用工具，通过 `add` 或 `scan` 恢复登记，不重复下载。没有可执行文件或版本验证失败时返回失败。
+内置 GitHub portable：gh、jadx、rg（ripgrep 别名）、fd；固定版本：adb（platform-tools 37.0.1，官方带版本号的地址）。当前资产为 Windows x64。配方安装下载前必须取得官方 SHA256：配方钉死的值、GitHub 发布资产的 digest 或上游校验文件（gh 的 checksums.txt、rg 的 .sha256）；都取不到时返回 `checksum_unavailable`，需用 `-Sha256` 给出从官方核实的值，且与官方值冲突时返回 `checksum_conflict`。adb 其他版本返回 `version_unavailable`，请用 `-Url` 与 `-Sha256`。自定义 zip 用 `-Url`，`-Sha256` 可校验归档。证书吊销服务器不可达时，仅 Windows PowerShell 5.1 且本进程开启吊销检查时临时关闭吊销检查重试一次；PowerShell 7 不做这种重试。目录名不能含路径；已有合适的已验证副本优先复用，其他已有目标拒绝覆盖。下载工具须在暂存和最终目录均成功探测并满足要求版本后才完成安装；移动后验证失败会删除该次新建目标，不登记失败副本。若工具已通过最终验证但地图写入失败，保留可用工具，通过 `add` 或 `scan` 恢复登记，不重复下载。没有可执行文件或版本验证失败时返回失败。
 
 winget 是显式安装动作，通过找到的绝对入口调用，跳过 shim 安装器；商店执行别名可在明确的 winget 安装动作中被调用。安装位置由 winget 决定，升级卸载交给 winget。安装成功但无法发现文件会返回 installed_not_discovered，不能把它报告为完整成功。
 

@@ -36,6 +36,8 @@ try {
     # 版本比较的表驱动契约随本脚本在 PowerShell 5.1 与 7 下各跑一遍（纯函数，不依赖下面的沙箱）。
     & (Join-Path $PSScriptRoot 'version-contract.ps1')
     Assert ($LASTEXITCODE -eq 0) 'version-contract.ps1 失败'
+    & (Join-Path $PSScriptRoot 'download-contract.ps1')
+    Assert ($LASTEXITCODE -eq 0) 'download-contract.ps1 失败'
     [void][IO.Directory]::CreateDirectory($scratch)
     $scripts = Join-Path $scratch 'product\scripts'
     [void][IO.Directory]::CreateDirectory($scripts)
