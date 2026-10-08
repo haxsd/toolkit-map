@@ -68,181 +68,35 @@ $script:Lang = if ($Lang) { $Lang.ToLowerInvariant() }
                else { 'zh' }
 if ($script:Lang -notin @('zh', 'en')) { $script:Lang = 'zh' }
 
-$script:Text = @{
-    # ---- 报告骨架 ----
-    'title'        = @{ zh = '运行时普查报告 (census)'; en = 'runtime-census report' }
-    'meta'         = @{ zh = '生成时间: {time}   主机: {user}@{arch}   当前目录: {cwd}'
-                        en = 'generated {time}   host {user}@{arch}   cwd {cwd}' }
-
-    'sec.decl'     = @{ zh = '1. 声明层 —— 谁在要求哪些工具与版本'
-                        en = '1. Declarations — who asks for which tools and versions' }
-    'sec.managed'  = @{ zh = '2. 纳管层 —— mise 管理的工具'
-                        en = '2. Managed — tools that mise manages' }
-    'sec.conv'     = @{ zh = '3. 约定层 —— 带版本号的命名 shim（最容易失传的约定）'
-                        en = '3. Conventions — version-suffixed shims (the kind that gets lost)' }
-    'sec.inv'      = @{ zh = '4. 工具清单 —— 磁盘上实际存在的运行时与工具（含纳管与未纳管）'
-                        en = '4. Inventory — runtimes and tools actually present on disk (managed or not)' }
-    'sec.res'      = @{ zh = '5. 解析层 —— 命令实际解析到哪'
-                        en = '5. Resolution — what each command actually resolves to' }
-    'sec.warn'     = @{ zh = '6. 告警 —— 需要人工确认的问题'
-                        en = '6. Warnings — things that need a human decision' }
-    'sec.summary'  = @{ zh = '汇总'; en = 'Summary' }
-    'sec.timing'   = @{ zh = '性能分解 —— 各阶段耗时'; en = 'Timing — per-stage cost' }
-
-    'no.decl'      = @{ zh = '（未发现任何 mise.toml / .tool-versions 声明）'
-                        en = '(no mise.toml / .tool-versions declarations found)' }
-    'no.mise'      = @{ zh = 'mise 未安装（PATH 上找不到）。'
-                        en = 'mise is not installed (not found on PATH).' }
-    'no.managed'   = @{ zh = 'mise 已安装，但尚未纳管任何工具。'
-                        en = 'mise is installed but manages no tools yet.' }
-    'no.conv'      = @{ zh = '（未发现）'; en = '(none found)' }
-    'no.warn'      = @{ zh = '未发现问题。'; en = 'No problems found.' }
-
-    # ---- 各节的短标签 ----
-    'scope.global'  = @{ zh = '[全局]'; en = '[global]' }
-    'scope.project' = @{ zh = '[项目]'; en = '[project]' }
-    'conv.line'     = @{ zh = '{shim} 名称声明 {declared} 实际 {actual} [{state}]'
-                         en = '{shim} declares {declared}, actual {actual} [{state}]' }
-    'state.ok'      = @{ zh = 'OK'; en = 'OK' }
-    'state.bad'     = @{ zh = '不可用'; en = 'not usable' }
-    'inv.count'     = @{ zh = '{tool}  共 {count} 个'; en = '{tool}  {count} found' }
-    'inv.note'      = @{ zh = '                     [{flags}]'; en = '                     [{flags}]' }
-    'res.hits'      = @{ zh = '{command} -> {path}  ({version})  [{hits} 个 PATH 命中]'
-                         en = '{command} -> {path}  ({version})  [{hits} PATH hits]' }
-    'res.line'      = @{ zh = '{command} -> {path}  ({version})'
-                         en = '{command} -> {path}  ({version})' }
-    'res.stub'      = @{ zh = '^ 警告：实测无法执行（应用执行别名的目标未安装，运行 --version 无输出、退出码 9009）'
-                         en = '^ warning: cannot actually run (app-execution alias whose target app is missing; --version gives no output, exit 9009)' }
-
-    # ---- 汇总 ----
-    'sum.runtimes' = @{ zh = '发现的运行时/工具条目数: {count}'; en = 'Runtime/tool entries found: {count}' }
-    'sum.byTool'   = @{ zh = '{tool}  {count} 个版本: {versions}'
-                        en = '{tool}  {count} versions: {versions}' }
-    'sum.placement'= @{ zh = '位置分布: {text}'; en = 'Placement: {text}' }
-    'sum.root'     = @{ zh = '规范根:   {root}'; en = 'Canonical root: {root}' }
-    'sum.warnings' = @{ zh = '告警数量: {count}'; en = 'Warnings: {count}' }
-    'sum.shell'    = @{ zh = '脚本可验证性: .ps1 可运行 ; bash = {bash} ; docker = {docker}'
-                        en = 'Shell script checkability: .ps1 runs here ; bash = {bash} ; docker = {docker}' }
-    'sum.docker'   = @{ zh = '.sh 语法校验: docker run --rm -v "${PWD}:/w" -w /w bash:latest sh -c "bash -n scripts/*.sh"'
-                        en = '.sh syntax check: docker run --rm -v "${PWD}:/w" -w /w bash:latest sh -c "bash -n scripts/*.sh"' }
-    'timing.line'  = @{ zh = '{phase}: {ms} ms'; en = '{phase}: {ms} ms' }
-    'timing.total' = @{ zh = '合计'; en = 'total' }
-
-    # ---- 各阶段显示名（Measure-Phase 传入的键）----
-    'lbl.0. PATH 索引'          = @{ zh = '0. PATH 索引'; en = '0. PATH index' }
-    'lbl.1. 声明层'             = @{ zh = '1. 声明层'; en = '1. Declarations' }
-    'lbl.2. mise 纳管层'        = @{ zh = '2. mise 纳管层'; en = '2. Managed (mise)' }
-    'lbl.3. 约定层（命名 shim）' = @{ zh = '3. 约定层（命名 shim）'; en = '3. Conventions (shims)' }
-    'lbl.4a. 候选根目录'        = @{ zh = '4a. 候选根目录'; en = '4a. Candidate roots' }
-    'lbl.4b. 定向探测运行时'    = @{ zh = '4b. 定向探测运行时'; en = '4b. Targeted probing' }
-    'lbl.4c. 深度扫描（-Deep）' = @{ zh = '4c. 深度扫描（-Deep）'; en = '4c. Deep scan (-Deep)' }
-    'lbl.5. 解析层'             = @{ zh = '5. 解析层'; en = '5. Resolution' }
-    'lbl.6. 汇总告警'           = @{ zh = '6. 汇总告警'; en = '6. Warnings' }
-
-    # ---- 位置 / 来源的显示名（脚本内部值保持不变，只在显示时映射）----
-    'lbl.托管'       = @{ zh = '托管'; en = 'managed' }
-    'lbl.宿主'       = @{ zh = '宿主'; en = 'bundled with IDE' }
-    'lbl.公认'       = @{ zh = '公认'; en = 'standard location' }
-    'lbl.规范根'     = @{ zh = '规范根'; en = 'canonical root' }
-    'lbl.游离'       = @{ zh = '游离'; en = 'stray' }
-    'lbl.游离位置'   = @{ zh = '游离位置'; en = 'stray location' }
-    'lbl.不可用'     = @{ zh = '不可用'; en = 'not usable' }
-    'lbl.系统安装'   = @{ zh = '系统安装'; en = 'system install' }
-    'lbl.IDE 内置'   = @{ zh = 'IDE 内置'; en = 'bundled with IDE' }
-    'lbl.自定义位置' = @{ zh = '自定义位置'; en = 'custom location' }
-    'lbl.版本管理器' = @{ zh = '版本管理器'; en = 'version manager' }
-    'lbl.conda'      = @{ zh = 'conda'; en = 'conda' }
-    'lbl.mise'       = @{ zh = 'mise'; en = 'mise' }
-    'lbl.scoop'      = @{ zh = 'scoop'; en = 'scoop' }
-    'lbl.chocolatey' = @{ zh = 'chocolatey'; en = 'chocolatey' }
-    'lbl.homebrew'   = @{ zh = 'homebrew'; en = 'homebrew' }
-
-    # ---- 告警文案：message 说"发生了什么"，action 说"该怎么办" ----
-    'warn.STUB.message' = @{
-        zh = "命令 '{command}' 解析到 '{path}'，实测无法执行（运行 --version 无输出、退出码 9009）。这类文件是 Windows 应用执行别名，目标应用没装时执行会静默失败，而 Get-Command / where.exe 都会把它当成可用命令。"
-        en = "'{command}' resolves to '{path}', which cannot actually run (probing --version gives no output, exit code 9009). This is a Windows app-execution alias: when the target app is missing the call fails silently, yet Get-Command and where.exe both list it as usable." }
-    'warn.STUB.action' = @{
-        zh = '换用其它命令，或安装该别名对应的应用'
-        en = 'Use another command, or install the app behind the alias' }
-
-    'warn.PATH_ORDER.message' = @{
-        zh = "声明要求 {tool} {wanted}（{file}），mise 也装有 {have}，但 '{command}' 解析到 '{path}'（{version}）。未激活 mise 的场景（cmd、图形程序、IDE 任务、-NoProfile 脚本）会用到错版本；根因是 PATH 组合顺序，不是运行时本身有问题。"
-        en = "'{file}' asks for {tool} {wanted} and mise has {have}, but '{command}' resolves to '{path}' ({version}). Contexts without mise activation (cmd, GUI apps, IDE tasks, -NoProfile scripts) get the wrong version — the root cause is PATH ordering, not the runtime itself." }
-    'warn.PATH_ORDER.action' = @{
-        zh = '交互式会话里 mise activate 会把 shims 前置来救场；要让所有场景都对，需要把 shims 放到用户级 PATH 首位（bootstrap 会做），机器级条目（如 Oracle 的 javapath）需要管理员权限调整或让位'
-        en = 'mise activate prepends the shims inside interactive sessions; to fix every context, put the shims first on the user PATH (bootstrap does this) — machine-level entries such as Oracle javapath need admin rights to change' }
-
-    'warn.SHADOWED.message' = @{
-        zh = "'{tool}' 在磁盘上有 {total} 个副本，其中 {hidden} 个不在 PATH 上，无法被直接调用。被遮蔽的位置见下。"
-        en = "'{tool}' exists {total} times on disk; {hidden} cannot be reached through PATH (the hidden copies are listed below)." }
-    'warn.SHADOWED.action' = @{
-        zh = '要固定用某一版就写进声明文件；不要靠 PATH 顺序记住它'
-        en = 'Pin the version you want in a declaration file instead of relying on PATH order' }
-
-    'warn.CONVENTION.message' = @{
-        zh = "发现自定义命名约定 '{shim}'（文件名里声明版本 {declared}，实际 {actual}）。这类约定不在任何标准里，必须写进声明文件否则会失传。"
-        en = "Found a naming convention: '{shim}' (the filename claims {declared}, the binary is actually {actual}). Conventions that live only in a filename are invisible to every tool — record it in a declaration file or it will be lost." }
-    'warn.CONVENTION.action' = @{
-        zh = '把这条约定登记到声明文件（mise.toml / .tool-versions）'
-        en = 'Record it in a declaration file (mise.toml / .tool-versions)' }
-
-    'warn.PATH_DIRT.message' = @{
-        zh = '用户级 PATH 里有{parts}。它们不改变解析结果，但会挤占 PATH 长度上限，并让「改了却没生效」这类问题更难查。'
-        en = 'The user PATH contains {parts}. They do not change resolution, but they eat into the PATH length limit and hide “I changed it but nothing took effect” problems.' }
-    'warn.PATH_DIRT.action' = @{
-        zh = '清理这些条目（重复条目可以直接删掉）'
-        en = 'Clean them up (duplicate entries can simply be dropped)' }
-    'dirt.dupes'  = @{ zh = '重复条目 {n} 条'; en = 'duplicate entries: {n}' }
-    'dirt.quoted' = @{ zh = '带引号的条目 {n} 条'; en = 'quoted entries: {n}' }
-    'dirt.join'   = @{ zh = '、'; en = ' and ' }
-
-    'warn.DRIFT.message' = @{
-        zh = '部署的全局声明（{deployed}）与仓库模板不一致。模板代表这台机器想要的状态，漂移意味着模板里新加的工具永远不会被安装。'
-        en = 'The deployed machine manifest ({deployed}) differs from the repo template. The template is the state this machine wants; while they drift, tools added to the template are never installed.' }
-    'warn.DRIFT.action' = @{
-        zh = '刷新: scripts/bootstrap.ps1 -RefreshConfig（会先备份）'
-        en = 'Refresh it: scripts/bootstrap.ps1 -RefreshConfig (backs up first)' }
-    'drift.onlyTpl' = @{ zh = '模板有而部署副本没有: {keys}'; en = 'in the template but not deployed: {keys}' }
-    'drift.onlyDep' = @{ zh = '部署副本有而模板没有: {keys}'; en = 'deployed but not in the template: {keys}' }
-    'drift.sameKeys'= @{ zh = '[tools] 的键相同，但内容有差异（版本或注释不同）'
-                         en = 'same [tools] keys, different content (versions or comments)' }
-    'drift.join'    = @{ zh = '；'; en = '; ' }
-
-    'warn.XDG_SHIFT.message' = @{
-        zh = "本机设置了 XDG_CONFIG_HOME={xdg}，mise 的全局配置目录会跟着搬到这里（{config}）。后果是 ~/.config/mise/config.toml 不再是全局配置，而是「从工作目录向上发现」的配置——工作目录不在用户目录之下时它不生效。"
-        en = 'XDG_CONFIG_HOME={xdg} is set, so mise moves its global config directory to {config}. As a result ~/.config/mise/config.toml is no longer the global config: it becomes a config discovered by walking up from the working directory, and has no effect outside the home tree.' }
-    'warn.XDG_SHIFT.action' = @{
-        zh = '要么去掉这个变量（推荐，机器声明就写在 ~/.config/mise/config.toml），要么把声明迁到 {config}'
-        en = 'Either unset the variable (recommended: the manifest lives in ~/.config/mise/config.toml) or move the manifest to {config}' }
-
-    'warn.STRAY.message' = @{
-        zh = '有 {count} 个工具/运行时放在非规范位置，且没有任何管理器纳管它们。它们只靠 PATH 被找到——PATH 一变就失传。建议登记到声明文件；今后新装的工具请落在 {root}。'
-        en = '{count} tool(s)/runtime(s) sit outside the canonical root and are tracked by no manager. They are reachable only through PATH, so a PATH change loses them. Record them in a declaration file; install future tools under {root}.' }
-    'warn.STRAY.action' = @{
-        zh = '登记它们（不要搬动路径：路径可能被项目配置或 IDE 写死）'
-        en = 'Record them — do not move the paths (project config or IDEs may hard-code them)' }
-
-    'warn.UNDECLARED.message' = @{
-        zh = '当前目录的 package.json 要求 node {wanted}，但没有任何工具读得到的声明文件。engines 只在版本不符时给警告，不会切换版本——这就是当初需要 node22.cmd 那类私有约定的原因。'
-        en = "This directory's package.json asks for node {wanted}, but no tool can read a declaration here. engines only warns on mismatch; it never switches versions — which is why private conventions like node22.cmd existed." }
-    'warn.UNDECLARED.action' = @{
-        zh = '在项目根目录建 mise.toml（[tools] node = "22"）或 .tool-versions（nodejs 22）；之后 cd 进项目会自动用对版本'
-        en = 'Add mise.toml ([tools] node = "22") or .tool-versions (nodejs 22) at the project root; from then on cd-ing in selects the right version' }
-
-    'warn.MISSING.message' = @{
-        zh = "声明文件 '{file}' 要求 {tool} {wanted}，但本机没有发现它——既不在 PATH 上，也没有被任何管理器纳管。"
-        en = "'{file}' asks for {tool} {wanted}, but it was not found on this machine — not on PATH, and not managed by anything." }
-    'warn.MISSING.action' = @{
-        zh = '执行 mise install 把它装上（新机器可直接跑 scripts/bootstrap.ps1）'
-        en = 'Install it with mise install (on a new machine, just run scripts/bootstrap.ps1)' }
-
-    'warn.NO_MISE.message' = @{
-        zh = '本机未安装 mise。运行时只能靠 PATH 解析，无法按项目自动切换版本。'
-        en = 'mise is not installed. Runtimes can only be resolved through PATH, so per-project version switching is unavailable.' }
-    'warn.NO_MISE.action' = @{
-        zh = '执行 scripts/bootstrap.ps1（Windows）或 scripts/bootstrap.sh（Unix）建立声明式层'
-        en = 'Run scripts/bootstrap.ps1 (Windows) or scripts/bootstrap.sh (Unix) to set up the declarative layer' }
+# 文案表放在同目录的 census-text.tsv（key<TAB>lang<TAB>text），与 census.sh 共用一份。
+# 用 ReadAllText + 显式 UTF8 读：Windows PowerShell 5.1 的 Get-Content 默认按 ANSI 代码页读，
+# 英文系统上中文会读坏。sh: 前缀的行是 census.sh 专用的，跳过；ps1: 前缀的行覆盖同名的无前缀行。
+# 文件缺失直接失败：静默退化成键名会让 -Json 的 message/action 全部变成 warn.XXX.message。
+$script:TextPath = Join-Path $PSScriptRoot 'census-text.tsv'
+if (-not [IO.File]::Exists($script:TextPath)) {
+    [Console]::Error.WriteLine("[census] 找不到文案表 $($script:TextPath)（census-text.tsv 必须与 census.ps1 放在同一目录）")
+    exit 2
 }
+$script:Text = @{}
+$overridden = New-Object System.Collections.Generic.HashSet[string]
+foreach ($line in ([IO.File]::ReadAllText($script:TextPath, [Text.Encoding]::UTF8) -split "`n")) {
+    $line = $line.TrimEnd("`r")
+    if ($line.Length -eq 0 -or $line.StartsWith('#')) { continue }
+    $parts = $line -split "`t", 3
+    if ($parts.Count -lt 3) { continue }
+    $key = $parts[0]
+    if ($key.StartsWith('sh:')) { continue }
+    $isOverride = $key.StartsWith('ps1:')
+    if ($isOverride) { $key = $key.Substring(4) }
+    if (-not $script:Text.ContainsKey($key)) { $script:Text[$key] = @{} }
+    if ($isOverride) {
+        $script:Text[$key][$parts[1]] = $parts[2]
+        [void]$overridden.Add("$key|$($parts[1])")
+    } elseif (-not $overridden.Contains("$key|$($parts[1])")) {
+        $script:Text[$key][$parts[1]] = $parts[2]
+    }
+}
+Remove-Variable -Name line, parts, key, isOverride, overridden -ErrorAction SilentlyContinue
 
 # 取一条文案并用 facts 替换 {占位符}。缺失的键返回键名本身，
 # 这样漏翻译会立刻在输出里露出来，而不是静默变成空白。
