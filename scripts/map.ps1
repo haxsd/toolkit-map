@@ -108,7 +108,8 @@ $Recipes = (ConvertTo-HashtableDeep ([IO.File]::ReadAllText((Join-Path $PSScript
 # 并明确告知使用者——不静默降级，也不写任何系统设置：
 #   · 宿主是 Windows PowerShell 5.1：PowerShell 7 的网络命令基于 HttpClient，
 #     ServicePointManager 对它不起作用，重试只会重复同一个错误，所以不重试；
-#   · 本进程确实开着吊销检查：已经关着时再"关一次"毫无意义，失败说明是别的信任问题；
+#   · 本进程确实开着吊销检查（.NET Framework 默认是关着的，只有被显式打开时才会因吊销失败）：
+#     已经关着时再"关一次"毫无意义，失败说明是别的信任问题；
 #   · 错误信息指向信任关系/吊销，而不是笼统的 SSL/TLS/certificate 字样。
 # 其他错误（404、超时、证书过期或域名不符、校验失败……）原样抛出。
 $RevocationErrorPattern = '(?i)trust relationship|信任关系|revocation|吊销|CRYPT_E_REVOCATION|OfflineRevocation|RevocationStatusUnknown'
