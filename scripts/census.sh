@@ -69,6 +69,33 @@ if [ ! -f "$TEXT_FILE" ]; then
   exit 2
 fi
 
+# 扫描数据（探测相对路径、候选根目录、解析命令表、约定命令名）放在同目录的 census-data.tsv，
+# 与 census.ps1 共用一份；每行 kind<TAB>os<TAB>value，本脚本取 os 为 unix 或 all 的行，按文件顺序。
+# 缺表或缺必需的 kind 都直接失败：静默退化成空列表会让扫描"成功"地什么都找不到。
+DATA_FILE="$SCRIPT_DIR/census-data.tsv"
+if [ ! -f "$DATA_FILE" ]; then
+  echo "[census] 找不到扫描数据表 ${DATA_FILE}（census-data.tsv 必须与 census.sh 放在同一目录）" >&2
+  exit 2
+fi
+# 输出某个 kind 的值，一行一个。先去掉行尾的 \r（防 CRLF），再按 TAB 切分。
+data_list() {
+  awk -F'\t' -v k="$1" '{ sub(/\r$/, "") } /^#/ || NF != 3 { next } $1 == k && ($2 == "unix" || $2 == "all") { print $3 }' "$DATA_FILE"
+}
+for _kind in probe-rel conda-dir conda-rel root resolve convention convention-skip; do
+  if [ -z "$(data_list "$_kind")" ]; then
+    echo "[census] 扫描数据表 ${DATA_FILE} 缺少 ${_kind} 行（os 为 unix 或 all）" >&2
+    exit 2
+  fi
+done
+# 下面这些列表按空白切分使用（与原来写死在 for 循环里的词表一致），值里不能有空格。
+PROBE_RELS="$(data_list probe-rel | tr '\n' ' ')"
+CONDA_DIRS="$(data_list conda-dir | tr '\n' ' ')"
+CONDA_RELS="$(data_list conda-rel | tr '\n' ' ')"
+RESOLVE_CMDS="$(data_list resolve | tr '\n' ' ')"
+# 约定命令名拼成正则的分支：a|b|c
+CONV_NAMES="$(data_list convention | tr '\n' '|')"; CONV_NAMES="${CONV_NAMES%|}"
+CONV_SKIP="$(data_list convention-skip | tr '\n' '|')"; CONV_SKIP="${CONV_SKIP%|}"
+
 # 取一条文案并用 k=v 参数替换 {占位符}。缺失的键返回键名本身，
 # 这样漏翻译会立刻在输出里露出来，而不是静默变成空白。
 # 查找顺序：sh: 前缀的本实现专用文案 > 无前缀文案；当前语言 > 任意语言（文件里 zh 在前）。
@@ -516,9 +543,9 @@ scan_conventions() {
       # 去掉常见可执行后缀
       base="${base%.exe}"; base="${base%.cmd}"; base="${base%.bat}"
       base="${base%.ps1}"; base="${base%.sh}"
-      if printf '%s' "$base" | grep -qiE '^(node|nodejs|npm|npx|pnpm|yarn|python|python3|py|pip|uv|java|javac|mvn|gradle|go|cargo|rustc|deno|bun|dotnet|php|ruby)([-_]?v?)[0-9]+(\.[0-9]+){0,3}$'; then
+      if printf '%s' "$base" | grep -qiE "^(${CONV_NAMES})([-_]?v?)[0-9]+(\\.[0-9]+){0,3}\$"; then
         # python3 / python3.12 / pip3 是跨平台公认的名字，不算本地私有约定
-        if printf '%s' "$base" | grep -qiE '^(python|pip)[23](\.[0-9]+){0,2}$'; then continue; fi
+        if printf '%s' "$base" | grep -qiE "^(${CONV_SKIP})[23](\\.[0-9]+){0,2}\$"; then continue; fi
         f="$dir/$base"
         # 后缀被剥掉了，回到真实文件名要按候选后缀逐个试
         [ -e "$f" ] || {
@@ -556,7 +583,7 @@ scan_conventions() {
         add_conv "$base" "$decl" "$actual" "$target" "$ok"
       fi
     done <<EOF
-$(ls -1 "$dir" 2>/dev/null | grep -iE '^(node|nodejs|npm|npx|pnpm|yarn|python|python3|py|pip|uv|java|javac|mvn|gradle|go|cargo|rustc|deno|bun|dotnet|php|ruby)[-_]?v?[0-9]' | head -n 200)
+$(ls -1 "$dir" 2>/dev/null | grep -iE "^(${CONV_NAMES})[-_]?v?[0-9]" | head -n 200)
 EOF
   done
   # 外层循环用换行分隔目录列表（去重后的 path_dirs 是换行拼的），
@@ -604,52 +631,43 @@ probe_root() {
   [ -d "$root" ] || return 0
   # 记下这棵树的起点，probe_path 会把它写进记录的 root 字段
   CUR_ROOT="$root"
-  for rel in node.exe bin/node python.exe bin/python bin/python3 Scripts/python.exe \
-             java.exe bin/java jbr/bin/java jre/bin/java; do
+  for rel in $PROBE_RELS; do
     probe_path "$root/$rel"
   done
   # 第二层：直接子目录。覆盖版本号目录与 IDE 安装目录两种布局。
   local d
   for d in "$root"/*/; do
     [ -d "$d" ] || continue
-    for rel in node.exe bin/node python.exe bin/python bin/python3 Scripts/python.exe \
-               java.exe bin/java jbr/bin/java jre/bin/java; do
+    for rel in $PROBE_RELS; do
       probe_path "${d%/}/$rel"
     done
   done
   # conda 专门处理
-  for envdir in envs env; do
+  for envdir in $CONDA_DIRS; do
     [ -d "$root/$envdir" ] || continue
     for d in "$root/$envdir"/*/; do
       [ -d "$d" ] || continue
-      probe_path "${d%/}/python.exe"
-      probe_path "${d%/}/bin/python"
+      for rel in $CONDA_RELS; do
+        probe_path "${d%/}/$rel"
+      done
     done
   done
 }
 
 MISE_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/mise"
+# 静态候选根目录来自 census-data.tsv（kind = root）。{HOME} / {MISE_DATA} 在这里展开，
+# 拼成换行分隔的字符串，下面仍用原来的 `for r in $CANDIDATE_ROOTS` 逐个探测（行为不变）。
 CANDIDATE_ROOTS="
-$HOME/.nvm/versions/node
-$HOME/.fnm
-$HOME/.local/share/fnm
-$HOME/.volta/tools/image
-$HOME/.asdf
-$MISE_DATA
-$HOME/.pyenv/versions
-$HOME/miniconda3
-$HOME/anaconda3
-$HOME/miniforge3
-$HOME/.local/bin
-$HOME/.cargo/bin
-/opt/homebrew/opt
-/usr/local/opt
-/usr/local
-/opt
-/Library/Java/JavaVirtualMachines
-/Applications/Android Studio.app/Contents/jbr
-$HOME/Applications
 "
+while IFS= read -r _root; do
+  [ -n "$_root" ] || continue
+  _ph='{HOME}'; _root="${_root//$_ph/$HOME}"
+  _ph='{MISE_DATA}'; _root="${_root//$_ph/$MISE_DATA}"
+  CANDIDATE_ROOTS="${CANDIDATE_ROOTS}${_root}
+"
+done <<EOF
+$(data_list root)
+EOF
 # 候选根目录在本脚本里只是一张静态清单（census.ps1 要查注册表/盘符才会有可观的耗时），
 # 单独打一个点是为了让两边的阶段键一一对应：roots / probe / deep-scan。
 tick '4a. 候选根目录'
@@ -756,7 +774,8 @@ probe_cmd() {
 # 固定列表只是"默认值得看一眼的常见命令"；声明里点名的工具也一并解析，
 # 因为这个套件面向的是【所有工具】，不是只认语言的运行时。
 DECLARED_CMDS="$(declared_tools | awk -F'|' '{print $1}' | sort -u | tr '\n' ' ')"
-for c in node npm npx pnpm yarn python python3 py pip uv java javac mvn gradle go cargo rustc deno bun dotnet mise $DECLARED_CMDS; do
+# 默认命令表来自 census-data.tsv（kind = resolve）
+for c in $RESOLVE_CMDS $DECLARED_CMDS; do
   probe_cmd "$c"
 done
 tick '5. 解析层'

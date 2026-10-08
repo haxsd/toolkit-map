@@ -9,6 +9,8 @@ $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repo 'scri
 foreach ($definition in $ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $false)) {
     if ($definition.Name -in @('Get-Resolution', 'Get-FirstLine', 'Get-RuntimeVersion')) { Invoke-Expression $definition.Extent.Text }
 }
+# Get-Resolution 的默认命令表来自 census-data.tsv（census.ps1 在顶层加载，这里单独抽函数运行，要自己加载）。
+$script:CensusData = Read-ToolkitDataTable -Path (Join-Path $repo 'scripts\census-data.tsv') -Os 'win'
 function Resolve-CommandInPath { param($Index, $Name, $Exts, $DirCount) if ($Name -eq 'node') { 'C:\fixture\custom-data\shims\node.exe' } }
 function Get-FileLength { param($Path) return 512 }
 function Test-FileQuick { param($Path) throw 'shim 被交给了文件/执行探测器' }
