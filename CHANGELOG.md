@@ -2,6 +2,9 @@
 
 ## 未发布
 
+- 版本比较不再使用定长整数：日期型构建号等超长数字段（如 `1.2.20240101123456`）不会再让 find 或扫描抛异常；census.ps1 的声明比较同步修复。
+- 预发布处理统一：semver 的 `-rc.1` 与 Python 的 `3.12.0rc1`、`a2`、`.dev0` 等都视为预发布，只在完整精确匹配时满足要求（此前 `3.12.0rc1` 会被当成满足 `3.12`）。
+- 默认候选排序改用版本排序键：单段版本（`22`）、超长数字段按数值排序，同号正式版优先于预发布；新增表驱动的 tests/version-contract.ps1，由 map-contract 在 PowerShell 5.1 与 7 下调用执行。
 - 版本号唯一来源改为根目录 `VERSION`：`help` 读取它，check-docs 校验 README/接入指南中的稳定标签与 CHANGELOG 最新版本一致。
 - `map.ps1` 关闭进度条输出，Windows PowerShell 5.1 下载 portable 归档不再被进度刷新拖慢。
 - `install -Via winget`：工具名按其他动作规范化并校验，包 ID 不能以 `-` 开头；只把本次安装后新出现的文件标注为 winget 安装，同名旧文件不冒充，多个新文件时不猜测；新建地图直接使用 v2 结构，去掉被 Save-Map 覆盖的无效首选赋值；也搜索用户级 `%LOCALAPPDATA%\Programs`。

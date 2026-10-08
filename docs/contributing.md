@@ -24,6 +24,7 @@
 | tests/map-smoke.ps1 | 失效路径修复、版本 stderr、安装失败和拒绝覆盖 |
 | tests/map-contract.ps1 | 动态项目选择、验证状态、重扫保留、查询缓存、并发、接入和 JSON |
 | tests/install-contract.ps1 | portable 暂存、校验、版本验证、回滚、已有副本复用与 winget 兜底登记 |
+| tests/version-contract.ps1 | 版本要求比较、预发布、超长数字段与候选排序（表驱动，map-contract 会调用） |
 | tests/scan-guards.ps1 | 扫描解析层和底层执行器都跳过 shim |
 | tests/parity.ps1 | 两个扫描内核在同一沙箱识别相同问题 |
 | tests/verify-shell.ps1 | .sh 语法 |
