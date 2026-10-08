@@ -37,6 +37,7 @@ try {
     $scripts = Join-Path $scratch 'product\scripts'
     [void][IO.Directory]::CreateDirectory($scripts)
     foreach ($name in @('map.ps1', 'map-core.ps1', 'toolkit-common.ps1', 'tools.json')) { Copy-Item -LiteralPath (Join-Path (Join-Path $repo 'scripts') $name) -Destination $scripts }
+    Copy-Item -LiteralPath (Join-Path $repo 'VERSION') -Destination (Join-Path $scratch 'product')
     $mapScript = Join-Path $scripts 'map.ps1'
     $mapFile = Join-Path $scratch 'map.json'
     $project = Join-Path $scratch 'project'
@@ -53,6 +54,8 @@ param([switch]$Json)
 '{"schemaVersion":1,"runtimes":[],"declarations":[],"warnings":[]}'
 '@
     [IO.File]::WriteAllText((Join-Path $scripts 'census.ps1'), $fakeCensus, (New-Object Text.UTF8Encoding $true))
+    $r = Run-Map @('help')
+    Assert ($r.code -eq 0 -and $r.value.version -eq ([IO.File]::ReadAllText((Join-Path $repo 'VERSION'))).Trim()) 'help 的版本必须来自 VERSION'
     $r = Run-Map @('scan'); Assert ($r.code -eq 0) '当前 PowerShell 宿主下 scan 应成功'
     $scanTime = $r.value.scannedAt
     $one = Fake-Tool (Join-Path $scratch 'node16') 'node' '16.20.2'

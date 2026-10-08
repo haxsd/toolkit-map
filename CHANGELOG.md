@@ -2,6 +2,9 @@
 
 ## 未发布
 
+- 版本号唯一来源改为根目录 `VERSION`：`help` 读取它，check-docs 校验 README/接入指南中的稳定标签与 CHANGELOG 最新版本一致。
+- `map.ps1` 关闭进度条输出，Windows PowerShell 5.1 下载 portable 归档不再被进度刷新拖慢。
+- `install -Via winget`：工具名按其他动作规范化并校验，包 ID 不能以 `-` 开头；只把本次安装后新出现的文件标注为 winget 安装，同名旧文件不冒充，多个新文件时不猜测；新建地图直接使用 v2 结构，去掉被 Save-Map 覆盖的无效首选赋值；也搜索用户级 `%LOCALAPPDATA%\Programs`。
 - 扫描与探测不再经由脚本型启动器间接执行 shim：npm/npx/pnpm/yarn/corepack 的 `#!/usr/bin/env node` 或"同目录没有 node 就走 PATH"会落到 PATH 上的 node shim。census.sh、census.ps1 与地图探测共用同一套规则，解释器不安全时只登记路径、不执行；smoke.sh 自带假启动器复现该场景。
 - 修复 PowerShell 7 在非 UTC 时区下每次 find 都重新探测候选并重写 map.json / map.md：modifiedAt 统一按 UTC ticks 比较，5.1 与 7 行为一致；map-contract 增加连续查询不探测、不写盘的断言。
 
