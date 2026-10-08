@@ -135,6 +135,24 @@ param([switch]$Json)
     Assert ($r.code -eq 0) 'Java 完整旧版本号应精确匹配'
     $r = Run-Map @('find', 'java', '-Version', 'zulu-8', '-Project', $project, '-SkipScan')
     Assert ($r.code -ne 0) '不能把其他发行版当成满足'
+    # 连续查询命中缓存：PS7 的 ConvertFrom-Json 会把 modifiedAt 转成 DateTime，比较必须与 5.1 一致，
+    # 否则非 UTC 时区下每次 find 都会重新执行候选并重写地图文件。
+    $probeLog = Join-Path $scratch 'cache-probes.log'
+    $cacheDir = Join-Path $scratch 'cache-tool'; [void][IO.Directory]::CreateDirectory($cacheDir)
+    $cacheTool = Join-Path $cacheDir 'cachetool.cmd'
+    [IO.File]::WriteAllText($cacheTool, "@echo off`r`necho probe>>`"$probeLog`"`r`necho cachetool 1.2.3`r`nexit /b 0`r`n", [Text.Encoding]::ASCII)
+    $r = Run-Map @('add', 'cachetool', '-Path', $cacheTool)
+    Assert ($r.code -eq 0 -and $r.value.verification -eq 'verified') "缓存测试工具登记失败：$($r.output -join '`n')"
+    $mdFile = [IO.Path]::ChangeExtension($mapFile, '.md')
+    $snapshot = { @(@($mapFile, $mdFile) | ForEach-Object { (Get-Item -LiteralPath $_).LastWriteTimeUtc.Ticks; (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash }) -join '|' }
+    $probesBefore = @(Get-Content -LiteralPath $probeLog).Count
+    $filesBefore = & $snapshot
+    for ($i = 0; $i -lt 2; $i++) {
+        $r = Run-Map @('find', 'cachetool', '-Project', $project, '-SkipScan')
+        Assert ($r.code -eq 0 -and $r.value.path -eq $cacheTool) "缓存测试 find 失败：$($r.output -join '`n')"
+    }
+    Assert (@(Get-Content -LiteralPath $probeLog).Count -eq $probesBefore) "文件未变时连续 find 不得重新探测（PowerShell $($PSVersionTable.PSVersion)）"
+    Assert ((& $snapshot) -eq $filesBefore) "文件未变时连续 find 不得重写 map.json / map.md（PowerShell $($PSVersionTable.PSVersion)）"
     # 并发登记：必须同时保留所有进程的结果。
     $processes = @()
     for ($i = 0; $i -lt 4; $i++) {
@@ -156,7 +174,7 @@ param([switch]$Json)
     [IO.File]::WriteAllText($mapFile, '{broken')
     $r = Run-Map @('add', 'node', '-Path', $one)
     Assert ($r.code -ne 0 -and $r.value.status -eq 'map_corrupt' -and [IO.File]::ReadAllText($mapFile) -eq '{broken') '损坏地图不能被当成空地图覆盖'
-    Write-Host '[通过] 项目选择、探测护栏、持久化、并发与首次接入契约'
+    Write-Host '[通过] 项目选择、探测护栏、持久化、查询缓存、并发与首次接入契约'
 } finally {
     foreach ($name in $original.Keys) { [Environment]::SetEnvironmentVariable($name, $original[$name], 'Process') }
     $resolved = [IO.Path]::GetFullPath($scratch)

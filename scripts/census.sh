@@ -347,6 +347,60 @@ is_shim_path() {
   return 1
 }
 
+# 脚本型启动器（npm/npx/pnpm/yarn/corepack，含 npm22 这类约定名）本身不是 shim，
+# 但执行它时会再去调用 node：`#!/usr/bin/env node` 直接走 PATH；npm 的 sh/cmd 启动器
+# 优先用同目录的 node，没有才走 PATH。PATH 上的 node 恰好是 shim 时，
+# "探测启动器的版本"就等于执行了 shim（实测：/usr/bin/npm 会经由 env 执行 mise 的 node shim）。
+is_node_launcher_name() {
+  local b
+  b="$(basename "$1" | tr 'A-Z' 'a-z')"
+  b="${b%.exe}"; b="${b%.cmd}"; b="${b%.bat}"; b="${b%.ps1}"; b="${b%.sh}"
+  printf '%s' "$b" | grep -qE '^(npm|npx|pnpm|pnpx|yarn|yarnpkg|corepack)([-_]?v?[0-9]+(\.[0-9]+){0,3})?$'
+}
+
+# 读出 #! 行（不含 #!）；不是脚本时输出空串。只读前 256 字节，二进制文件也安全。
+read_shebang() {
+  head -c 256 "$1" 2>/dev/null | tr -d '\000' | head -n1 | tr -d '\r' | sed -n 's/^#!//p'
+}
+
+# 执行这个文件做版本探测是否安全：它自己不是 shim，它的解释器（#! 行，env 按 PATH 解析）
+# 也不是 shim；node 启动器实际会用的 node 也必须安全。解析不出解释器时宁可不执行。
+# 与 toolkit-common.ps1 的 Test-ToolkitProbeSafe 保持同一套规则。
+probe_safe() {
+  local p="$1" depth="${2:-0}" sb interp node w is_script=""
+  local -a words
+  [ -n "$p" ] || return 1
+  [ "$depth" -le 3 ] || return 1
+  is_shim_path "$p" && return 1
+  sb="$(read_shebang "$p")"
+  if [ -n "$sb" ]; then
+    is_script=1
+    read -r -a words <<< "$sb"
+    [ "${#words[@]}" -gt 0 ] || return 1
+    interp="${words[0]}"
+    if [ "$(basename "$interp")" = "env" ]; then
+      interp=""
+      for w in "${words[@]:1}"; do
+        case "$w" in -*|*=*) continue ;; esac
+        interp="$(type -P "$w" 2>/dev/null || true)"
+        break
+      done
+      [ -n "$interp" ] || return 1
+    fi
+    probe_safe "$interp" $((depth + 1)) || return 1
+  fi
+  case "$p" in *.cmd|*.CMD|*.bat|*.BAT|*.ps1|*.sh) is_script=1 ;; esac
+  if [ -n "$is_script" ] && is_node_launcher_name "$p"; then
+    node=""
+    for w in node node.exe; do
+      if [ -f "$(dirname "$p")/$w" ]; then node="$(dirname "$p")/$w"; break; fi
+    done
+    [ -n "$node" ] || node="$(type -P node 2>/dev/null || true)"
+    probe_safe "$node" $((depth + 1)) || return 1
+  fi
+  return 0
+}
+
 # 带超时地运行命令并捕获 stdout。
 # 为什么需要它：census 是只读诊断工具，不能跟着别的进程卡死——实测 mise 会因为
 # 陈旧的锁或联网自检无限等待，`mise ls` 一挂，整份报告就出不来。
@@ -356,7 +410,7 @@ run_with_timeout() {
   local secs="$1"; shift
   local resolved
   resolved="$(command -v "$1" 2>/dev/null || true)"
-  is_shim_path "$resolved" && return 0
+  probe_safe "$resolved" || return 0
   if command -v timeout >/dev/null 2>&1; then
     MISE_AUTO_UPDATE=0 timeout "$secs" "$@" 2>/dev/null
     return 0
@@ -616,7 +670,7 @@ scan_conventions() {
             ;;
         esac
         actual=""
-        if ! is_shim_path "$target" && [ "$target" != "$f" ]; then
+        if probe_safe "$target" && [ "$target" != "$f" ]; then
         case "$tool" in
           node|npm|npx|pnpm|yarn) actual="$("$target" --version 2>&1 | head -n1 || true)" ;;
           python|pip)             actual="$("$target" --version 2>&1 | head -n1 || true)" ;;
@@ -661,11 +715,14 @@ probe_path() {
     */homebrew/*|*/Cellar/*)      src="homebrew" ;;
     *)                            src="自定义位置" ;;
   esac
+  ver=""
+  if probe_safe "$p"; then
   case "$tool" in
     node)   ver="$("$p" --version 2>/dev/null | head -n1 | sed 's/^v//' || true)" ;;
     python) ver="$("$p" --version 2>/dev/null | head -n1 | sed -E 's/^Python //' || true)" ;;
     java)   ver="$("$p" -version 2>&1 | head -n1 | sed -E 's/.*version "([^"]+)".*/\1/' || true)" ;;
   esac
+  fi
   add_runtime "$tool" "$ver" "$p" "$src" "$(placement_of "$p")" "yes" "$CUR_ROOT" "$CUR_PATTERN"
 }
 
@@ -793,7 +850,8 @@ probe_cmd() {
   hits="$(printf '%s' "$hitlist" | awk -F';' 'NF{print NF}')"
   hitcount="${hits:-1}"
   ver=""
-  if ! is_shim_path "$resolved"; then
+  # 不只看 resolved 本身：npm 一类启动器会经由 #! 或 PATH 再去执行 node（见 probe_safe）。
+  if probe_safe "$resolved"; then
   case "$name" in
     node)   ver="$("$name" --version 2>/dev/null | head -n1 | sed 's/^v//' || true)" ;;
     npm|npx|pnpm|yarn) ver="$("$name" --version 2>/dev/null | head -n1 || true)" ;;

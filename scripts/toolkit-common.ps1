@@ -28,6 +28,75 @@ function Test-ToolkitShimPath {
     return $false
 }
 
+# 脚本型启动器（npm/npx/pnpm/yarn/corepack，含 npm22 这类约定名）本身不是 shim，
+# 但执行它时会再去调用 node：npm.cmd 与 Unix 的 sh 启动器优先用同目录的 node，没有才走 PATH；
+# `#!/usr/bin/env node` 直接走 PATH。PATH 上的 node 恰好是 shim 时，探测启动器版本
+# 就等于执行了 shim。与 census.sh 的 probe_safe 保持同一套规则。
+$script:ToolkitNodeLauncherPattern = '^(npm|npx|pnpm|pnpx|yarn|yarnpkg|corepack)([-_]?v?\d+(\.\d+){0,3})?$'
+
+function Find-ToolkitPathCommand {
+    param([string]$Name)
+    if (-not $Name) { return '' }
+    $exts = @('')
+    if ([IO.Path]::DirectorySeparatorChar -eq '\') {
+        $exts = @("$env:PATHEXT" -split ';' | Where-Object { $_ })
+        if (-not $exts.Count) { $exts = @('.com', '.exe', '.bat', '.cmd') }
+        if ([IO.Path]::GetExtension($Name)) { $exts = @('') + $exts }
+    }
+    foreach ($raw in ("$env:PATH" -split [regex]::Escape([string][IO.Path]::PathSeparator))) {
+        $dir = $raw.Trim().Trim('"')
+        if (-not $dir) { continue }
+        foreach ($ext in $exts) {
+            try { $file = Join-Path $dir ($Name + $ext) } catch { continue }
+            if ([IO.File]::Exists($file)) { return $file }
+        }
+    }
+    return ''
+}
+
+function Get-ToolkitShebang {
+    # 只读前 256 字节；不是 #! 脚本时返回空串。
+    param([string]$Path)
+    $count = 0
+    $buffer = New-Object byte[] 256
+    try {
+        $stream = [IO.File]::OpenRead($Path)
+        try { $count = $stream.Read($buffer, 0, $buffer.Length) } finally { $stream.Dispose() }
+    } catch { return '' }
+    if ($count -lt 3 -or $buffer[0] -ne 0x23 -or $buffer[1] -ne 0x21) { return '' }
+    return (([Text.Encoding]::UTF8.GetString($buffer, 2, $count - 2) -split "`r?`n")[0]).Trim()
+}
+
+function Test-ToolkitProbeSafe {
+    # 执行该文件做版本探测是否安全：自身不是 shim，#! 解释器（env 按 PATH 解析）不是 shim，
+    # node 启动器实际会用的 node 也必须安全。解析不出解释器时宁可不执行。
+    param([string]$Path, [int]$Depth = 0)
+    if (-not $Path -or $Depth -gt 3 -or (Test-ToolkitShimPath $Path)) { return $false }
+    $shebang = Get-ToolkitShebang $Path
+    $isScript = [bool]$shebang -or ([IO.Path]::GetExtension($Path).ToLowerInvariant() -in @('.cmd', '.bat', '.ps1', '.sh'))
+    if ($shebang) {
+        $words = @($shebang -split '\s+' | Where-Object { $_ })
+        if (-not $words.Count) { return $false }
+        $interpreter = $words[0]
+        if ([IO.Path]::GetFileName($interpreter) -eq 'env') {
+            $rest = @($words | Select-Object -Skip 1 | Where-Object { $_ -notmatch '^-' -and $_ -notmatch '=' })
+            $interpreter = if ($rest.Count) { Find-ToolkitPathCommand $rest[0] } else { '' }
+        }
+        if (-not (Test-ToolkitProbeSafe $interpreter ($Depth + 1))) { return $false }
+    }
+    if ($isScript -and [IO.Path]::GetFileNameWithoutExtension($Path) -match $script:ToolkitNodeLauncherPattern) {
+        $node = ''
+        $dir = Split-Path $Path -Parent
+        foreach ($leaf in @('node.exe', 'node')) {
+            $sibling = Join-Path $dir $leaf
+            if ([IO.File]::Exists($sibling)) { $node = $sibling; break }
+        }
+        if (-not $node) { $node = Find-ToolkitPathCommand 'node' }
+        if (-not (Test-ToolkitProbeSafe $node ($Depth + 1))) { return $false }
+    }
+    return $true
+}
+
 function Get-ToolkitCanonicalName {
     param([string]$Name)
     if ($script:ToolCatalog) {

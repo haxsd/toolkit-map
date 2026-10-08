@@ -22,12 +22,12 @@
 | tests/check-encodings.ps1 | .ps1 的 UTF-8 BOM、英文系统解析；.sh 无 BOM |
 | tests/check-docs.ps1 | 中文单语文档与相对链接 |
 | tests/map-smoke.ps1 | 失效路径修复、版本 stderr、安装失败和拒绝覆盖 |
-| tests/map-contract.ps1 | 动态项目选择、验证状态、重扫保留、并发、接入和 JSON |
+| tests/map-contract.ps1 | 动态项目选择、验证状态、重扫保留、查询缓存、并发、接入和 JSON |
 | tests/install-contract.ps1 | portable 暂存、校验、版本验证、回滚与已有副本复用 |
 | tests/scan-guards.ps1 | 扫描解析层和底层执行器都跳过 shim |
 | tests/parity.ps1 | 两个扫描内核在同一沙箱识别相同问题 |
 | tests/verify-shell.ps1 | .sh 语法 |
-| tests/smoke.sh | Unix 扫描、JSON、语言和自定义 shim 护栏 |
+| tests/smoke.sh | Unix 扫描、JSON、语言、自定义 shim 与脚本启动器护栏 |
 
 按改动范围检查；发布前跑全套。map-contract 同时用 PowerShell 5.1 和 7 执行；真实扫描另用临时 -MapFile 验证，不污染本机地图。测试使用假工具、临时目录与独立地图，不安装工具。
 
