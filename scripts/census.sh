@@ -65,7 +65,7 @@ json_escape() {
 # 缺了就直接失败：静默退化成键名会让 --json 的 message/action 全部变成 warn.XXX.message。
 TEXT_FILE="$SCRIPT_DIR/census-text.tsv"
 if [ ! -f "$TEXT_FILE" ]; then
-  echo "[census] 找不到文案表 $TEXT_FILE（census-text.tsv 必须与 census.sh 放在同一目录）" >&2
+  echo "[census] 找不到文案表 ${TEXT_FILE}（census-text.tsv 必须与 census.sh 放在同一目录）" >&2
   exit 2
 fi
 
