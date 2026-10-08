@@ -9,6 +9,7 @@
 | scripts/toolkit-common.ps1 | 地图和 Windows 扫描内核共享的护栏、声明读取 |
 | scripts/tools.json | 命令别名、安装位置提示、探测参数、portable 配方 |
 | scripts/census.ps1 / census.sh | Windows / Unix 扫描内核 |
+| scripts/census-text.tsv | 两个扫描内核共用的中英文案（key、lang、text），必须与脚本同目录 |
 | scripts/bootstrap.ps1 / bootstrap.sh | 可选的 mise 环境配置，会修改机器 |
 | tests/ | 隔离回归测试 |
 | AGENTS.md / SKILL.md | 发现契约与 agent 使用协议 |
@@ -21,6 +22,7 @@
 |---|---|
 | tests/check-encodings.ps1 | .ps1 的 UTF-8 BOM、英文系统解析；.sh 无 BOM |
 | tests/check-docs.ps1 | 中文单语文档、相对链接与 VERSION 版本号一致 |
+| tests/check-text.ps1 | census-text.tsv 格式、每个 key 中英齐全、脚本引用可解析、-Lang en 输出与缺失文案表时失败 |
 | tests/map-smoke.ps1 | 失效路径修复、版本 stderr、安装失败和拒绝覆盖 |
 | tests/map-contract.ps1 | 动态项目选择、验证状态、重扫保留、查询缓存、并发、接入和 JSON |
 | tests/install-contract.ps1 | portable 暂存、校验、版本验证、回滚、已有副本复用、winget 兜底登记与配方官方校验 |

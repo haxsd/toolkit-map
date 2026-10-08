@@ -97,6 +97,22 @@ if grep -qE '^\s+\[CONVENTION\] Found a naming convention' "$FX/out-en.txt"; the
 else
   fail "英文模式的告警正文仍是中文"
 fi
+# 文案来自同目录的 scripts/census-text.tsv：漏查的 key 会原样露出键名
+if grep -qE 'warn\.[A-Z_]+\.(message|action)|(^| )(sec|sum|no)\.[a-zA-Z]+' "$FX/out-en.txt" "$FX/out.txt"; then
+  fail "输出里残留了未解析的文案 key"
+else
+  pass "输出里没有残留的文案 key"
+fi
+# 文案表缺失时必须明确失败（退出码 2 + 提示），而不是把键名当文案输出
+mkdir -p "$FX/no-text"
+cp "$CENSUS" "$FX/no-text/census.sh"
+"$FX/no-text/census.sh" --json > /dev/null 2> "$FX/no-text.err"
+NO_TEXT_CODE=$?
+if [ "$NO_TEXT_CODE" -eq 2 ] && grep -q 'census-text.tsv' "$FX/no-text.err"; then
+  pass "文案表缺失时以退出码 2 失败并指明 census-text.tsv"
+else
+  fail "文案表缺失时没有明确失败（退出码 $NO_TEXT_CODE）"
+fi
 
 # JSON 模式：结构完整 + 可被机器解析。
 # 先确认 python3 真的能跑：有些环境里 `command -v python3` 成功，但它指向一个失效的
