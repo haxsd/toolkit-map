@@ -691,14 +691,15 @@ function Test-VersionSatisfies {
     param([string]$Version, [string]$Wanted)
     if ([string]::IsNullOrWhiteSpace($Wanted)) { return $true }
     if ([string]::IsNullOrWhiteSpace($Version)) { return $false }
-    $actual = @([regex]::Matches($Version, '\d+') | ForEach-Object { [int]$_.Value })
+    # 数字段按去掉前导零的字符串比较，日期型构建号等超长数字不会让 [int] 溢出。
+    $actual = @([regex]::Matches($Version, '\d+') | ForEach-Object { ConvertTo-ToolkitVersionSegment $_.Value })
     if ($actual.Count -eq 0) { return $true }
     foreach ($one in ($Wanted -split '[,;]')) {
         $w = "$one".Trim() -replace '"', ''
         if ([string]::IsNullOrWhiteSpace($w)) { continue }
         if ($w -match '^(?i)(latest|stable|lts|system|any|\*)$') { return $true }
         $w = $w -replace '^[A-Za-z][A-Za-z0-9]*[-_]', ''      # temurin-21 -> 21
-        $want = @([regex]::Matches($w, '\d+') | ForEach-Object { [int]$_.Value })
+        $want = @([regex]::Matches($w, '\d+') | ForEach-Object { ConvertTo-ToolkitVersionSegment $_.Value })
         if ($want.Count -eq 0) { return $true }
         $n = [Math]::Min($want.Count, $actual.Count)
         $ok = $true

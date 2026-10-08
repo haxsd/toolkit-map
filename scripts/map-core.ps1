@@ -306,7 +306,8 @@ function Select-Preferred {
         @{Expression = { if ($_.verification -eq 'verified') { 0 } else { 1 } }},
         @{Expression = { if ($_.source -eq 'warehouse') { 0 } else { 1 } }},
         @{Expression = { if ($_.reachable) { 0 } else { 1 } }}, @{Expression = { $order[$_.source] }},
-        @{Expression = { try { [version](($_.version -replace '[^0-9.]', '').Trim('.')) } catch { [version]'0.0' } }; Descending = $true},
+        # 版本排序键支持单段版本（22）、超长数字段与预发布（正式版优先），不再经由 [version] 转换。
+        @{Expression = { Get-ToolkitVersionSortKey "$($_.version)" }; Descending = $true},
         @{Expression = { $_.path.ToLowerInvariant() }} | Select-Object -First 1
     return $best.id
 }
