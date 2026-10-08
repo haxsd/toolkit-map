@@ -4,8 +4,7 @@
 #   · text 原样输出，不做任何转义；不能包含 TAB 或换行。首尾空格有意义（如 dirt.join 的 " and "），编辑器不要自动去掉。
 #   · {name} 是占位符，由调用处传入的事实替换。
 #   · lang 目前是 zh / en；每个 key 两种语言都必须有（tests/check-text.ps1 会检查）。
-#   · key 前缀 ps1: / sh: 表示只给对应实现用、并覆盖同名的无前缀 key。
-#     现在只用于两边措辞尚未统一的几条（PATH_DIRT 文案、bootstrap 脚本名），统一留给收敛计划的 C4。
+#   · key 没有平台前缀；平台脚本名等差异由 census-data.tsv 的 bootstrap / bootstrap-refresh 提供。
 #   · 只有一个实现会用到的 key 也直接写在这里，另一个实现不会查它们。
 title	zh	运行时普查报告 (census)
 title	en	runtime-census report
@@ -147,10 +146,8 @@ warn.CONVENTION.message	zh	发现自定义命名约定 '{shim}'（文件名里�
 warn.CONVENTION.message	en	Found a naming convention: '{shim}' (the filename claims {declared}, the binary is actually {actual}). Conventions that live only in a filename are invisible to every tool — record it in a declaration file or it will be lost.
 warn.CONVENTION.action	zh	把这条约定登记到声明文件（mise.toml / .tool-versions）
 warn.CONVENTION.action	en	Record it in a declaration file (mise.toml / .tool-versions)
-ps1:warn.PATH_DIRT.message	zh	用户级 PATH 里有{parts}。它们不改变解析结果，但会挤占 PATH 长度上限，并让「改了却没生效」这类问题更难查。
-ps1:warn.PATH_DIRT.message	en	The user PATH contains {parts}. They do not change resolution, but they eat into the PATH length limit and hide “I changed it but nothing took effect” problems.
-sh:warn.PATH_DIRT.message	zh	PATH 里有{parts}。它们不改变解析结果，但会让「改了却没生效」这类问题更难查。
-sh:warn.PATH_DIRT.message	en	PATH contains {parts}. They do not change resolution, but they hide “I changed it but nothing took effect” problems.
+warn.PATH_DIRT.message	zh	PATH 里有{parts}。它们不改变解析结果，但会挤占 PATH 长度（Windows 有上限），并让「改了却没生效」这类问题更难查。
+warn.PATH_DIRT.message	en	PATH contains {parts}. They do not change resolution, but they use up PATH length (Windows has a limit) and hide “I changed it but nothing took effect” problems.
 warn.PATH_DIRT.action	zh	清理这些条目（重复条目可以直接删掉）
 warn.PATH_DIRT.action	en	Clean them up (duplicate entries can simply be dropped)
 dirt.dupes	zh	重复条目 {n} 条
@@ -161,10 +158,8 @@ dirt.join	zh	、
 dirt.join	en	 and 
 warn.DRIFT.message	zh	部署的全局声明（{deployed}）与仓库模板不一致。模板代表这台机器想要的状态，漂移意味着模板里新加的工具永远不会被安装。
 warn.DRIFT.message	en	The deployed machine manifest ({deployed}) differs from the repo template. The template is the state this machine wants; while they drift, tools added to the template are never installed.
-ps1:warn.DRIFT.action	zh	刷新: scripts/bootstrap.ps1 -RefreshConfig（会先备份）
-ps1:warn.DRIFT.action	en	Refresh it: scripts/bootstrap.ps1 -RefreshConfig (backs up first)
-sh:warn.DRIFT.action	zh	刷新: scripts/bootstrap.sh --refresh-config（会先备份）
-sh:warn.DRIFT.action	en	Refresh it: scripts/bootstrap.sh --refresh-config (backs up first)
+warn.DRIFT.action	zh	刷新: {refresh}（会先备份）
+warn.DRIFT.action	en	Refresh it: {refresh} (backs up first)
 drift.onlyTpl	zh	模板有而部署副本没有: {keys}
 drift.onlyTpl	en	in the template but not deployed: {keys}
 drift.onlyDep	zh	部署副本有而模板没有: {keys}
@@ -187,13 +182,9 @@ warn.UNDECLARED.action	zh	在项目根目录建 mise.toml（[tools] node = "22"�
 warn.UNDECLARED.action	en	Add mise.toml ([tools] node = "22") or .tool-versions (nodejs 22) at the project root; from then on cd-ing in selects the right version
 warn.MISSING.message	zh	声明文件 '{file}' 要求 {tool} {wanted}，但本机没有发现它——既不在 PATH 上，也没有被任何管理器纳管。
 warn.MISSING.message	en	'{file}' asks for {tool} {wanted}, but it was not found on this machine — not on PATH, and not managed by anything.
-ps1:warn.MISSING.action	zh	执行 mise install 把它装上（新机器可直接跑 scripts/bootstrap.ps1）
-ps1:warn.MISSING.action	en	Install it with mise install (on a new machine, just run scripts/bootstrap.ps1)
-sh:warn.MISSING.action	zh	执行 mise install 把它装上（新机器可直接跑 scripts/bootstrap.sh）
-sh:warn.MISSING.action	en	Install it with mise install (on a new machine, just run scripts/bootstrap.sh)
+warn.MISSING.action	zh	执行 mise install 把它装上（新机器可直接跑 {bootstrap}）
+warn.MISSING.action	en	Install it with mise install (on a new machine, just run {bootstrap})
 warn.NO_MISE.message	zh	本机未安装 mise。运行时只能靠 PATH 解析，无法按项目自动切换版本。
 warn.NO_MISE.message	en	mise is not installed. Runtimes can only be resolved through PATH, so per-project version switching is unavailable.
-ps1:warn.NO_MISE.action	zh	执行 scripts/bootstrap.ps1（Windows）或 scripts/bootstrap.sh（Unix）建立声明式层
-ps1:warn.NO_MISE.action	en	Run scripts/bootstrap.ps1 (Windows) or scripts/bootstrap.sh (Unix) to set up the declarative layer
-sh:warn.NO_MISE.action	zh	执行 scripts/bootstrap.sh 建立声明式层
-sh:warn.NO_MISE.action	en	Run scripts/bootstrap.sh to set up the declarative layer
+warn.NO_MISE.action	zh	执行 {bootstrap} 建立声明式层
+warn.NO_MISE.action	en	Run {bootstrap} to set up the declarative layer

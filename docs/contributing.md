@@ -15,6 +15,8 @@
 | tests/ | 隔离回归测试 |
 | AGENTS.md / SKILL.md | 发现契约与 agent 使用协议 |
 
+census-text.tsv 与 census-data.tsv 是两个扫描内核的唯一数据来源。新增工具、探测相对位置、候选根目录或解析层命令只改 census-data.tsv（kind<TAB>os<TAB>value，os 取 all / win / unix）；新增面向人的文案只改 census-text.tsv（key<TAB>lang<TAB>text，每个 key 中英都必须有）。census.ps1 与 census.sh 读同一份，改表不用改脚本。census-text.tsv 不再有 ps1: / sh: 前缀键：平台差异（bootstrap 脚本名、刷新命令这类）写在 census-data.tsv 的 os = win / unix 行里，读取时以占位符传给文案。
+
 ## 开发检查
 
 先按 AGENTS.md 查地图拿到 Git、PowerShell、Bash 的绝对路径。需要项目版本时用一次性激活，不改全局 PATH。
@@ -23,8 +25,8 @@
 |---|---|
 | tests/check-encodings.ps1 | .ps1 的 UTF-8 BOM、英文系统解析；.sh 无 BOM |
 | tests/check-docs.ps1 | 中文单语文档、相对链接与 VERSION 版本号一致 |
-| tests/check-text.ps1 | census-text.tsv 格式、每个 key 中英齐全、脚本引用可解析、-Lang en 输出与缺失文案表时失败 |
-| tests/check-data.ps1 | census-data.tsv 列数、kind 与 os 取值、无重复、两边必需的 kind 齐全、值的形状与占位符、缺表时失败（CI 中 Windows PowerShell 5.1 / 7 与 Linux PowerShell 7） |
+| tests/check-text.ps1 | census-text.tsv 格式、每个 key 中英齐全、脚本引用可解析、拒绝 ps1: / sh: 前缀键、-Lang en 输出与缺失文案表时失败 |
+| tests/check-data.ps1 | census-data.tsv 列数、kind 与 os 取值、无重复、两边必需的 kind 齐全（含 bootstrap / bootstrap-refresh 的 win 与 unix 行）、值的形状与占位符、缺表时失败（CI 中 Windows PowerShell 5.1 / 7 与 Linux PowerShell 7） |
 | tests/map-smoke.ps1 | 失效路径修复、版本 stderr、安装失败和拒绝覆盖 |
 | tests/map-contract.ps1 | 动态项目选择、验证状态、重扫保留、查询缓存、并发、并行扫描与串行结果一致、接入和 JSON |
 | tests/install-contract.ps1 | portable 暂存、校验、版本验证、回滚、已有副本复用、winget 兜底登记与配方官方校验 |
