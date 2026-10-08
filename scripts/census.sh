@@ -112,7 +112,8 @@ stable_key() {
     # 计时阶段名
     "0. PATH 索引") echo path-index ;; "1. 声明层") echo declarations ;;
     "2. mise 纳管层") echo managed ;; "3. 约定层") echo conventions ;;
-    "4. 定向探测") echo roots ;; "5. 解析层") echo resolution ;; "6. 汇总告警") echo warnings ;;
+    "4a. 候选根目录") echo roots ;; "4b. 定向探测运行时") echo probe ;; "4c. 深度扫描（-Deep）") echo deep-scan ;;
+    "5. 解析层") echo resolution ;; "6. 汇总告警") echo warnings ;;
     *) echo "$1" ;;
   esac
 }
@@ -343,22 +344,56 @@ version_satisfies() {
 }
 
 # ---------- 阶段计时（--timing）----------
-# 用 date +%s 而不是 GNU 的 %N：macOS 的 date 不认 %N，粒度到秒对本脚本足够。
+# 取毫秒时间戳，写进 NOW_MS（不用命令替换，省一次 fork）。
+# bash >= 5 有 EPOCHREALTIME（微秒，不起进程）；macOS 自带的 bash 3.2 没有，
+# 退回 date +%s（macOS 的 date 不认 %N），这时粒度是秒，值是 1000 的整数倍。
+# EPOCHREALTIME 的小数点跟随 locale（有的 locale 是逗号），两种都去掉。
+now_ms() {
+  if [ -n "${EPOCHREALTIME:-}" ]; then
+    NOW_MS=$(( ${EPOCHREALTIME/[.,]/} / 1000 ))
+  else
+    NOW_MS=$(( $(date +%s) * 1000 ))
+  fi
+}
 TIMING_ROWS=""
 TIMING_JSON_ITEMS=""
-LAST_TICK="$(date +%s)"
+TIMING_TOTAL_MS=0
+NOW_MS=0
+now_ms
+LAST_TICK="${NOW_MS}"
 tick() {
   [ "$TIMING" -eq 1 ] || return 0
-  local now elapsed
-  now="$(date +%s)"
-  elapsed=$((now - LAST_TICK))
+  local elapsed
+  now_ms
+  elapsed=$((NOW_MS - LAST_TICK))
+  TIMING_TOTAL_MS=$((TIMING_TOTAL_MS + elapsed))
   TIMING_ROWS="${TIMING_ROWS}${1}|${elapsed}
 "
-  # JSON 里的字段名与单位必须与 census.ps1 一致（毫秒）：文档承诺的是 per-stage milliseconds，
-  # 消费者读 timings[i].ms。本脚本计时粒度是秒（为了兼容 macOS 的 date），所以换算成毫秒输出——
-  # 值会是 1000 的整数倍，精度如实反映，但字段名和单位不能两边各写各的。
-  TIMING_JSON_ITEMS="${TIMING_JSON_ITEMS}${TIMING_JSON_ITEMS:+,}{\"phase\":\"$(stable_key "$1")\",\"ms\":$((elapsed * 1000))}"
-  LAST_TICK="$now"
+  # JSON 里的字段名与单位必须与 census.ps1 一致（毫秒）：消费者读 timings[i].ms，
+  # 阶段键（stable_key）也与 census.ps1 一一对应，两边可以逐阶段对比。
+  TIMING_JSON_ITEMS="${TIMING_JSON_ITEMS}${TIMING_JSON_ITEMS:+,}{\"phase\":\"$(stable_key "$1")\",\"ms\":${elapsed}}"
+  LAST_TICK="${NOW_MS}"
+}
+
+# ---------- 探测进程计数（probeStats）----------
+# 只统计"为读版本而启动被发现的可执行文件"以及 mise 查询这类外部进程，
+# 不含 awk/sed/grep 这些辅助进程——这是并行化要优化的那部分开销。
+# 计数必须在父 shell 里做：探测本身在 $(...) 子 shell 里运行，那里改的变量带不回来。
+# 耗时只有 EPOCHREALTIME 可用（bash >= 5）时才统计，否则 JSON 里给 null，不起额外的 date 进程。
+PROBE_LAUNCHES=0
+PROBE_US=0
+PROBE_T0=""
+probe_begin() {
+  PROBE_LAUNCHES=$((PROBE_LAUNCHES + 1))
+  if [ -n "${EPOCHREALTIME:-}" ]; then PROBE_T0="${EPOCHREALTIME/[.,]/}"; fi
+  return 0
+}
+probe_end() {
+  if [ -n "${PROBE_T0}" ] && [ -n "${EPOCHREALTIME:-}" ]; then
+    PROBE_US=$((PROBE_US + ${EPOCHREALTIME/[.,]/} - PROBE_T0))
+  fi
+  PROBE_T0=""
+  return 0
 }
 
 # ---------- 规范根与位置基准 ----------
@@ -439,7 +474,9 @@ MISE_AVAILABLE=0
 MISE_TOOLS=""
 if command -v mise >/dev/null 2>&1; then
   MISE_AVAILABLE=1
+  probe_begin
   MISE_TOOLS="$(run_with_timeout 20 mise ls)"
+  probe_end
 fi
 tick '2. mise 纳管层'
 
@@ -503,12 +540,14 @@ scan_conventions() {
         esac
         actual=""
         if probe_safe "$target" && [ "$target" != "$f" ]; then
+        probe_begin
         case "$tool" in
           node|npm|npx|pnpm|yarn) actual="$("$target" --version 2>&1 | head -n1 || true)" ;;
           python|pip)             actual="$("$target" --version 2>&1 | head -n1 || true)" ;;
           java|javac)             actual="$("$target" -version 2>&1 | head -n1 || true)" ;;
           *)                      actual="$("$target" --version 2>&1 | head -n1 || true)" ;;
         esac
+        probe_end
         fi
         # targetOk：约定入口最终指向的文件是否真的可执行（对应 census.ps1 的同名字段）。
         # 命中 shim 内容里的目标时 target 就是那个文件；没命中就退回 shim 自身。
@@ -549,11 +588,13 @@ probe_path() {
   esac
   ver=""
   if probe_safe "$p"; then
+  probe_begin
   case "$tool" in
     node)   ver="$("$p" --version 2>/dev/null | head -n1 | sed 's/^v//' || true)" ;;
     python) ver="$("$p" --version 2>/dev/null | head -n1 | sed -E 's/^Python //' || true)" ;;
     java)   ver="$("$p" -version 2>&1 | head -n1 | sed -E 's/.*version "([^"]+)".*/\1/' || true)" ;;
   esac
+  probe_end
   fi
   add_runtime "$tool" "$ver" "$p" "$src" "$(placement_of "$p")" "yes" "$CUR_ROOT" "$CUR_PATTERN"
 }
@@ -609,6 +650,9 @@ $HOME/.cargo/bin
 /Applications/Android Studio.app/Contents/jbr
 $HOME/Applications
 "
+# 候选根目录在本脚本里只是一张静态清单（census.ps1 要查注册表/盘符才会有可观的耗时），
+# 单独打一个点是为了让两边的阶段键一一对应：roots / probe / deep-scan。
+tick '4a. 候选根目录'
 
 for r in $CANDIDATE_ROOTS; do probe_root "$r"; done
 
@@ -643,6 +687,7 @@ done
 # 去重：同一个真实路径只保留一条
 # 注意这一步必须在 --deep 深扫之前完成（下面的深扫会再补一批记录）。
 RUNTIME_ROWS="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' 'NF>=6 { key=tolower($3); if (!(key in seen)) { seen[key]=1; print } }')"
+tick '4b. 定向探测运行时'
 
 # ---------- 第 4 阶段补充：--deep 宽松深扫 ----------
 # 定向探测只覆盖已知安装布局，装在奇怪位置的运行时只有深扫才看得见。
@@ -666,8 +711,8 @@ EOF
   RUNTIME_ROWS="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' 'NF>=6 { key=tolower($3); if (!(key in seen)) { seen[key]=1; print } }')"
   # 深扫结束，恢复默认标记（后面还有别的记录来源，不该继承深扫标记）
   CUR_PATTERN="定向探测"; CUR_ROOT=""
+  tick '4c. 深度扫描（-Deep）'
 fi
-tick '4. 定向探测'
 
 # ---------- 第 5 阶段：解析层 ----------
 RESOLVE_ROWS=""
@@ -684,6 +729,7 @@ probe_cmd() {
   ver=""
   # 不只看 resolved 本身：npm 一类启动器会经由 #! 或 PATH 再去执行 node（见 probe_safe）。
   if probe_safe "$resolved"; then
+  probe_begin
   case "$name" in
     node)   ver="$("$name" --version 2>/dev/null | head -n1 | sed 's/^v//' || true)" ;;
     npm|npx|pnpm|yarn) ver="$("$name" --version 2>/dev/null | head -n1 || true)" ;;
@@ -691,6 +737,7 @@ probe_cmd() {
     java|javac) ver="$("$name" -version 2>&1 | head -n1 | sed -E 's/.*version "([^"]+)".*/\1/' || true)" ;;
     *)      ver="$("$name" --version 2>/dev/null | head -n1 || true)" ;;
   esac
+  probe_end
   fi
   # usable 作为第 5 列一起记下来：判断"装没装"要用它，
   # 而且 JSON 里与 census.ps1 的 resolution 记录对齐。
@@ -915,6 +962,9 @@ if [ "$JSON" -eq 1 ]; then
   printf '\n  ],\n'
   printf '  "warnings": [%s],\n' "$WARN_JSON_ITEMS"
   printf '  "timings": [%s],\n' "$TIMING_JSON_ITEMS"
+  # probeStats：探测进程计数（附加字段，schemaVersion 不变）。ms 在 bash < 5 上量不到，给 null。
+  if [ -n "${EPOCHREALTIME:-}" ]; then _probe_ms=$((PROBE_US / 1000)); else _probe_ms=null; fi
+  printf '  "probeStats": {"launches": %s, "ms": %s},\n' "$PROBE_LAUNCHES" "$_probe_ms"
 
   # summary：与 census.ps1 对齐（runtimeCount / warningCount / byTool）
   # 逐工具构造，不要在一个 awk 里同时管"开数组/加逗号/收尾"——那种写法极易漏逗号，
@@ -1043,12 +1093,19 @@ note "$(T 'sum.root' "root=$TOOLS_ROOT")"
 note "$(T 'sum.warnings' "count=$(printf '%s\n' "$WARN_TEXT" | grep -c '^\[' || true)")"
 if [ "$TIMING" -eq 1 ]; then
   sec "$(T 'sec.timing')"
-  # 阶段名经 label_text 映射；JSON 那边用的是 stable_key 的 ASCII 键
-  while IFS='|' read -r _ph _sec; do
+  # 阶段名经 label_text 映射；JSON 那边用的是 stable_key 的 ASCII 键。
+  # 行格式与 census.ps1 相同（timing.line，毫秒），两边输出可以直接对照。
+  while IFS='|' read -r _ph _ms; do
     [ -n "$_ph" ] || continue
-    printf '  %-24s %6s s\n' "$(label_text "$_ph")" "$_sec"
+    printf '  %s\n' "$(T 'timing.line' "phase=$(label_text "$_ph")" "ms=${_ms}")"
   done <<EOF
 $TIMING_ROWS
 EOF
+  printf '  %s\n' "$(T 'timing.line' "phase=$(T 'timing.total')" "ms=${TIMING_TOTAL_MS}")"
+  if [ -n "${EPOCHREALTIME:-}" ]; then
+    printf '  %s\n' "$(T 'timing.probes' "count=${PROBE_LAUNCHES}" "ms=$((PROBE_US / 1000))")"
+  else
+    printf '  %s\n' "$(T 'timing.probes.noms' "count=${PROBE_LAUNCHES}")"
+  fi
 fi
 echo

@@ -240,6 +240,13 @@ foreach ($impl in @(@{ Name = 'census.ps1'; Data = $ps1 }, @{ Name = 'census.sh'
     # 无关——kind / source / placement / pattern 是给脚本和 agent 匹配用的，一旦混进
     # 本地化取值（内部的中文标记直接落进 JSON），非 UTF-8 locale 下就匹配不上。
     # message / action 是散文，按文档跟随 --lang，不在这条断言的范围里。
+    # probeStats（附加字段，schemaVersion 仍为 1）：探测进程计数必须是非负整数。
+    foreach ($impl in @(@{ name = 'census.ps1'; data = $ps1 }, @{ name = 'census.sh'; data = $sh })) {
+        $probeLaunches = $null
+        if ($impl.data.PSObject.Properties.Name -contains 'probeStats' -and $impl.data.probeStats) { $probeLaunches = $impl.data.probeStats.launches }
+        Check "$($impl.name) 的 probeStats.launches 是非负整数" (($probeLaunches -is [int] -or $probeLaunches -is [long]) -and $probeLaunches -ge 0) "launches=$probeLaunches"
+    }
+
     $asciiFields = 'kind', 'source', 'placement', 'pattern'
     foreach ($impl in @(@{ name = 'census.ps1'; data = $ps1 }, @{ name = 'census.sh'; data = $sh })) {
         $bad = @()

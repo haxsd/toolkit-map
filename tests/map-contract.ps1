@@ -58,6 +58,11 @@ param([switch]$Json)
     Assert ($r.code -eq 0 -and $r.value.version -eq ([IO.File]::ReadAllText((Join-Path $repo 'VERSION'))).Trim()) 'help 的版本必须来自 VERSION'
     $r = Run-Map @('scan'); Assert ($r.code -eq 0) '当前 PowerShell 宿主下 scan 应成功'
     $scanTime = $r.value.scannedAt
+    # probeStats 是附加字段：launches 必须是非负整数；假 census 没有 probeStats，census 部分按 0 计。
+    $probeStats = $r.value.probeStats
+    $probeLaunches = if ($probeStats) { $probeStats.launches } else { $null }
+    Assert (($probeLaunches -is [int] -or $probeLaunches -is [long]) -and $probeLaunches -ge 0) "scan 结果必须带非负整数 probeStats.launches：$($r.output -join '`n')"
+    Assert ($probeStats.census.launches -eq 0 -and ($probeStats.wallMs -is [int] -or $probeStats.wallMs -is [long]) -and $probeStats.wallMs -ge 0) "census 缺 probeStats 时应按 0 计，wallMs 为非负整数：$($r.output -join '`n')"
     $one = Fake-Tool (Join-Path $scratch 'node16') 'node' '16.20.2'
     $two = Fake-Tool (Join-Path $scratch 'node22') 'node' '22.23.2'
     $r = Run-Map @('add', 'node', '-Path', $one, '-Note', '手工登记保留', '-Prefer'); Assert ($r.code -eq 0) 'add 失败'

@@ -78,5 +78,6 @@ JetBrains 系 IDE 的安装目录里有 `jbr/`，里面是完整的 JDK，版本
 - **`.cmd` 在 MSYS/bash 里不算可执行**：`node22.cmd` 这类约定在 Git Bash 下不可见
   （`[ -x ]` 为假），所以同一个仓库在 PowerShell 版和 shell 版里可能得出不同的约定清单。
   这是有意保留的差异，不追求两份实现逐字段一致。
-- **`date` 的分辨率**：shell 版计时用 `date +%s`（macOS 不认 `%N`），所以 `timings` 的值是
-  1000 的整数倍；字段名与单位与 PowerShell 版一致（毫秒）。
+- **计时分辨率**：shell 版在 bash 5 及以上用 `EPOCHREALTIME` 计到毫秒，不额外起进程；
+  macOS 自带的 bash 3.2 没有它，退回 `date +%s`（macOS 不认 `%N`），这时 `timings` 的值是
+  1000 的整数倍，`probeStats.ms` 为 null。字段名与单位与 PowerShell 版一致（毫秒）。
