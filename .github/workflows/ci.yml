@@ -142,6 +142,10 @@ jobs:
           for f in scripts/*.sh tests/*.sh; do
             bash -n "$f" || exit 1
           done
+      # $VAR 后紧跟全角字符在 macOS 的 bash 3.2 上会被吞进变量名，统一要求 ${VAR}
+      - name: .sh 变量引用检查（${VAR}）
+        shell: bash
+        run: bash tests/check-sh-vars.sh
       # 版本比较是纯函数，在 Linux 的 PowerShell 7 上也跑一遍，防止依赖 Windows 行为。
       - name: 版本比较与排序（Linux PowerShell 7）
         shell: pwsh
@@ -176,6 +180,8 @@ jobs:
           for f in scripts/*.sh tests/*.sh; do
             /bin/bash -n "$f" || exit 1
           done
+      - name: .sh 变量引用检查（${VAR}，BSD grep）
+        run: /bin/bash tests/check-sh-vars.sh
       - name: 冒烟测试（census.sh，macOS）
         shell: bash
         run: |
