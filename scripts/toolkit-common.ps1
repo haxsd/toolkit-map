@@ -97,6 +97,25 @@ function Test-ToolkitProbeSafe {
     return $true
 }
 
+# ---------- 扫描数据表（census-data.tsv）----------
+# 每行 kind<TAB>os<TAB>value；返回 kind -> 值列表（按文件顺序），只保留 os 为 $Os 或 all 的行。
+# 用 ReadAllText + 显式 UTF8 读：Windows PowerShell 5.1 的 Get-Content 默认按 ANSI 代码页读。
+# 文件是否存在、必需的 kind 是否齐全由调用方检查（census.ps1 缺表时以退出码 2 失败）。
+function Read-ToolkitDataTable {
+    param([string]$Path, [string]$Os)
+    $table = @{}
+    foreach ($line in ([IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) -split "`n")) {
+        $line = $line.TrimEnd("`r")
+        if ($line.Length -eq 0 -or $line.StartsWith('#')) { continue }
+        $parts = $line -split "`t"
+        if ($parts.Count -ne 3) { continue }
+        if ($parts[1] -ne $Os -and $parts[1] -ne 'all') { continue }
+        if (-not $table.ContainsKey($parts[0])) { $table[$parts[0]] = New-Object System.Collections.Generic.List[string] }
+        $table[$parts[0]].Add($parts[2])
+    }
+    return $table
+}
+
 # ---------- 统一探测执行器 ----------
 # 扫描内核（census.ps1 的 Get-FirstLine / Invoke-CaptureWithTimeout）与地图（map-core.ps1 的
 # Get-ProbeText）共用的唯一一处"启动外部进程读输出"。各调用方只是薄封装，按自己的口径取文本。
