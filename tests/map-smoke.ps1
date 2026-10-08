@@ -107,19 +107,34 @@ try {
     Assert-True ((Get-Content -LiteralPath $atomicProbe -Raw).Trim() -eq 'atomic-ok') '原子 UTF-8 写入器没有写出完整内容'
 
     # 证书吊销服务器不可达时的重试：受控网络里复现不了 schannel 的失败，
-    # 所以用"第一次抛证书类错误、第二次成功"的假动作验证边界（不触网）。
+    # 所以用"第一次抛信任关系错误、第二次成功"的假动作验证边界（不触网）。
+    # 只有 Windows PowerShell 5.1 且本进程开着吊销检查时才重试（默认是关着的；PowerShell 7 不受该设置影响）。
     Assert-True ($null -ne (Get-Command Invoke-NetRetry -ErrorAction SilentlyContinue)) 'map.ps1 缺少 Invoke-NetRetry'
 
-    $script:netCalls = 0
+    $isDesktop = ($PSVersionTable.PSEdition -ne 'Core')
     $beforeRevoke = [Net.ServicePointManager]::CheckCertificateRevocationList
-    $retried = & Invoke-NetRetry -What '冒烟测试' -Action {
-        $script:netCalls++
-        if ($script:netCalls -eq 1) { throw 'The underlying connection was closed: Could not establish trust relationship for the SSL/TLS secure channel.' }
-        'retried-ok'
-    } 3>$null
-    Assert-True ($retried -eq 'retried-ok') '证书类错误应被重试，而不是直接抛出'
-    Assert-True ($script:netCalls -eq 2) "证书类错误应恰好重试一次；实际请求 $($script:netCalls) 次"
-    Assert-True ([Net.ServicePointManager]::CheckCertificateRevocationList -eq $beforeRevoke) '重试后应还原吊销检查设置'
+    try {
+        foreach ($revocationOn in @($true, $false)) {
+            [Net.ServicePointManager]::CheckCertificateRevocationList = $revocationOn
+            $script:netCalls = 0
+            $retried = $null
+            try {
+                $retried = & Invoke-NetRetry -What '冒烟测试' -Action {
+                    $script:netCalls++
+                    if ($script:netCalls -eq 1) { throw 'The underlying connection was closed: Could not establish trust relationship for the SSL/TLS secure channel.' }
+                    'retried-ok'
+                } 3>$null
+            } catch { }
+            if ($isDesktop -and $revocationOn) {
+                Assert-True ($retried -eq 'retried-ok' -and $script:netCalls -eq 2) "5.1 开着吊销检查时信任关系错误应恰好重试一次；实际请求 $($script:netCalls) 次"
+            } else {
+                Assert-True ($null -eq $retried -and $script:netCalls -eq 1) "PowerShell 7 或吊销检查已关时不该重试（重试不会改变结果）；实际请求 $($script:netCalls) 次"
+            }
+            Assert-True ([Net.ServicePointManager]::CheckCertificateRevocationList -eq $revocationOn) '重试后应还原吊销检查设置'
+        }
+    } finally {
+        [Net.ServicePointManager]::CheckCertificateRevocationList = $beforeRevoke
+    }
 
     $script:netCalls = 0
     $threw = $false
