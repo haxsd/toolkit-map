@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-  文档检查：文档保持单语（中文），所有相对链接都能解析到真实的文件与标题。
+  文档检查：文档保持单语（中文），所有相对链接都能解析到真实的文件与标题，版本号与 VERSION 一致。
 
 .DESCRIPTION
   为什么必须有这一项：文档出错的成本很低——搬动、改名之后留下一堆指向不存在文件的链接，
@@ -76,7 +76,7 @@ $docs = @(Get-MarkdownFiles)
 $zhSuffix = '.zh-CN.md'
 
 Write-Host ''
-Write-Host ' 文档检查（单语与链接）' -ForegroundColor White
+Write-Host ' 文档检查（单语、链接与版本号）' -ForegroundColor White
 
 # ---------- 1. 单语 ----------
 foreach ($f in $docs) {
@@ -116,6 +116,29 @@ foreach ($f in $docs) {
         }
     }
 }
+
+# ---------- 3. 版本号一致 ----------
+# 唯一来源是根目录 VERSION；文档里的稳定标签、CHANGELOG 最新版本与 help 输出都从它派生。
+# 发布时只改 VERSION，再按这里的失败提示同步文档，避免"README 还指向旧标签"。
+$versionFile = Join-Path $repoRoot 'VERSION'
+$version = if (Test-Path -LiteralPath $versionFile) { (Get-Content -LiteralPath $versionFile -Raw -Encoding UTF8).Trim() } else { '' }
+Check "VERSION 是 X.Y.Z 格式（当前：$version）" ($version -match '^\d+\.\d+\.\d+$') '根目录 VERSION 只写裸版本号，例如 0.2.3'
+$tagRe = [regex]'(?:--branch\s+|origin\s+tag\s+|--detach\s+|toolkit-map-)v(\d+\.\d+\.\d+)'
+$tagCount = 0
+foreach ($f in $docs) {
+    if ($f.Name -eq 'CHANGELOG.md') { continue }
+    $text = Get-Content -LiteralPath $f.FullName -Raw -Encoding UTF8
+    foreach ($m in $tagRe.Matches($text)) {
+        $tagCount++
+        if ($m.Groups[1].Value -ne $version) { Check "$($f.Name) 稳定标签 v$($m.Groups[1].Value)" $false "与 VERSION（$version）不一致" }
+    }
+}
+Check "文档中的稳定标签与 VERSION 一致（$tagCount 处）" ($tagCount -gt 0) '没有找到任何稳定标签，检查规则可能已失效'
+$changelog = Get-Content -LiteralPath (Join-Path $repoRoot 'CHANGELOG.md') -Raw -Encoding UTF8
+$latest = [regex]::Match($changelog, '(?m)^##\s+v(\d+\.\d+\.\d+)')
+Check "CHANGELOG 最新版本与 VERSION 一致" ($latest.Success -and $latest.Groups[1].Value -eq $version) "CHANGELOG 最新版本：$($latest.Groups[1].Value)"
+$mapText = Get-Content -LiteralPath (Join-Path (Join-Path $repoRoot 'scripts') 'map.ps1') -Raw -Encoding UTF8
+Check 'map.ps1 不硬编码版本号' ($mapText -notmatch "version\s*=\s*'\d+\.\d+\.\d+'" -and $mapText.Contains('Get-ToolkitVersion')) 'help 的版本应读取 VERSION'
 
 Write-Host "  已检查 $($docs.Count) 个文档、$links 条相对链接" -ForegroundColor DarkGray
 Write-Host ''

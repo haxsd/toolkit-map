@@ -5,6 +5,8 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $scratch = [IO.Path]::GetFullPath((Join-Path $env:TEMP ('toolkit-map-install-' + [guid]::NewGuid().ToString('N'))))
 $oldRoot = $env:TOOLCHAIN_ROOT; $oldPath = $env:PATH
+$oldInstallerEnv = @{}
+foreach ($name in @('ProgramFiles', 'ProgramFiles(x86)', 'LOCALAPPDATA')) { $oldInstallerEnv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 function Assert { param([bool]$Ok, [string]$Message) if (-not $Ok) { throw $Message } }
 function Make-Package {
     param([string]$Name, [string]$VersionText)
@@ -62,9 +64,55 @@ try {
     function Invoke-WebRequest { param($Uri, $OutFile, [switch]$UseBasicParsing) $script:downloadCalls++; throw '不应该下载' }
     $result = Invoke-Install
     Assert ($result.status -eq 'already_available' -and $result.path -eq $external -and $script:downloadCalls -eq 0) '已有合适副本必须复用，不重复下载'
-    Write-Host '[通过] portable 安装暂存、校验、版本验证、失败回滚与已有副本复用'
+    # winget 兜底：键名规范化与参数校验；只登记本次新出现的文件，同名旧文件不冒充；多个新文件不猜。
+    # winget 调用与注册表 PATH 刷新替换为假实现，不触网、不改机器。
+    $Url = ''; $Sha256 = ''; $Version = ''; $Via = 'winget'; $WingetId = ''
+    $Tool = '../escape'; $failed = $false
+    try { $null = Invoke-Install } catch { $failed = ($_.Exception.Data['code'] -eq 'invalid_argument') }
+    Assert $failed 'winget 工具名不得包含路径'
+    $Tool = 'wtool'; $WingetId = '--source'; $failed = $false
+    try { $null = Invoke-Install } catch { $failed = ($_.Exception.Data['code'] -eq 'invalid_argument') }
+    Assert $failed 'winget 包 ID 不得以 - 开头'
+    $wingetDir = Join-Path $scratch 'winget-bin'; [void][IO.Directory]::CreateDirectory($wingetDir)
+    [IO.File]::WriteAllText((Join-Path $wingetDir 'winget.cmd'), "@echo off`r`nexit /b 1`r`n", [Text.Encoding]::ASCII)
+    $env:PATH = $wingetDir
+    [Environment]::SetEnvironmentVariable('ProgramFiles', (Join-Path $scratch 'pf'), 'Process')
+    [Environment]::SetEnvironmentVariable('ProgramFiles(x86)', $null, 'Process')
+    [Environment]::SetEnvironmentVariable('LOCALAPPDATA', (Join-Path $scratch 'lad'), 'Process')
+    $oldCopy = Join-Path $env:ProgramFiles 'Old\wtool.cmd'
+    [void][IO.Directory]::CreateDirectory((Split-Path $oldCopy -Parent))
+    [IO.File]::WriteAllText($oldCopy, "@echo off`r`necho wtool 0.9.0`r`nexit /b 0`r`n", [Text.Encoding]::ASCII)
+    $longAgo = (Get-Date).ToUniversalTime().AddDays(-30)
+    (Get-Item -LiteralPath $oldCopy).CreationTimeUtc = $longAgo; (Get-Item -LiteralPath $oldCopy).LastWriteTimeUtc = $longAgo
+    function Get-InstallerRefreshedPath { return '' }
+    function Invoke-WingetCommand {
+        param([string]$Exe, [string[]]$Arguments)
+        $script:WingetArgs = $Arguments
+        foreach ($rel in $script:WingetNewFiles) {
+            $file = Join-Path $env:ProgramFiles $rel
+            [void][IO.Directory]::CreateDirectory((Split-Path $file -Parent))
+            [IO.File]::WriteAllText($file, "@echo off`r`necho tool 1.0.0`r`nexit /b 0`r`n", [Text.Encoding]::ASCII)
+        }
+        return @{ exitCode = 0; output = @('installed') }
+    }
+    $Tool = 'WTool'; $WingetId = 'Vendor.WTool'; $script:WingetNewFiles = @('Vendor\WTool\wtool.cmd')
+    $result = Invoke-Install
+    $expected = Join-Path $env:ProgramFiles 'Vendor\WTool\wtool.cmd'
+    Assert ($result.ok -and $result.tool -eq 'wtool' -and @($result.installed).Count -eq 1 -and @($result.installed)[0] -eq $expected) "winget 应登记本次新装的文件：$($result | ConvertTo-Json -Depth 5 -Compress)"
+    Assert ($script:WingetArgs -contains 'Vendor.WTool' -and $script:WingetArgs -contains '--exact') 'winget 参数应使用给定包 ID 精确匹配'
+    $saved = Read-Map
+    Assert (@($saved.tools.Keys) -ccontains 'wtool' -and @($saved.tools.Keys) -cnotcontains 'WTool') '地图键必须规范化为小写（地图哈希表不区分大小写，按原始键名区分）'
+    Assert (@($saved.tools['wtool'].candidates | Where-Object { $_.path -eq $oldCopy }).Count -eq 0) '安装前就存在的同名文件不能登记成 winget 安装'
+    $Tool = 'wtool2'; $WingetId = 'Vendor.WTool2'; $script:WingetNewFiles = @('A\wtool2.cmd', 'B\wtool2.cmd')
+    $failed = $false
+    try { $null = Invoke-Install } catch { $failed = ($_.Exception.Data['code'] -eq 'installed_ambiguous') }
+    Assert ($failed -and -not (Read-Map).tools.ContainsKey('wtool2')) '多个新文件时不能猜测登记'
+    Assert ($env:PATH -eq $wingetDir) 'winget 分支结束后必须恢复 PATH'
+    $Via = ''
+    Write-Host '[通过] portable 安装暂存、校验、版本验证、失败回滚、已有副本复用与 winget 兜底登记'
 } finally {
     $env:TOOLCHAIN_ROOT = $oldRoot; $env:PATH = $oldPath
+    foreach ($name in $oldInstallerEnv.Keys) { [Environment]::SetEnvironmentVariable($name, $oldInstallerEnv[$name], 'Process') }
     $resolved = [IO.Path]::GetFullPath($scratch)
     $tempRoot = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\'
     if ($resolved.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -and [IO.Directory]::Exists($resolved)) { Remove-Item -LiteralPath $resolved -Recurse -Force }

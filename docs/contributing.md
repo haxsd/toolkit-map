@@ -20,10 +20,10 @@
 | 检查 | 覆盖 |
 |---|---|
 | tests/check-encodings.ps1 | .ps1 的 UTF-8 BOM、英文系统解析；.sh 无 BOM |
-| tests/check-docs.ps1 | 中文单语文档与相对链接 |
+| tests/check-docs.ps1 | 中文单语文档、相对链接与 VERSION 版本号一致 |
 | tests/map-smoke.ps1 | 失效路径修复、版本 stderr、安装失败和拒绝覆盖 |
 | tests/map-contract.ps1 | 动态项目选择、验证状态、重扫保留、查询缓存、并发、接入和 JSON |
-| tests/install-contract.ps1 | portable 暂存、校验、版本验证、回滚与已有副本复用 |
+| tests/install-contract.ps1 | portable 暂存、校验、版本验证、回滚、已有副本复用与 winget 兜底登记 |
 | tests/scan-guards.ps1 | 扫描解析层和底层执行器都跳过 shim |
 | tests/parity.ps1 | 两个扫描内核在同一沙箱识别相同问题 |
 | tests/verify-shell.ps1 | .sh 语法 |
@@ -46,7 +46,7 @@
 
 ## 发布
 
-1. 更新 CHANGELOG、README 稳定标签和 help 版本。
+1. 修改根目录 `VERSION`（help 自动读取），再按 tests/check-docs.ps1 的提示同步 CHANGELOG 与文档中的稳定标签。
 2. 全套检查与两个宿主的契约测试通过。
 3. 推送分支，PR CI 通过后合并 main。
 4. 从合并提交创建版本标签，用 git archive 生成源码 zip 与 SHA256 校验文件。
