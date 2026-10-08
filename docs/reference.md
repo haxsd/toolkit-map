@@ -142,4 +142,11 @@ winget 是显式安装动作，通过找到的绝对入口调用，跳过 shim �
 - 所有版本探测都经由 toolkit-common.ps1 的统一执行器 `Invoke-ToolkitProbe`：shim 护栏在任何执行之前；同一进程内按 路径|长度|修改时间|参数 缓存，文件被替换或换参数即重新启动，命中缓存不计入 launches。缓存不落盘，跨次调用的复用仍只靠地图里的候选校验信息。
 - `map.ps1 scan` 的结果带 `probeStats`：`launches`（census 子进程本身 1 个 + census 内的探测 + 地图侧的版本探测，命中探测缓存的不算）、`probeMs`、`wallMs`（整次扫描墙钟），以及分项 `census {launches, probeMs, wallMs}` 与 `map {launches, probeMs, throttle}`（throttle 为实际使用的探测并行度）。census 输出里没有 probeStats 时按 0 计。只出现在动作结果里，不写进 map.json。
 
+扫描数据与文案外置在两个与脚本同目录的 TSV 里，census.ps1 与 census.sh 读同一份：
+
+- `scripts/census-text.tsv`（key<TAB>lang<TAB>text）：所有面向人的文案，每个 key 中英都必须有；不再有 ps1: / sh: 前缀键。
+- `scripts/census-data.tsv`（kind<TAB>os<TAB>value）：探测相对位置、conda 环境目录与解释器、候选根目录、解析层命令表、约定命令名，以及 bootstrap 脚本名与刷新命令；os 取 all / win / unix。平台差异（bootstrap 脚本名、刷新命令）写成 os = win / unix 行，读取时以占位符传给文案。
+
+新增工具、探测相对位置、候选根目录或解析层命令只改 census-data.tsv，新增文案只改 census-text.tsv，不用改脚本。
+
 告警：STUB、PATH_ORDER、SHADOWED、CONVENTION、PATH_DIRT、DRIFT、XDG_SHIFT、STRAY、UNDECLARED、MISSING、NO_MISE。它们只诊断工具层，不诊断端口、.env、应用依赖或后台服务。

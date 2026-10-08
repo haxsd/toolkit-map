@@ -23,7 +23,7 @@ Write-Host ''
 Write-Host ' census-data.tsv 检查'
 if (-not [IO.File]::Exists($dataPath)) { Write-Host "::error::找不到 $dataPath"; exit 1 }
 
-$kinds = @('probe-rel', 'conda-dir', 'conda-rel', 'root', 'ide-glob', 'resolve', 'convention', 'convention-skip')
+$kinds = @('probe-rel', 'conda-dir', 'conda-rel', 'root', 'ide-glob', 'resolve', 'convention', 'convention-skip', 'bootstrap', 'bootstrap-refresh')
 # ide-glob 只有 census.ps1 用（按盘符根匹配 IDE 目录），census.sh 没有对应概念
 $unixOptional = @('ide-glob')
 $placeholders = @{ win = @('APPDATA', 'LOCALAPPDATA', 'USERPROFILE'); unix = @('HOME', 'MISE_DATA') }

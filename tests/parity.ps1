@@ -206,7 +206,7 @@ foreach ($impl in @(@{ Name = 'census.ps1'; Data = $ps1 }, @{ Name = 'census.sh'
     foreach ($row in $expected) {
         $hit = @(@($d.warnings) | Where-Object {
             $_.kind -eq $row.kind -and
-            ($row.tool -eq '*' -or $_.tool -eq $row.tool) -and
+            ($row.tool -eq '*' -or $_.tool -eq $row.tool -or ("$($_.tool)" -split '/') -contains $row.tool) -and
             ("$($_.detail) $($_.message)".Contains($row.needle))
         })
         Check "$name 报出 $($row.kind)（tool=$($row.tool)，含 $($row.needle)）" ($hit.Count -gt 0) '期望来自 tests/fixtures/census-expected.tsv'

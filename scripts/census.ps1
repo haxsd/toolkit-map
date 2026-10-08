@@ -70,7 +70,7 @@ if ($script:Lang -notin @('zh', 'en')) { $script:Lang = 'zh' }
 
 # 文案表放在同目录的 census-text.tsv（key<TAB>lang<TAB>text），与 census.sh 共用一份。
 # 用 ReadAllText + 显式 UTF8 读：Windows PowerShell 5.1 的 Get-Content 默认按 ANSI 代码页读，
-# 英文系统上中文会读坏。sh: 前缀的行是 census.sh 专用的，跳过；ps1: 前缀的行覆盖同名的无前缀行。
+# 英文系统上中文会读坏。平台脚本名等差异由 census-data.tsv 提供，不再在文案表里做前缀覆盖。
 # 文件缺失直接失败：静默退化成键名会让 -Json 的 message/action 全部变成 warn.XXX.message。
 $script:TextPath = Join-Path $PSScriptRoot 'census-text.tsv'
 if (-not [IO.File]::Exists($script:TextPath)) {
@@ -78,25 +78,16 @@ if (-not [IO.File]::Exists($script:TextPath)) {
     exit 2
 }
 $script:Text = @{}
-$overridden = New-Object System.Collections.Generic.HashSet[string]
 foreach ($line in ([IO.File]::ReadAllText($script:TextPath, [Text.Encoding]::UTF8) -split "`n")) {
     $line = $line.TrimEnd("`r")
     if ($line.Length -eq 0 -or $line.StartsWith('#')) { continue }
     $parts = $line -split "`t", 3
     if ($parts.Count -lt 3) { continue }
     $key = $parts[0]
-    if ($key.StartsWith('sh:')) { continue }
-    $isOverride = $key.StartsWith('ps1:')
-    if ($isOverride) { $key = $key.Substring(4) }
     if (-not $script:Text.ContainsKey($key)) { $script:Text[$key] = @{} }
-    if ($isOverride) {
-        $script:Text[$key][$parts[1]] = $parts[2]
-        [void]$overridden.Add("$key|$($parts[1])")
-    } elseif (-not $overridden.Contains("$key|$($parts[1])")) {
-        $script:Text[$key][$parts[1]] = $parts[2]
-    }
+    $script:Text[$key][$parts[1]] = $parts[2]
 }
-Remove-Variable -Name line, parts, key, isOverride, overridden -ErrorAction SilentlyContinue
+Remove-Variable -Name line, parts, key -ErrorAction SilentlyContinue
 
 # 扫描数据（探测相对路径、候选根目录、解析命令表、约定命令名）放在同目录的 census-data.tsv，
 # 与 census.sh 共用一份；每行 kind<TAB>os<TAB>value，这里取 os 为 win 或 all 的行。
@@ -107,12 +98,14 @@ if (-not [IO.File]::Exists($script:DataPath)) {
     exit 2
 }
 $script:CensusData = Read-ToolkitDataTable -Path $script:DataPath -Os 'win'
-foreach ($kind in @('probe-rel', 'conda-dir', 'conda-rel', 'root', 'ide-glob', 'resolve', 'convention', 'convention-skip')) {
+foreach ($kind in @('probe-rel', 'conda-dir', 'conda-rel', 'root', 'ide-glob', 'resolve', 'convention', 'convention-skip', 'bootstrap', 'bootstrap-refresh')) {
     if (-not $script:CensusData.ContainsKey($kind) -or $script:CensusData[$kind].Count -eq 0) {
         [Console]::Error.WriteLine("[census] 扫描数据表 $($script:DataPath) 缺少 $kind 行（os 为 win 或 all）")
         exit 2
     }
 }
+$script:BootstrapCmd = $script:CensusData['bootstrap'][0]
+$script:RefreshCmd   = $script:CensusData['bootstrap-refresh'][0]
 Remove-Variable -Name kind -ErrorAction SilentlyContinue
 
 # 取一条文案并用 facts 替换 {占位符}。缺失的键返回键名本身，
@@ -181,6 +174,9 @@ function Get-StableKey {
 # 构造一条告警：kind 是稳定的 ASCII 代码，message/action 跟随语言，detail 是事实（路径、版本）。
 function New-Warning {
     param([string]$Kind, [string]$Tool, [hashtable]$Facts, [string]$Detail = '')
+    if ($null -eq $Facts) { $Facts = @{} }
+    if (-not $Facts.ContainsKey('bootstrap')) { $Facts['bootstrap'] = $script:BootstrapCmd }
+    if (-not $Facts.ContainsKey('refresh'))   { $Facts['refresh']   = $script:RefreshCmd }
     return [pscustomobject]@{
         kind    = $Kind
         tool    = $Tool
@@ -308,8 +304,11 @@ function Get-NormalizedVersion {
     param([string]$Tool, [string]$Raw)
     if ([string]::IsNullOrWhiteSpace($Raw)) { return '' }
     switch ($Tool) {
-        'powershell' { $raw = Get-FirstLine $ExePath @('-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()') }
-        'pwsh' { $raw = Get-FirstLine $ExePath @('-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()') }
+        { $_ -in 'powershell', 'pwsh' } {
+            $m = [regex]::Match($Raw, '([0-9]+\.[0-9]+(?:\.[0-9]+)*)')
+            if ($m.Success) { return $m.Groups[1].Value }
+            return $Raw
+        }
         'java' {
             # openjdk version "25.0.3" 2026-04-21  ->  25.0.3
             $m = [regex]::Match($Raw, 'version\s+"([^"]+)"')
@@ -354,6 +353,9 @@ function Get-RuntimeVersion {
         'python' { $raw = Get-FirstLine $ExePath @('--version') }
         'pip'    { $raw = Get-FirstLine $ExePath @('--version') }
         'java'   { $raw = Get-FirstLine $ExePath @('-version') }
+        { $_ -in 'powershell', 'pwsh' } {
+            $raw = Get-FirstLine $ExePath @('-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()')
+        }
         default  {
             # 绝大多数工具支持 --version；个别只认 -version 或裸 version，逐个兜底
             $raw = Get-FirstLine $ExePath @('--version')
