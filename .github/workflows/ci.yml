@@ -135,19 +135,21 @@ jobs:
           exit $code
 
   windows-baseline:
-    # 收敛计划 P1：首扫并行化之前的基线。真实 runner 上用临时地图跑一次 map.ps1 scan，
+    # 收敛计划 P1 起：首扫基线。真实 runner 上用临时地图跑 map.ps1 scan，
     # 把墙钟时间与进程启动次数打成 ::notice 注解和 step summary（只量不判，不设阈值）。
+    # 每个宿主冷启动跑两轮、只计第二轮，宿主按 PS7 → PS5.1 的顺序出场，
+    # 预热开销落在不计的那一轮（细节见 tests/scan-baseline.ps1 开头）。
     # 单独成 job：真实扫描的耗时随 runner 浮动，不该挤占 windows job 的 8 分钟预算。
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
-      - name: 首扫基线（Windows PowerShell 5.1）
-        shell: powershell
-        run: .\tests\scan-baseline.ps1 -Label 'PS5.1'
-      - name: 首扫基线（PowerShell 7）
+      - name: 首扫基线（PowerShell 7，两轮计第二轮）
         shell: pwsh
-        run: .\tests\scan-baseline.ps1 -Label 'PS7'
+        run: .\tests\scan-baseline.ps1 -Label 'PS7' -Runs 2
+      - name: 首扫基线（Windows PowerShell 5.1，两轮计第二轮）
+        shell: powershell
+        run: .\tests\scan-baseline.ps1 -Label 'PS5.1' -Runs 2
 
   ubuntu:
     runs-on: ubuntu-latest
