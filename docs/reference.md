@@ -139,6 +139,7 @@ winget 是显式安装动作，通过找到的绝对入口调用，跳过 shim �
 
 - `timings`：只在 `-Timing` / `--timing` 时填充，每项 `{phase, ms}`。两个内核共用阶段键 declarations、managed、conventions、roots、probe、deep-scan（仅 `-Deep`）、resolution、warnings，可逐阶段对比；path-index 只有 census.ps1 有。census.sh 在 bash 5 及以上用 EPOCHREALTIME 计到毫秒，bash 3.2（macOS 自带）只能到秒。
 - `probeStats`：总是输出，`{launches, ms}`。launches 是为读版本而启动的外部进程数（含 mise 查询，不含 awk/sed 这类辅助进程），ms 是这些进程从启动到退出的累计毫秒；census.sh 在 bash 5 以下量不到耗时，ms 为 null。
+- 所有版本探测都经由 toolkit-common.ps1 的统一执行器 `Invoke-ToolkitProbe`：shim 护栏在任何执行之前；同一进程内按 路径|长度|修改时间|参数 缓存，文件被替换或换参数即重新启动，命中缓存不计入 launches。缓存不落盘，跨次调用的复用仍只靠地图里的候选校验信息。
 - `map.ps1 scan` 的结果带 `probeStats`：`launches`（census 子进程本身 1 个 + census 内的探测 + 地图侧的版本探测，命中探测缓存的不算）、`probeMs`、`wallMs`（整次扫描墙钟），以及分项 `census {launches, probeMs, wallMs}` 与 `map {launches, probeMs}`。census 输出里没有 probeStats 时按 0 计。只出现在动作结果里，不写进 map.json。
 
 告警：STUB、PATH_ORDER、SHADOWED、CONVENTION、PATH_DIRT、DRIFT、XDG_SHIFT、STRAY、UNDECLARED、MISSING、NO_MISE。它们只诊断工具层，不诊断端口、.env、应用依赖或后台服务。
