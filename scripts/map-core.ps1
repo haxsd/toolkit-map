@@ -90,62 +90,30 @@ function Enter-MapLock {
     } catch { $mutex.Dispose(); throw }
 }
 function Get-ProbeText {
+    # 薄封装：执行、超时、缓存与计数都在 toolkit-common.ps1 的 Invoke-ToolkitProbe。
+    # 口径：退出码非 0 视为失败；成功时取 stdout + stderr 的前 MaxLines 行非空行。
     param([string]$Exe, [string[]]$Arguments, [int]$MaxLines = 4)
     $script:LastProbe = @{ ok = $false; reason = 'probe_failed'; exitCode = $null }
-    # 最底层护栏，所有调用方（含配方专用探测）都不能绕过。
-    # Test-ToolkitProbeSafe 同时拦住经由 #! 或 npm.cmd 再去执行 PATH 上 node shim 的启动器。
+    # 护栏先于执行器：商店执行别名只在明确的 winget 动作里调用，探测一律跳过。
     if (-not $Exe -or -not (Test-ToolkitProbeSafe $Exe) -or (Test-IsStoreAlias $Exe)) { $script:LastProbe.reason = 'skipped'; return '' }
-    $p = $null
-    $probeSw = $null
-    try {
-        $fileName = $Exe
-        $argLine = ($Arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
-        $ext = [IO.Path]::GetExtension($Exe).ToLowerInvariant()
-        if ($ext -in @('.cmd', '.bat')) {
-            $fileName = $env:ComSpec
-            $argLine = '/d /s /c ""' + $Exe + '" ' + $argLine + '"'
-        } elseif ($ext -eq '.ps1') { $script:LastProbe.reason = 'unsupported_probe'; return '' }
-        $psi = New-Object Diagnostics.ProcessStartInfo
-        $psi.FileName = $fileName
-        $psi.Arguments = $argLine
-        $psi.RedirectStandardOutput = $true
-        $psi.RedirectStandardError = $true
-        $psi.UseShellExecute = $false
-        $psi.CreateNoWindow = $true
-        $psi.EnvironmentVariables['MISE_AUTO_INSTALL'] = '0'
-        $psi.EnvironmentVariables['MISE_NOT_FOUND_AUTO_INSTALL'] = '0'
-        $psi.EnvironmentVariables['MISE_AUTO_UPDATE'] = '0'
-        $probeSw = [Diagnostics.Stopwatch]::StartNew()
-        $p = [Diagnostics.Process]::Start($psi)
-        # 探测计数（scan 结果的 probeStats）。单独 try：计数失败绝不能影响探测结果。
-        try { $script:ProbeStats.launches += 1 } catch { }
-        $stdout = $p.StandardOutput.ReadToEndAsync()
-        $stderr = $p.StandardError.ReadToEndAsync()
-        if (-not $p.WaitForExit(20000)) {
-            try { if ($PSVersionTable.PSVersion.Major -ge 7) { $p.Kill($true) } else { $p.Kill() } } catch { }
-            $script:LastProbe.reason = 'timeout'; return ''
-        }
-        $script:LastProbe.exitCode = $p.ExitCode
-        if ($p.ExitCode -ne 0) { return '' }
-        if (-not $stdout.Wait(2000) -or -not $stderr.Wait(2000)) { $script:LastProbe.reason = 'timeout'; return '' }
-        $script:LastProbe.ok = $true
-        $script:LastProbe.reason = 'ok'
-        return (@(("$($stdout.Result)`n$($stderr.Result)" -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -First $MaxLines) -join "`n").Trim()
-    } catch { return '' } finally {
-        if ($probeSw) { try { $script:ProbeStats.ms += [int64]$probeSw.Elapsed.TotalMilliseconds } catch { } }
-        if ($p) { $p.Dispose() }
+    $probe = Invoke-ToolkitProbe -Exe $Exe -Arguments $Arguments
+    $script:LastProbe.exitCode = $probe.exitCode
+    if ($null -eq $probe.exitCode) {
+        if ($probe.reason -ne 'ok') { $script:LastProbe.reason = $probe.reason }
+        return ''
     }
+    if ($probe.exitCode -ne 0) { return '' }
+    if (-not $probe.ok) { $script:LastProbe.reason = $probe.reason; return '' }
+    $script:LastProbe.ok = $true
+    $script:LastProbe.reason = 'ok'
+    return (@(("$($probe.stdout)`n$($probe.stderr)" -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -First $MaxLines) -join "`n").Trim()
 }
-$script:ProbeCache = @{}
-# 本进程里 Get-ProbeText 启动过的外部进程数与累计耗时（毫秒）。Invoke-Scan 取前后差值。
-$script:ProbeStats = @{ launches = 0; ms = [int64]0 }
 function Get-ExeVersion {
     param([string]$ExePath)
     if (-not $ExePath) { return '' }
     $item = Get-Item -LiteralPath $ExePath -ErrorAction SilentlyContinue
     if ($null -eq $item -or $item.PSIsContainer -or $item.Length -eq 0 -or (Test-IsShimPath $ExePath) -or (Test-IsStoreAlias $ExePath)) { return '' }
-    $key = "$ExePath|$($item.Length)|$($item.LastWriteTimeUtc.Ticks)"
-    if ($script:ProbeCache.ContainsKey($key)) { return $script:ProbeCache[$key] }
+    # 同一文件不重复启动：缓存在 Invoke-ToolkitProbe（路径|长度|修改时间|参数），这里不另设一层。
     $name = Get-ToolkitCanonicalName $item.BaseName
     $adapter = $script:ToolCatalog[$name]
     $probes = if ($adapter -and $adapter.probe) { $adapter.probe } else { ,@('--version') }
@@ -161,7 +129,6 @@ function Get-ExeVersion {
         }
         if ($version) { break }
     }
-    $script:ProbeCache[$key] = $version
     return $version
 }
 function ConvertTo-MapTimestampTicks {
@@ -385,8 +352,8 @@ function Invoke-Scan {
     Write-MapMessage '扫描本机（只读探测，不执行 shim）…'
     # 计量（probeStats）：只量不改行为，给"首扫并行化"留一份前后对比的基线。
     $scanSw = [Diagnostics.Stopwatch]::StartNew()
-    $launchesBefore = [int]$script:ProbeStats.launches
-    $msBefore = [int64]$script:ProbeStats.ms
+    $launchesBefore = [int]$script:ToolkitProbeStats.launches
+    $msBefore = [int64]$script:ToolkitProbeStats.ms
     $old = Read-Map
     # 当前宿主路径同时支持 Windows PowerShell 5.1 与 PowerShell 7。
     $hostExe = (Get-Process -Id $PID).Path
@@ -424,9 +391,9 @@ function Invoke-Scan {
         if ($null -ne $census.probeStats.launches) { $censusLaunches = [int]$census.probeStats.launches }
         if ($null -ne $census.probeStats.ms) { $censusProbeMs = [int64]$census.probeStats.ms }
     }
-    $mapLaunches = [int]$script:ProbeStats.launches - $launchesBefore
-    $mapProbeMs = [int64]$script:ProbeStats.ms - $msBefore
-    # launches = census 子进程本身 1 个 + census 内的版本探测 + 本进程的版本探测（命中 ProbeCache 的不算）。
+    $mapLaunches = [int]$script:ToolkitProbeStats.launches - $launchesBefore
+    $mapProbeMs = [int64]$script:ToolkitProbeStats.ms - $msBefore
+    # launches = census 子进程本身 1 个 + census 内的版本探测 + 本进程的版本探测（命中探测缓存的不算）。
     $probeStats = @{
         launches = 1 + $censusLaunches + $mapLaunches
         probeMs  = $censusProbeMs + $mapProbeMs

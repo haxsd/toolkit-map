@@ -71,6 +71,12 @@ jobs:
       - name: 扫描 shim 护栏
         shell: powershell
         run: .\tests\scan-guards.ps1
+      - name: 统一探测执行器缓存（PowerShell 5.1）
+        shell: powershell
+        run: .\tests\probe-cache.ps1
+      - name: 统一探测执行器缓存（PowerShell 7）
+        shell: pwsh
+        run: .\tests\probe-cache.ps1
       - name: Portable 安装契约（不触网）
         shell: powershell
         run: .\tests\install-contract.ps1
@@ -172,6 +178,9 @@ jobs:
       - name: 文案表检查（Linux PowerShell 7）
         shell: pwsh
         run: ./tests/check-text.ps1
+      - name: 统一探测执行器缓存（Linux PowerShell 7）
+        shell: pwsh
+        run: ./tests/probe-cache.ps1
       - name: 冒烟测试（census.sh）
         shell: bash
         run: |

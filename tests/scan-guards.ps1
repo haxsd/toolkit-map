@@ -12,7 +12,6 @@ foreach ($definition in $ast.FindAll({ param($node) $node -is [Management.Automa
 function Resolve-CommandInPath { param($Index, $Name, $Exts, $DirCount) if ($Name -eq 'node') { 'C:\fixture\custom-data\shims\node.exe' } }
 function Get-FileLength { param($Path) return 512 }
 function Test-FileQuick { param($Path) throw 'shim 被交给了文件/执行探测器' }
-$script:VersionCache = @{}
 $guarded = Get-FirstLine 'C:\fixture\custom-data\shims\node.exe' @('--version')
 if ($guarded) { throw 'Get-FirstLine 不应探测 shim' }
 $guarded = Get-RuntimeVersion 'node' 'C:\fixture\custom-data\shims\node.exe'
@@ -26,5 +25,9 @@ try {
     if (-not (Test-ToolkitShimPath 'C:\fixture\custom-bin\node.exe')) { throw '未识别 MISE_SHIMS_DIR' }
     if (Test-ToolkitShimPath 'C:\fixture\custom-binary\node.exe') { throw '前缀相同的其他目录被误识别为 shim' }
 } finally { $env:MISE_SHIMS_DIR = $old }
+# 统一执行器自己也必须先过护栏：shim 不启动、不计数、不进缓存。
+$before = $script:ToolkitProbeStats.launches
+$probe = Invoke-ToolkitProbe 'C:\fixture\custom-data\shims\node.exe' @('--version')
+if ($probe.reason -ne 'skipped' -or $script:ToolkitProbeStats.launches -ne $before) { throw 'Invoke-ToolkitProbe 不应执行 shim' }
 Write-Host '[通过] 扫描内核各层 shim 护栏'
 exit 0

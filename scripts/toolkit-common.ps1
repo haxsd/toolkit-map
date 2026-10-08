@@ -97,6 +97,105 @@ function Test-ToolkitProbeSafe {
     return $true
 }
 
+# ---------- 统一探测执行器 ----------
+# 扫描内核（census.ps1 的 Get-FirstLine / Invoke-CaptureWithTimeout）与地图（map-core.ps1 的
+# Get-ProbeText）共用的唯一一处"启动外部进程读输出"。各调用方只是薄封装，按自己的口径取文本。
+#
+# 返回 @{ ok; stdout; stderr; exitCode; reason; cached }：
+#   ok       进程在超时内退出且两个输出流都读完了（不看退出码，退出码由调用方解释）
+#   exitCode 进程退出码；超时或没能启动时为 $null
+#   reason   ok / timeout / skipped（护栏拒绝执行）/ unsupported_probe（.ps1）/ probe_failed
+#   cached   是否来自本进程的探测缓存
+#
+# 护栏在任何执行之前：Test-ToolkitProbeSafe 不通过就不启动，也不查缓存。
+# 缓存只在本进程内存里，键是 路径|长度|修改时间(UTC ticks)|参数：文件被替换（大小或修改时间变化）
+# 或换了参数都会重新启动。命中缓存不算进程启动（ToolkitProbeStats.launches 不变）。
+# 跨进程复用（地图里 #7 的候选校验缓存之外的那种）是后续计划 P4 的事，这里不落盘。
+$script:ToolkitProbeCache = @{}
+$script:ToolkitProbeStats = @{ launches = 0; ms = [int64]0; cacheHits = 0 }
+
+function Get-ToolkitProbeCacheKey {
+    param([string]$Exe, [string[]]$Arguments)
+    try {
+        $info = New-Object IO.FileInfo $Exe
+        if (-not $info.Exists) { return '' }
+        return ($info.FullName + '|' + $info.Length + '|' + $info.LastWriteTimeUtc.Ticks + '|' + (@($Arguments) -join [char]0))
+    } catch { return '' }
+}
+
+function Invoke-ToolkitProbe {
+    param([string]$Exe, [string[]]$Arguments, [int]$TimeoutMs = 20000, [switch]$NoCache)
+    $result = @{ ok = $false; stdout = ''; stderr = ''; exitCode = $null; reason = 'probe_failed'; cached = $false }
+    # 最底层护栏：所有调用方都不能绕过。同时拦住经由 #! 或 npm.cmd 再去执行 PATH 上 node shim 的启动器。
+    if (-not $Exe -or -not (Test-ToolkitProbeSafe $Exe)) { $result.reason = 'skipped'; return $result }
+    $ext = [IO.Path]::GetExtension($Exe).ToLowerInvariant()
+    # 不探测 PowerShell 脚本的版本：拖慢且结果无意义
+    if ($ext -eq '.ps1') { $result.reason = 'unsupported_probe'; return $result }
+
+    $key = if ($NoCache) { '' } else { Get-ToolkitProbeCacheKey $Exe $Arguments }
+    if ($key -and $script:ToolkitProbeCache.ContainsKey($key)) {
+        $hit = $script:ToolkitProbeCache[$key].Clone()
+        $hit.cached = $true
+        try { $script:ToolkitProbeStats.cacheHits += 1 } catch { }
+        return $hit
+    }
+
+    $fileName = $Exe
+    $argLine = (@($Arguments) | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
+    if ($ext -in @('.cmd', '.bat')) {
+        # .cmd/.bat 必须经由 cmd.exe 解释。/d 不跑 AutoRun，/s 让外层引号按字面剥掉。
+        $fileName = if ($env:ComSpec) { $env:ComSpec } else { 'cmd.exe' }
+        $argLine = '/d /s /c ""' + $Exe + '" ' + $argLine + '"'
+    }
+    $p = $null
+    $sw = $null
+    $launched = $false
+    try {
+        $psi = New-Object Diagnostics.ProcessStartInfo
+        $psi.FileName = $fileName
+        $psi.Arguments = $argLine
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        # 探测不该触发 mise 的自动安装 / 自动更新，结果也才可复现
+        $psi.EnvironmentVariables['MISE_AUTO_INSTALL'] = '0'
+        $psi.EnvironmentVariables['MISE_NOT_FOUND_AUTO_INSTALL'] = '0'
+        $psi.EnvironmentVariables['MISE_AUTO_UPDATE'] = '0'
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $p = [Diagnostics.Process]::Start($psi)
+        $launched = $true
+        try { $script:ToolkitProbeStats.launches += 1 } catch { }
+        # 必须同时读两个流：只读一个的话，另一个管道缓冲区写满就会死锁
+        $stdout = $p.StandardOutput.ReadToEndAsync()
+        $stderr = $p.StandardError.ReadToEndAsync()
+        # 超时保护：损坏的安装或等锁的管理器会让 --version 永久挂住
+        if (-not $p.WaitForExit($TimeoutMs)) {
+            try { if ($PSVersionTable.PSVersion.Major -ge 7) { $p.Kill($true) } else { $p.Kill() } } catch { }
+            $result.reason = 'timeout'
+        } else {
+            $result.exitCode = $p.ExitCode
+            # 进程退出了但孙进程还占着管道时不无限等
+            if (-not $stdout.Wait(2000) -or -not $stderr.Wait(2000)) {
+                $result.reason = 'timeout'
+            } else {
+                $result.stdout = [string]$stdout.Result
+                $result.stderr = [string]$stderr.Result
+                $result.ok = $true
+                $result.reason = 'ok'
+            }
+        }
+    } catch {
+        $result.reason = 'probe_failed'
+    } finally {
+        if ($sw) { try { $script:ToolkitProbeStats.ms += [int64]$sw.Elapsed.TotalMilliseconds } catch { } }
+        if ($p) { $p.Dispose() }
+    }
+    # 只缓存真的启动过的结果（含超时：同一个未变的文件再等 20 秒也不会有不同结论）
+    if ($key -and $launched) { $script:ToolkitProbeCache[$key] = $result.Clone() }
+    return $result
+}
+
 function Get-ToolkitCanonicalName {
     param([string]$Name)
     if ($script:ToolCatalog) {

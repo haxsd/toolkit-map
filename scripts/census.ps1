@@ -224,109 +224,39 @@ function Get-FileLength {
 }
 
 # 运行一个可执行文件并只取输出的第一行，失败返回空串。
-# 用 .NET Process 而不是 PowerShell 的原生调用，原因有两个：
-#   1. java -version 把版本写到 stderr。在 $ErrorActionPreference='SilentlyContinue'
-#      下，2>&1 合并进来的 stderr 会被整体丢弃，导致 java 版本永远探测为空白。
-#   2. 避免每次调用都走一遍 PowerShell 管道，探测上百个文件时差距明显。
-# 同时读取两个流是必须的：只读一个的话，另一个管道缓冲区写满就会死锁。
+# 真正的执行在 toolkit-common.ps1 的 Invoke-ToolkitProbe（.NET Process，同时读两个流、20 秒超时、
+# 进程内缓存与计数）。不用 PowerShell 的原生调用：java -version 把版本写到 stderr，
+# 在 $ErrorActionPreference='SilentlyContinue' 下 2>&1 合并进来的 stderr 会被整体丢弃。
+# 口径：不看退出码，stdout 为空时取 stderr 的第一行非空行。
+# 注意：scan-guards.ps1 会把本函数单独抽出来运行，名字和位置都不要动；
+# 护栏必须先于 Test-FileQuick（scan-guards 用它检测 shim 有没有被交给执行器）。
 function Get-FirstLine {
     param([string]$Exe, [string[]]$Arguments)
     # 不只看文件本身：npm.cmd 一类启动器会再去执行 PATH 上的 node（见 Test-ToolkitProbeSafe）
     if (-not (Test-ToolkitProbeSafe $Exe)) { return '' }
     if (-not (Test-FileQuick $Exe)) { return '' }
-
-    $fileName = $Exe
-    $argLine = ($Arguments | ForEach-Object {
-        if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
-    }) -join ' '
-
-    $ext = [System.IO.Path]::GetExtension($Exe).ToLowerInvariant()
-    if ($ext -eq '.cmd' -or $ext -eq '.bat') {
-        # .cmd/.bat 必须经由 cmd.exe 解释，不能直接作为进程启动
-        $argLine  = '/c "' + $Exe + '" ' + $argLine
-        $fileName = $env:ComSpec
-        if (-not $fileName) { $fileName = 'cmd.exe' }
-    } elseif ($ext -eq '.ps1') {
-        # 不探测 PowerShell 脚本的版本，避免拖慢且结果无意义
-        return ''
-    }
-
-    $probeSw = $null
-    try {
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName               = $fileName
-        $psi.Arguments              = $argLine
-        $psi.RedirectStandardOutput = $true
-        $psi.RedirectStandardError  = $true
-        $psi.UseShellExecute        = $false
-        $psi.CreateNoWindow         = $true
-
-        $probeSw = [System.Diagnostics.Stopwatch]::StartNew()
-        $p  = [System.Diagnostics.Process]::Start($psi)
-        # 探测计数（probeStats）。单独 try：scan-guards 只抽出本函数单独运行，那里没有 $ProbeStats，
-        # 计数失败绝不能影响探测结果。
-        try { $ProbeStats['launches'] += 1 } catch { }
-        $so = $p.StandardOutput.ReadToEndAsync()
-        $se = $p.StandardError.ReadToEndAsync()
-
-        # 加超时保护：某些损坏的运行时安装会让 -version 永久挂住
-        if (-not $p.WaitForExit(20000)) {
-            try { $p.Kill() } catch { }
-            return ''
-        }
-
-        $text = $so.Result
-        if ([string]::IsNullOrWhiteSpace($text)) { $text = $se.Result }
-        if ([string]::IsNullOrWhiteSpace($text)) { return '' }
-
-        $line = $text -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 1
-        return "$line".Trim()
-    } catch {
-        return ''
-    } finally {
-        if ($probeSw) { try { $ProbeStats['ms'] += [int64]$probeSw.Elapsed.TotalMilliseconds } catch { } }
-    }
+    $probe = Invoke-ToolkitProbe -Exe $Exe -Arguments $Arguments
+    if (-not $probe.ok) { return '' }
+    $text = $probe.stdout
+    if ([string]::IsNullOrWhiteSpace($text)) { $text = $probe.stderr }
+    if ([string]::IsNullOrWhiteSpace($text)) { return '' }
+    $line = $text -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 1
+    return "$line".Trim()
 }
 
 # 运行一个命令并在超时后放弃，返回 stdout 文本；超时或失败返回空串。
 # 为什么需要它：census 是只读诊断工具，不能跟着别的进程一起卡死。实测踩过——
 # mise 会因为陈旧的锁或联网自检无限等待，而 census 里的 `mise ls` 就会一直挂着。
-# 顺带把 MISE_AUTO_UPDATE 关掉：诊断不该等着检查更新，结果也才可复现。
+# 执行器会把 MISE_AUTO_UPDATE 等关掉。-NoCache：mise ls 的输出取决于配置而不是 mise 本身，
+# 不能按可执行文件的大小和修改时间缓存。
 function Invoke-CaptureWithTimeout {
     param([string]$Exe, [string[]]$Arguments, [int]$TimeoutMs = 20000)
-    $probeSw = $null
     $cmd = Get-Command $Exe -ErrorAction SilentlyContinue
     if (-not $cmd) { return '' }
     if (-not (Test-ToolkitProbeSafe $cmd.Source)) { return '' }
-    try {
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = $cmd.Source
-        $psi.Arguments = ($Arguments | ForEach-Object {
-            if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
-        }) -join ' '
-        $psi.RedirectStandardOutput = $true
-        $psi.RedirectStandardError  = $true
-        $psi.UseShellExecute        = $false
-        $psi.CreateNoWindow         = $true
-        $psi.EnvironmentVariables['MISE_AUTO_UPDATE'] = '0'
-        $psi.EnvironmentVariables['MISE_AUTO_INSTALL'] = '0'
-        $psi.EnvironmentVariables['MISE_NOT_FOUND_AUTO_INSTALL'] = '0'
-
-        $probeSw = [System.Diagnostics.Stopwatch]::StartNew()
-        $p  = [System.Diagnostics.Process]::Start($psi)
-        try { $ProbeStats['launches'] += 1 } catch { }
-        $so = $p.StandardOutput.ReadToEndAsync()
-        $se = $p.StandardError.ReadToEndAsync()   # 必须同时读两个流，否则管道写满会死锁
-        if (-not $p.WaitForExit($TimeoutMs)) {
-            try { $p.Kill() } catch { }
-            return ''
-        }
-        return $so.Result
-    } catch {
-        return ''
-    } finally {
-        if ($probeSw) { try { $ProbeStats['ms'] += [int64]$probeSw.Elapsed.TotalMilliseconds } catch { } }
-    }
+    $probe = Invoke-ToolkitProbe -Exe $cmd.Source -Arguments $Arguments -TimeoutMs $TimeoutMs -NoCache
+    if (-not $probe.ok) { return '' }
+    return $probe.stdout
 }
 
 # 判断文件是不是"真的可执行"。
@@ -395,13 +325,11 @@ function Get-NormalizedVersion {
 }
 
 # 探测某个运行时可执行文件的版本。
-# 结果做缓存，避免同一个文件被反复调用（java -version 启动开销不小）。
-$script:VersionCache = @{}
+# 同一个文件不会被反复启动（java -version 启动开销不小）：缓存在统一执行器 Invoke-ToolkitProbe 里，
+# 按 路径|长度|修改时间|参数 记，这里不再另设一层。
 function Get-RuntimeVersion {
     param([string]$Tool, [string]$ExePath)
     if (Test-ToolkitShimPath $ExePath) { return '' }
-    $key = "$Tool|$ExePath"
-    if ($script:VersionCache.ContainsKey($key)) { return $script:VersionCache[$key] }
 
     $raw = ''
     switch ($Tool) {
@@ -417,7 +345,6 @@ function Get-RuntimeVersion {
         }
     }
     $ver = Get-NormalizedVersion -Tool $Tool -Raw $raw
-    $script:VersionCache[$key] = $ver
     return $ver
 }
 
@@ -495,10 +422,6 @@ function ConvertTo-RuntimeRecord {
 # 计时收集器。用普通变量放在脚本作用域，Measure-Phase 直接往里追加。
 # 刻意不用 $script: 前缀——在脚本顶层和函数内部对它的解析行为容易产生歧义。
 $TimingItems = New-Object System.Collections.Generic.List[object]
-# 探测进程计数：Get-FirstLine / Invoke-CaptureWithTimeout 每启动一个外部进程就记一次，
-# 并累计从启动到退出（或超时）的毫秒数。与 $TimingItems 同理，用普通变量 + 原地修改。
-# 输出到 JSON 的 probeStats 字段（附加字段，schemaVersion 不变），供并行化前后对比。
-$ProbeStats = @{ launches = 0; ms = [int64]0 }
 function Measure-Phase {
     param([string]$Name, [scriptblock]$Body)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -1406,7 +1329,9 @@ Add-ReportField $report 'timings'      {
 }
 # probeStats 总是输出（不依赖 -Timing）：计数本身零开销，map 扫描要拿它做基线。
 Add-ReportField $report 'probeStats'   {
-    [pscustomobject]@{ launches = [int]$ProbeStats['launches']; ms = [int64]$ProbeStats['ms'] }
+    # 计数来自统一执行器（toolkit-common.ps1 的 $script:ToolkitProbeStats）：每启动一个外部进程记一次，
+    # 累计从启动到退出（或超时）的毫秒数；命中探测缓存不算。
+    [pscustomobject]@{ launches = [int]$script:ToolkitProbeStats.launches; ms = [int64]$script:ToolkitProbeStats.ms }
 }
 Add-ReportField $report 'summary'      {
     [pscustomobject]@{
@@ -1604,7 +1529,7 @@ if ($Timing) {
     $sum = ($TimingItems | Measure-Object -Property ms -Sum).Sum
     # 合计行与 census.sh 同格式（timing.line）。旧写法把 ms 传给不含 {ms} 的 timing.total，数字被吞掉了。
     Write-Host ('  ' + (T 'timing.line' @{ phase = (T 'timing.total'); ms = $sum })) -ForegroundColor White
-    Write-Host ('  ' + (T 'timing.probes' @{ count = $ProbeStats['launches']; ms = $ProbeStats['ms'] })) -ForegroundColor DarkGray
+    Write-Host ('  ' + (T 'timing.probes' @{ count = $script:ToolkitProbeStats.launches; ms = $script:ToolkitProbeStats.ms })) -ForegroundColor DarkGray
 }
 
 Write-Host ''
