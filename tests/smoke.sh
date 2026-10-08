@@ -114,6 +114,17 @@ else
   fail "文案表缺失时没有明确失败（退出码 ${NO_TEXT_CODE}）"
 fi
 
+# 扫描数据表同理：只带文案表、不带 census-data.tsv 时也必须以退出码 2 明确失败
+mkdir -p "$FX/no-data"
+cp "$CENSUS" "$REPO_ROOT/scripts/census-text.tsv" "$FX/no-data/"
+"$FX/no-data/census.sh" --json > /dev/null 2> "$FX/no-data.err"
+NO_DATA_CODE=$?
+if [ "$NO_DATA_CODE" -eq 2 ] && grep -q 'census-data.tsv' "$FX/no-data.err"; then
+  pass "扫描数据表缺失时以退出码 2 失败并指明 census-data.tsv"
+else
+  fail "扫描数据表缺失时没有明确失败（退出码 ${NO_DATA_CODE}）"
+fi
+
 # JSON 模式：结构完整 + 可被机器解析。
 # 先确认 python3 真的能跑：有些环境里 `command -v python3` 成功，但它指向一个失效的
 # shim（实测踩过），那属于环境问题，不该被算成 JSON 校验失败。

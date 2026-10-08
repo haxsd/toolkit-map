@@ -1,0 +1,141 @@
+# census.ps1 与 census.sh 共用的扫描数据（收敛计划 C3）。每行 kind<TAB>os<TAB>value，按文件顺序生效。
+# os：win = census.ps1（Windows 布局），unix = census.sh（Unix / macOS / Git Bash），all = 两边都用。
+# 两边现有的差异按原样写成 win / unix 行，不在这里统一（语义对齐是 C4 的事）；
+# 同一 kind 下两边的顺序都保持原来的顺序，所以 win / unix 行会交错排列。
+# 根目录里的 {占位符}：win 行用环境变量 {APPDATA} {LOCALAPPDATA} {USERPROFILE}；
+# unix 行用 {HOME} 与 {MISE_DATA}（= ${XDG_DATA_HOME:-$HOME/.local/share}/mise）。未设置的环境变量展开成空串。
+# kind：
+#   probe-rel        候选根目录及其直接子目录下要探测的可执行文件相对路径
+#   conda-dir        候选根目录下存放 conda 环境的目录名
+#   conda-rel        conda 环境目录下要探测的解释器相对路径
+#   root             静态候选根目录（PATH 目录及其父目录、IDE 应用等动态来源仍在脚本里）
+#   ide-glob         census.ps1 在每个盘符根下按名称匹配的 IDE 安装目录
+#   resolve          解析层默认要解析的命令（声明里点名的工具另外追加）
+#   convention       约定层识别的命令名（node22 / python312 这类带版本号的命名 shim）
+#   convention-skip  跨平台公认的 <名字>2 / <名字>3[.x] 不算约定（python3 / pip3 / python3.12）
+# 校验：tests/check-data.ps1（列数、os 取值、无重复、每个 kind 两边都有值）。
+probe-rel	all	node.exe
+probe-rel	win	bin\node.exe
+probe-rel	unix	bin/node
+probe-rel	all	python.exe
+probe-rel	win	Scripts\python.exe
+probe-rel	unix	bin/python
+probe-rel	unix	bin/python3
+probe-rel	unix	Scripts/python.exe
+probe-rel	all	java.exe
+probe-rel	win	bin\java.exe
+probe-rel	win	jbr\bin\java.exe
+probe-rel	win	jre\bin\java.exe
+probe-rel	unix	bin/java
+probe-rel	unix	jbr/bin/java
+probe-rel	unix	jre/bin/java
+conda-dir	all	envs
+conda-dir	all	env
+conda-rel	all	python.exe
+conda-rel	win	Scripts\python.exe
+conda-rel	unix	bin/python
+root	win	{APPDATA}\nvm
+root	win	{APPDATA}\fnm
+root	win	{LOCALAPPDATA}\fnm
+root	win	{LOCALAPPDATA}\fnm_multishells
+root	win	{APPDATA}\nvs
+root	win	{USERPROFILE}\.volta\tools\image
+root	win	{USERPROFILE}\.asdf
+root	win	{LOCALAPPDATA}\mise
+root	win	{USERPROFILE}\.local\share\mise
+root	win	{USERPROFILE}\.pyenv
+root	win	{USERPROFILE}\scoop\apps
+root	win	C:\ProgramData\chocolatey\lib
+root	win	{USERPROFILE}\miniconda3
+root	win	{USERPROFILE}\anaconda3
+root	win	C:\ProgramData\miniconda3
+root	win	C:\ProgramData\Anaconda3
+root	win	C:\Program Files\nodejs
+root	win	C:\Program Files\Java
+root	win	C:\Program Files (x86)\Java
+root	win	C:\Program Files\Eclipse Adoptium
+root	win	C:\Program Files\Microsoft
+root	win	C:\Program Files\Zulu
+root	win	C:\Program Files\Amazon Corretto
+root	win	C:\Program Files\BellSoft
+root	win	C:\Program Files\Semeru
+root	win	C:\Program Files\RedHat
+root	win	C:\Program Files\JetBrains
+root	win	D:\Program Files\JetBrains
+root	win	{USERPROFILE}\AppData\Local\Programs
+root	unix	{HOME}/.nvm/versions/node
+root	unix	{HOME}/.fnm
+root	unix	{HOME}/.local/share/fnm
+root	unix	{HOME}/.volta/tools/image
+root	unix	{HOME}/.asdf
+root	unix	{MISE_DATA}
+root	unix	{HOME}/.pyenv/versions
+root	unix	{HOME}/miniconda3
+root	unix	{HOME}/anaconda3
+root	unix	{HOME}/miniforge3
+root	unix	{HOME}/.local/bin
+root	unix	{HOME}/.cargo/bin
+root	unix	/opt/homebrew/opt
+root	unix	/usr/local/opt
+root	unix	/usr/local
+root	unix	/opt
+root	unix	/Library/Java/JavaVirtualMachines
+root	unix	/Applications/Android Studio.app/Contents/jbr
+root	unix	{HOME}/Applications
+ide-glob	win	*pycharm*
+ide-glob	win	*IntelliJ*
+ide-glob	win	*JetBrains*
+ide-glob	win	*webstorm*
+ide-glob	win	*goland*
+ide-glob	win	*Android*Studio*
+resolve	all	node
+resolve	all	npm
+resolve	all	npx
+resolve	all	pnpm
+resolve	all	yarn
+resolve	all	python
+resolve	all	python3
+resolve	all	py
+resolve	all	pip
+resolve	all	uv
+resolve	all	java
+resolve	all	javac
+resolve	all	mvn
+resolve	all	gradle
+resolve	all	go
+resolve	all	cargo
+resolve	all	rustc
+resolve	all	deno
+resolve	all	bun
+resolve	all	dotnet
+resolve	all	mise
+resolve	win	pwsh
+resolve	win	winget
+resolve	win	git
+resolve	win	docker
+resolve	win	conda
+convention	all	node
+convention	all	nodejs
+convention	all	npm
+convention	all	npx
+convention	all	pnpm
+convention	all	yarn
+convention	all	python
+convention	all	python3
+convention	all	py
+convention	all	pip
+convention	all	uv
+convention	all	java
+convention	all	javac
+convention	all	mvn
+convention	all	gradle
+convention	all	go
+convention	all	cargo
+convention	all	rustc
+convention	all	deno
+convention	all	bun
+convention	all	dotnet
+convention	all	php
+convention	all	ruby
+convention-skip	all	python
+convention-skip	all	pip

@@ -44,6 +44,12 @@ jobs:
       - name: 文案表检查（PowerShell 7）
         shell: pwsh
         run: .\tests\check-text.ps1
+      - name: 扫描数据表检查（PowerShell 5.1）
+        shell: powershell
+        run: .\tests\check-data.ps1
+      - name: 扫描数据表检查（PowerShell 7）
+        shell: pwsh
+        run: .\tests\check-data.ps1
       - name: 地图动作回归（失效路径与安装覆盖护栏）
         shell: powershell
         run: .\tests\map-smoke.ps1
@@ -178,6 +184,9 @@ jobs:
       - name: 文案表检查（Linux PowerShell 7）
         shell: pwsh
         run: ./tests/check-text.ps1
+      - name: 扫描数据表检查（Linux PowerShell 7）
+        shell: pwsh
+        run: ./tests/check-data.ps1
       - name: 统一探测执行器缓存（Linux PowerShell 7）
         shell: pwsh
         run: ./tests/probe-cache.ps1
