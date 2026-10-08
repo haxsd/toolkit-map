@@ -180,24 +180,37 @@ try {
 
 # 两个实现看到的世界不同，候选目录不同，所以按"沙箱里埋的雷"逐条断言，
 # 而不是比较告警种类集合是否完全相等。
-function Has-KindContaining {
-    param($Report, [string]$Kind, [string]$Needle)
-    return [bool](@($Report.warnings) | Where-Object {
-        $_.kind -eq $Kind -and (("$($_.detail) $($_.message)") -like "*$Needle*")
-    })
+# 期望事实放在 tests/fixtures/census-expected.tsv，与 smoke.sh 共用同一份：
+# 每行 scope / kind / tool / needle，这里只取 scope 为 both 或 parity 的行。
+# needle 用 .Contains 做字面匹配（-like 会把 [ ] * ? 当通配符）。
+$expectedPath = Join-Path $repoRoot 'tests\fixtures\census-expected.tsv'
+$expected = @()
+foreach ($line in [IO.File]::ReadAllLines($expectedPath, [Text.Encoding]::UTF8)) {
+    if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith('#')) { continue }
+    $cols = $line.TrimEnd("`r") -split "`t"
+    if ($cols.Count -lt 4) { continue }
+    if ($cols[0] -ne 'both' -and $cols[0] -ne 'parity') { continue }
+    $expected += [pscustomobject]@{
+        kind   = $cols[1]
+        tool   = $cols[2]
+        needle = $cols[3].Replace('{sandbox}', $leaf)
+    }
 }
+Check 'census-expected.tsv 有可用的期望行' ($expected.Count -gt 0) "读取 $expectedPath"
 
 foreach ($impl in @(@{ Name = 'census.ps1'; Data = $ps1 }, @{ Name = 'census.sh'; Data = $sh })) {
     $name = $impl.Name
     $d = $impl.Data
     Write-Host ("  --- $name 告警: " + ((@($d.warnings) | ForEach-Object { $_.kind } | Sort-Object -Unique) -join ', ')) -ForegroundColor DarkGray
 
-    Check "$name 发现约定 node22（CONVENTION）"      (Has-KindContaining $d 'CONVENTION' 'node22')
-    Check "$name 发现声明漂移（DRIFT）"             (Has-KindContaining $d 'DRIFT'      'config.toml')
-    Check "$name 发现声明了却没装（MISSING）"        (Has-KindContaining $d 'MISSING'    'census-absent-tool')
-    Check "$name 发现 PATH 重复条目（PATH_DIRT）"    (Has-KindContaining $d 'PATH_DIRT'  $leaf)
-    Check "$name 发现被遮蔽的副本（SHADOWED）"       (Has-KindContaining $d 'SHADOWED'   'rt1')
-    Check "$name 发现游离运行时（STRAY）"            (Has-KindContaining $d 'STRAY'      'rt2')
+    foreach ($row in $expected) {
+        $hit = @(@($d.warnings) | Where-Object {
+            $_.kind -eq $row.kind -and
+            ($row.tool -eq '*' -or $_.tool -eq $row.tool) -and
+            ("$($_.detail) $($_.message)".Contains($row.needle))
+        })
+        Check "$name 报出 $($row.kind)（tool=$($row.tool)，含 $($row.needle)）" ($hit.Count -gt 0) '期望来自 tests/fixtures/census-expected.tsv'
+    }
 }
 
     # ---------- 双语与 JSON 契约 ----------
