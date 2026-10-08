@@ -32,6 +32,23 @@ function Fake-Tool {
     [IO.File]::WriteAllText($file, "@echo off`r`necho $Name $Version`r`nexit /b 0`r`n", [Text.Encoding]::ASCII)
     return [IO.Path]::GetFullPath($file)
 }
+# 地图去掉随时间变化的字段（键名以 At 结尾：scannedAt、updatedAt、checkedAt 等）、键按名字排序后的稳定文本
+# （地图里的对象来自哈希表，PS7 每个进程的键序都可能不同，所以比较前统一排序）
+function ConvertTo-StableNode {
+    param($Node)
+    if ($Node -is [System.Management.Automation.PSCustomObject]) {
+        $out = [ordered]@{}
+        foreach ($name in @($Node.PSObject.Properties | ForEach-Object { $_.Name } | Where-Object { $_ -cnotmatch 'At$' } | Sort-Object -CaseSensitive)) { $out[$name] = ConvertTo-StableNode $Node.$name }
+        return $out
+    }
+    if ($Node -is [System.Collections.IEnumerable] -and $Node -isnot [string]) { return ,@(foreach ($item in $Node) { ConvertTo-StableNode $item }) }
+    return $Node
+}
+function Get-StableMapText {
+    param([string]$Path)
+    $value = [IO.File]::ReadAllText($Path) | ConvertFrom-Json
+    return (ConvertTo-StableNode $value | ConvertTo-Json -Depth 30 -Compress)
+}
 try {
     [void][IO.Directory]::CreateDirectory($scratch)
     $scripts = Join-Path $scratch 'product\scripts'
@@ -179,10 +196,26 @@ param([switch]$Json)
     }
     $saved = [IO.File]::ReadAllText($mapFile) | ConvertFrom-Json
     for ($i = 0; $i -lt 4; $i++) { Assert ($saved.tools.PSObject.Properties.Name -contains "parallel-$i") '并发更新丢失条目' }
+    # P3：并行探测（-Throttle 4）与串行（-Throttle 1）扫同一个沙箱，去掉时间字段后地图必须逐字相同，启动次数也相同。
+    $pathA = Join-Path $scratch 'path-a'; $pathB = Join-Path $scratch 'path-b'
+    foreach ($tool in @('node', 'python', 'git', 'go', 'rg', 'cargo', 'java', 'uv')) { $null = Fake-Tool $pathA $tool '1.2.3' }
+    foreach ($tool in @('node', 'python', 'git')) { $null = Fake-Tool $pathB $tool '4.5.6' }
+    $savedPath = $env:PATH; $savedMap = $mapFile
+    $env:PATH = "$pathA;$pathB"
+    $runs = @{}
+    foreach ($throttle in @(1, 4)) {
+        $mapFile = Join-Path $scratch "throttle-$throttle.json"
+        $r = Run-Map @('scan', '-Throttle', "$throttle"); Assert ($r.code -eq 0) "-Throttle $throttle 的 scan 失败"
+        $runs[$throttle] = @{ text = Get-StableMapText $mapFile; launches = $r.value.probeStats.map.launches; candidates = @(([IO.File]::ReadAllText($mapFile) | ConvertFrom-Json).tools.PSObject.Properties | ForEach-Object { @($_.Value.candidates) } | Where-Object { $_.path }).Count }
+    }
+    $env:PATH = $savedPath; $mapFile = $savedMap
+    Assert ($runs[1].candidates -ge 11) "沙箱里的 11 个假工具没有全部扫到：$($runs[1].candidates)"
+    Assert ($runs[1].text -eq $runs[4].text) "并行与串行扫描的地图（去掉时间字段后）必须相同：`n$($runs[1].text)`n$($runs[4].text)"
+    Assert ($runs[1].launches -eq $runs[4].launches) "并行与串行的探测启动次数必须相同：$($runs[1].launches) / $($runs[4].launches)"
     [IO.File]::WriteAllText($mapFile, '{broken')
     $r = Run-Map @('add', 'node', '-Path', $one)
     Assert ($r.code -ne 0 -and $r.value.status -eq 'map_corrupt' -and [IO.File]::ReadAllText($mapFile) -eq '{broken') '损坏地图不能被当成空地图覆盖'
-    Write-Host '[通过] 项目选择、探测护栏、持久化、查询缓存、并发与首次接入契约'
+    Write-Host '[通过] 项目选择、探测护栏、持久化、查询缓存、并发、并行扫描与首次接入契约'
 } finally {
     foreach ($name in $original.Keys) { [Environment]::SetEnvironmentVariable($name, $original[$name], 'Process') }
     $resolved = [IO.Path]::GetFullPath($scratch)

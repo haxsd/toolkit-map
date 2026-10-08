@@ -108,6 +108,17 @@ function Get-ProbeText {
     $script:LastProbe.reason = 'ok'
     return (@(("$($probe.stdout)`n$($probe.stderr)" -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -First $MaxLines) -join "`n").Trim()
 }
+# New-Candidate → Get-ExeVersion 会对这个路径做的第一次探测（同样的过滤条件）；不会探测时返回 $null。
+# 只预热第一组参数：后备参数只在第一组失败时才串行补跑，进程数与串行时一致。
+function Get-ExeVersionProbeJob {
+    param([string]$ExePath)
+    try { $ExePath = [IO.Path]::GetFullPath($ExePath) } catch { return $null }
+    $item = Get-Item -LiteralPath $ExePath -ErrorAction SilentlyContinue
+    if ($null -eq $item -or $item.PSIsContainer -or $item.Length -eq 0 -or (Test-IsShimPath $ExePath) -or (Test-IsStoreAlias $ExePath)) { return $null }
+    $adapter = $script:ToolCatalog[(Get-ToolkitCanonicalName $item.BaseName)]
+    $probes = if ($adapter -and $adapter.probe) { $adapter.probe } else { ,@('--version') }
+    return @{ exe = $ExePath; args = @(@($probes)[0]) }
+}
 function Get-ExeVersion {
     param([string]$ExePath)
     if (-not $ExePath) { return '' }
@@ -230,9 +241,10 @@ function Set-UniqueCandidateIds {
         }
     } finally { $sha.Dispose() }
 }
-function Get-ToolCandidates {
+# 某个工具在本机的候选路径（去重、排除环境内部文件），不探测。
+function Get-ToolCandidatePaths {
     param([string]$Name, [hashtable]$RuntimeIndex = @{})
-    if ($Name -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._+-]*$') { return @() }
+    if ($Name -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._+-]*$') { return ,@() }
     $paths = New-Object System.Collections.Generic.List[string]
     foreach ($runtime in $RuntimeIndex.Values) { if ($runtime.tool -eq $Name) { $paths.Add($runtime.path) } }
     foreach ($file in @(Get-PathHits $Name) + @(Get-WarehouseHits $Name) + @(Get-ManagerHits $Name)) { $paths.Add($file) }
@@ -242,11 +254,19 @@ function Get-ToolCandidates {
         if ([IO.File]::Exists($file)) { $paths.Add($file) }
     }
     $seen = @{}
-    $out = New-Object System.Collections.Generic.List[object]
+    $out = New-Object System.Collections.Generic.List[string]
     foreach ($file in $paths) {
         $key = Get-ToolkitNormalizedPath $file
-        if (-not $seen.ContainsKey($key) -and -not (Test-IsEnvInternal $file)) { $seen[$key] = $true; $out.Add((New-Candidate $file)) }
+        if (-not $seen.ContainsKey($key) -and -not (Test-IsEnvInternal $file)) { $seen[$key] = $true; $out.Add($file) }
     }
+    return ,$out.ToArray()
+}
+function Get-ToolCandidates {
+    param([string]$Name, [hashtable]$RuntimeIndex = @{}, [string[]]$Paths = $null)
+    if ($Name -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._+-]*$') { return @() }
+    if ($null -eq $Paths) { $Paths = Get-ToolCandidatePaths $Name $RuntimeIndex }
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($file in $Paths) { $out.Add((New-Candidate $file)) }
     $candidates = $out.ToArray()
     Set-UniqueCandidateIds $candidates
     return $candidates
@@ -348,6 +368,11 @@ function Merge-Candidates {
     }
     $result = $out.ToArray(); Set-UniqueCandidateIds $result; return $result
 }
+# 首扫探测的并行度：-Throttle 显式给出时用它（1 = 原来的串行），否则 min(8, CPU 数)。
+function Get-ScanThrottle {
+    if ($Throttle -ge 1) { return $Throttle }
+    return [Math]::Max(1, [Math]::Min(8, [Environment]::ProcessorCount))
+}
 function Invoke-Scan {
     Write-MapMessage '扫描本机（只读探测，不执行 shim）…'
     # 计量（probeStats）：只量不改行为，给"首扫并行化"留一份前后对比的基线。
@@ -374,13 +399,27 @@ function Invoke-Scan {
     if ($old) { foreach ($name in $old.tools.Keys) { [void]$names.Add((Get-ToolkitCanonicalName $name)) } }
     $map = @{ schemaVersion = 2; scannedAt = (Get-Date).ToString('o'); warehouse = Get-WarehouseRoot; pathSnapshot = $env:PATH; tools = @{};
         censusSummary = @{ warnings = @($census.warnings); counts = @{ runtimes = @($census.runtimes).Count; declarations = @($census.declarations).Count } } }
-    foreach ($name in ($names | Sort-Object)) {
+    # 两阶段（收敛计划 P3）：先收集所有候选路径，把它们的版本探测一起并行跑完、写进探测缓存；
+    # 下面再按原来的顺序逐个建候选，探测全部命中缓存。所以输出与串行完全一致（-Throttle 1 就是原来的串行）。
+    $sortedNames = @($names | Sort-Object)
+    $pathsByName = @{}
+    $jobs = New-Object System.Collections.Generic.List[object]
+    foreach ($name in $sortedNames) {
+        $pathsByName[$name] = Get-ToolCandidatePaths $name $index
+        $previous = if ($old) { $old.tools[$name] } else { $null }
+        if ($name -eq 'rg' -and $old -and -not $previous) { $previous = $old.tools.ripgrep }
+        $known = @($pathsByName[$name]) + @(if ($previous) { @($previous.candidates | Where-Object { $_.path -and [IO.File]::Exists($_.path) } | ForEach-Object { $_.path }) })
+        foreach ($path in $known) { $job = Get-ExeVersionProbeJob $path; if ($job) { $jobs.Add($job) } }
+    }
+    $throttleUsed = Get-ScanThrottle
+    $null = Invoke-ToolkitProbeBatch -Jobs $jobs.ToArray() -Throttle $throttleUsed
+    foreach ($name in $sortedNames) {
         $previous = if ($old) { $old.tools[$name] } else { $null }
         if ($name -eq 'rg' -and $old -and -not $previous) { $previous = $old.tools.ripgrep }
         $existing = if ($previous) { @($previous.candidates | Where-Object { [IO.File]::Exists($_.path) } | ForEach-Object {
             $new = New-Candidate $_.path $_.version; $new.registered = $_.registered; $new.userNote = $_.userNote; $new
         }) } else { @() }
-        $candidates = @(Merge-Candidates (Get-ToolCandidates $name $index) $existing)
+        $candidates = @(Merge-Candidates (Get-ToolCandidates $name $index $pathsByName[$name]) $existing)
         if (-not $candidates.Count) { continue }
         $map.tools[$name] = @{ candidates = $candidates; preferred = ''; preferredPath = if ($previous) { "$($previous.preferredPath)" } else { '' } }
     }
@@ -399,7 +438,7 @@ function Invoke-Scan {
         probeMs  = $censusProbeMs + $mapProbeMs
         wallMs   = [int64]$scanSw.Elapsed.TotalMilliseconds
         census   = @{ launches = $censusLaunches; probeMs = $censusProbeMs; wallMs = $censusWallMs }
-        map      = @{ launches = $mapLaunches; probeMs = $mapProbeMs }
+        map      = @{ launches = $mapLaunches; probeMs = $mapProbeMs; throttle = $throttleUsed }
     }
     return (New-MapResult 'ok' @{ mapFile = Get-MapPath; tools = $map.tools.Count; scannedAt = $map.scannedAt; warnings = $map.censusSummary.warnings; probeStats = $probeStats })
 }
