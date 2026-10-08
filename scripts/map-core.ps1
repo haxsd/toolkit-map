@@ -93,7 +93,8 @@ function Get-ProbeText {
     param([string]$Exe, [string[]]$Arguments, [int]$MaxLines = 4)
     $script:LastProbe = @{ ok = $false; reason = 'probe_failed'; exitCode = $null }
     # 最底层护栏，所有调用方（含配方专用探测）都不能绕过。
-    if (-not $Exe -or (Test-IsShimPath $Exe) -or (Test-IsStoreAlias $Exe)) { $script:LastProbe.reason = 'skipped'; return '' }
+    # Test-ToolkitProbeSafe 同时拦住经由 #! 或 npm.cmd 再去执行 PATH 上 node shim 的启动器。
+    if (-not $Exe -or -not (Test-ToolkitProbeSafe $Exe) -or (Test-IsStoreAlias $Exe)) { $script:LastProbe.reason = 'skipped'; return '' }
     $p = $null
     try {
         $fileName = $Exe

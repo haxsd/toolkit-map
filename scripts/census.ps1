@@ -377,7 +377,8 @@ function Get-FileLength {
 # 同时读取两个流是必须的：只读一个的话，另一个管道缓冲区写满就会死锁。
 function Get-FirstLine {
     param([string]$Exe, [string[]]$Arguments)
-    if (Test-ToolkitShimPath $Exe) { return '' }
+    # 不只看文件本身：npm.cmd 一类启动器会再去执行 PATH 上的 node（见 Test-ToolkitProbeSafe）
+    if (-not (Test-ToolkitProbeSafe $Exe)) { return '' }
     if (-not (Test-FileQuick $Exe)) { return '' }
 
     $fileName = $Exe
@@ -434,7 +435,7 @@ function Invoke-CaptureWithTimeout {
     param([string]$Exe, [string[]]$Arguments, [int]$TimeoutMs = 20000)
     $cmd = Get-Command $Exe -ErrorAction SilentlyContinue
     if (-not $cmd) { return '' }
-    if (Test-ToolkitShimPath $cmd.Source) { return '' }
+    if (-not (Test-ToolkitProbeSafe $cmd.Source)) { return '' }
     try {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $cmd.Source
