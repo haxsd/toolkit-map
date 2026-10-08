@@ -104,7 +104,11 @@ function Invoke-Census {
     $out = Join-Path $work 'out.txt'; $err = Join-Path $work 'err.txt'
     $p = Start-Process -FilePath $psExe -ArgumentList (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Script) + $Arguments) `
                        -WorkingDirectory $work -PassThru -NoNewWindow -RedirectStandardOutput $out -RedirectStandardError $err
+    # Windows PowerShell 5.1 里 Start-Process 返回的进程对象若不先取一次 Handle，
+    # 退出后 ExitCode 会是空值（CI 上实测）；取了句柄才能在退出后读到退出码。
+    $null = $p.Handle
     if (-not $p.WaitForExit(180000)) { try { $p.Kill() } catch { }; return @{ code = -1; out = ''; err = 'timeout' } }
+    $p.WaitForExit()
     return @{
         code = $p.ExitCode
         out  = [IO.File]::ReadAllText($out, [Text.Encoding]::UTF8)

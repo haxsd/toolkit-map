@@ -81,7 +81,7 @@ printf '  这次报出的告警: %s\n' "${KINDS%,}"
 for want in CONVENTION DRIFT XDG_SHIFT PATH_DIRT MISSING SHADOWED; do
   case ",$KINDS," in
     *",$want,"*) pass "报出了 $want" ;;
-    *)           fail "缺少 $want（沙箱是确定的，这就是回归）" ;;
+    *)           fail "缺少 ${want}（沙箱是确定的，这就是回归）" ;;
   esac
 done
 
@@ -111,7 +111,7 @@ NO_TEXT_CODE=$?
 if [ "$NO_TEXT_CODE" -eq 2 ] && grep -q 'census-text.tsv' "$FX/no-text.err"; then
   pass "文案表缺失时以退出码 2 失败并指明 census-text.tsv"
 else
-  fail "文案表缺失时没有明确失败（退出码 $NO_TEXT_CODE）"
+  fail "文案表缺失时没有明确失败（退出码 ${NO_TEXT_CODE}）"
 fi
 
 # JSON 模式：结构完整 + 可被机器解析。
@@ -153,7 +153,7 @@ while IFS="$(printf '\t')" read -r scope kind tool needle; do
   if warn_has "$kind" "$tool" "$needle"; then
     pass "JSON 告警符合期望：$kind tool=$tool 含 $needle"
   else
-    fail "JSON 缺少期望告警：$kind tool=$tool 含 $needle（见 tests/fixtures/census-expected.tsv）"
+    fail "JSON 缺少期望告警：$kind tool=$tool 含 ${needle}（见 tests/fixtures/census-expected.tsv）"
   fi
 done < "$EXPECTED"
 [ "$CHECKED" -gt 0 ] || fail "期望文件 tests/fixtures/census-expected.tsv 没有可用的行"
