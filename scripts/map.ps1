@@ -93,21 +93,40 @@ $script:ToolCatalog = (ConvertTo-HashtableDeep ([IO.File]::ReadAllText((Join-Pat
 # portable 归档的来源。两种形态：
 #   · GitHub 发布：repo + tag + asset 三段模板。tag 与资产文件名的 v 前缀经常不一致
 #     （jadx 的 tag 是 v1.5.6，资产却叫 jadx-1.5.6.zip），所以模板分开写、版本号按裸版本处理。
-#   · 固定 URL：vendor 只给一个"永远指向最新"的地址（如 Google 的 platform-tools），
-#     版本号装完再从可执行文件里探出来。
+#   · 固定 URL：配方钉死带版本号的官方地址、版本与 SHA256（如 Google 的 platform-tools），
+#     不使用"永远指向最新"的地址——那种地址的内容会变，无法预先核对校验值。
 $Recipes = (ConvertTo-HashtableDeep ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'tools.json')) | ConvertFrom-Json)).recipes
 
 # ---------- 网络访问：容忍"证书吊销服务器不可达"的机器 ----------
 #
-# 实测环境：受限网络里连不上 CRL/OCSP 服务器时，.NET 默认的吊销检查会让
-# Invoke-WebRequest / Invoke-RestMethod 直接失败，报"基础连接已经关闭: 未能为
-# SSL/TLS 安全通道建立信任关系"，看起来像网络不通，实际只是本地无法确认证书有
+# 实测环境：受限网络里连不上 CRL/OCSP 服务器时，Windows PowerShell 5.1（.NET Framework）
+# 在开启吊销检查时会让 Invoke-WebRequest / Invoke-RestMethod 直接失败，报"基础连接已经关闭:
+# 未能为 SSL/TLS 安全通道建立信任关系"，看起来像网络不通，实际只是本地无法确认证书有
 # 没有被吊销（同一台机器的 curl 报的是 CRYPT_E_REVOCATION_OFFLINE，能对上）。
 #
-# 处理：先按默认设置请求一次；只有错误确实像证书/信任问题时，才在【本进程内】临时
-# 关掉吊销检查重试一次，并明确告知使用者——不静默降级，也不写任何系统设置。
-# 非证书类错误（404、超时、校验失败……）原样抛出，避免把真实错误掩盖成"重试也没用"。
-$RevocationErrorPattern = 'SSL|TLS|schannel|certificate|trust|证书|信任|吊销|revocation'
+# 处理：先按默认设置请求一次；只有同时满足下面三条，才在【本进程内】临时关掉吊销检查重试一次，
+# 并明确告知使用者——不静默降级，也不写任何系统设置：
+#   · 宿主是 Windows PowerShell 5.1：PowerShell 7 的网络命令基于 HttpClient，
+#     ServicePointManager 对它不起作用，重试只会重复同一个错误，所以不重试；
+#   · 本进程确实开着吊销检查：已经关着时再"关一次"毫无意义，失败说明是别的信任问题；
+#   · 错误信息指向信任关系/吊销，而不是笼统的 SSL/TLS/certificate 字样。
+# 其他错误（404、超时、证书过期或域名不符、校验失败……）原样抛出。
+$RevocationErrorPattern = '(?i)trust relationship|信任关系|revocation|吊销|CRYPT_E_REVOCATION|OfflineRevocation|RevocationStatusUnknown'
+
+function Get-ExceptionMessageChain {
+    param($ErrorRecord)
+    $messages = New-Object System.Collections.Generic.List[string]
+    $exception = if ($ErrorRecord -is [System.Management.Automation.ErrorRecord]) { $ErrorRecord.Exception } else { $ErrorRecord }
+    while ($exception) { $messages.Add("$($exception.Message)"); $exception = $exception.InnerException }
+    return ($messages -join ' | ')
+}
+
+function Test-RevocationRetryApplicable {
+    param($ErrorRecord)
+    if ($PSVersionTable.PSEdition -eq 'Core') { return $false }
+    if (-not [Net.ServicePointManager]::CheckCertificateRevocationList) { return $false }
+    return ((Get-ExceptionMessageChain $ErrorRecord) -match $RevocationErrorPattern)
+}
 
 function Invoke-NetRetry {
     param(
@@ -119,7 +138,7 @@ function Invoke-NetRetry {
     } catch {
         $first = $_
     }
-    if ("$($first.Exception.Message)" -notmatch $RevocationErrorPattern) { throw $first }
+    if (-not (Test-RevocationRetryApplicable $first)) { throw $first }
 
     $before = [Net.ServicePointManager]::CheckCertificateRevocationList
     try {
@@ -132,15 +151,68 @@ function Invoke-NetRetry {
     }
 }
 
+# ---------- 下载完整性 ----------
+# 配方安装必须有来自官方的 SHA256，按优先级取：
+#   1. 配方钉死的值（固定 URL 形态，例如带版本号的 platform-tools 地址）；
+#   2. GitHub 为发布资产计算的 digest（API 的 assets[].digest，"sha256:..."）；
+#   3. 上游随发布附带的校验文件（配方的 checksums 模板，例如 gh 的 checksums.txt、rg 的 .sha256）。
+# 都取不到就拒绝下载，除非用户用 -Sha256 给出自己从官方渠道核实过的值；
+# 用户给了值时也要与官方值一致。-Url 自定义直链的 -Sha256 仍是可选的。
+function Get-GitHubRelease {
+    param([string]$Repo, [string]$Tag = '')
+    $api = if ($Tag) { "https://api.github.com/repos/$Repo/releases/tags/$Tag" } else { "https://api.github.com/repos/$Repo/releases/latest" }
+    return (Invoke-NetRetry -What "读取 $Repo 的发布信息" -Action {
+        Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent' = 'toolkit-map'; 'Accept' = 'application/vnd.github+json' } -TimeoutSec 30
+    })
+}
+
+function Get-ChecksumFromText {
+    # 支持 "<hash>  <文件名>"（sha256sum / checksums.txt，文件名可带 * 或路径）、只有一个哈希的 .sha256 文件，
+    # 以及 CertUtil -hashfile 的输出（"SHA256 hash of <文件名>:" 下一行是哈希；ripgrep 的 Windows 资产用这种格式）。
+    param([string]$Text, [string]$Asset)
+    $lines = @("$Text" -split "`r?`n" | Where-Object { $_.Trim() })
+    foreach ($line in $lines) {
+        if ($line -match '^\s*([0-9a-fA-F]{64})\s+\*?(.+?)\s*$') {
+            if ([IO.Path]::GetFileName(($Matches[2] -replace '\\', '/')) -eq $Asset) { return $Matches[1].ToLowerInvariant() }
+        }
+    }
+    $bare = @($lines | Where-Object { $_ -match '^\s*[0-9a-fA-F]{64}\s*$' })
+    if ($bare.Count -eq 1 -and ($lines.Count -eq 1 -or @($lines | Where-Object { $_ -match ('^SHA256 hash of (.*[\\/])?' + [regex]::Escape($Asset) + ':\s*$') }).Count -eq 1)) {
+        return $bare[0].Trim().ToLowerInvariant()
+    }
+    return ''
+}
+
+function Resolve-RecipeSha256 {
+    param($Recipe, [string]$Version, [string]$Tag, [string]$Asset)
+    if ($Recipe.sha256) { return @{ sha256 = "$($Recipe.sha256)".ToLowerInvariant(); source = 'recipe' } }
+    if (-not $Recipe.repo) { return $null }
+    $release = Get-GitHubRelease -Repo $Recipe.repo -Tag $Tag
+    $assetInfo = @($release.assets | Where-Object { $_.name -eq $Asset } | Select-Object -First 1)
+    if (-not $assetInfo.Count) { Throw-MapError 'asset_missing' "$($Recipe.repo) 的发布 $Tag 中没有资产 $Asset。" }
+    if ("$($assetInfo[0].digest)" -match '^sha256:([0-9a-fA-F]{64})$') { return @{ sha256 = $Matches[1].ToLowerInvariant(); source = 'github-asset-digest' } }
+    if ($Recipe.checksums) {
+        $sumName = ($Recipe.checksums -replace '\{ver\}', $Version) -replace '\{asset\}', $Asset
+        $sumInfo = @($release.assets | Where-Object { $_.name -eq $sumName } | Select-Object -First 1)
+        if ($sumInfo.Count) {
+            $sumUrl = "$($sumInfo[0].browser_download_url)"
+            $text = Invoke-NetRetry -What "下载校验文件 $sumName" -Action {
+                Invoke-RestMethod -Uri $sumUrl -Headers @{ 'User-Agent' = 'toolkit-map' } -TimeoutSec 30
+            }
+            if ($text -is [byte[]]) { $text = [Text.Encoding]::UTF8.GetString($text) }
+            $hash = Get-ChecksumFromText -Text "$text" -Asset $Asset
+            if ($hash) { return @{ sha256 = $hash; source = 'upstream-checksums' } }
+        }
+    }
+    return $null
+}
+
 # 版本号不许猜：@latest 走 GitHub API 拿最新发布的 tag。
 # agent 不该凭记忆写版本号，机器也不该让它去猜。
 function Resolve-LatestVersion {
     param([string]$Repo)
     try {
-        $api = "https://api.github.com/repos/$Repo/releases/latest"
-        $rel = Invoke-NetRetry -What "读取 $Repo 的发布信息" -Action {
-            Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent' = 'toolkit-map' } -TimeoutSec 30
-        }
+        $rel = Get-GitHubRelease -Repo $Repo
         return ("$($rel.tag_name)" -replace '^v', '')
     } catch {
         throw "拿不到 $Repo 的最新版本（$($_.Exception.Message)）。请显式给版本：install <tool>@<版本>"
@@ -162,6 +234,16 @@ function Get-ExeVersionByPattern {
         }
     }
     return ''
+}
+
+function Assert-ArchiveSha1 {
+    # 只用于核对上游只公布 SHA-1 的官方值（Google SDK 仓库清单）；SHA256 仍是主校验。
+    param([string]$ArchivePath, [string]$Expected)
+    if (-not $Expected) { return }
+    $actual = (Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA1).Hash
+    if (-not [string]::Equals($actual, $Expected.Trim(), [StringComparison]::OrdinalIgnoreCase)) {
+        throw "归档 SHA1 与官方清单不匹配：期望 $Expected，实际 $actual"
+    }
 }
 
 function Assert-ArchiveSha256 {
@@ -281,6 +363,8 @@ function Invoke-Install {
 
     $root = Get-WarehouseRoot
     $url = $Url
+    # 注意 PowerShell 变量不分大小写：$url 与参数 $Url 是同一个变量，配方分支用 $fromRecipe 区分。
+    $recipe = $null; $fromRecipe = $false; $tag = ''; $asset = ''
     if ($url -and $ver -eq 'latest') { $ver = '' }
     $ver = "$ver" -replace '^v(?=\d)', ''
     $exeRel = ''
@@ -289,12 +373,19 @@ function Invoke-Install {
             throw "没有 $name 的 portable 配方。请给直链：map.ps1 install $name -Url <zip 直链> -Version $ver（或用包管理器装，然后 map.ps1 add 登记）"
         }
         $recipe = $Recipes[$name]
+        $fromRecipe = $true
         $exeRel = $recipe.exe
         if ($recipe.url) {
-            # 固定 URL 形态（vendor 只给一个永远指向最新的地址）：版本号装完再探。
-            # 注意 'latest' 在这里不是版本号，而是"未知"——不能拿它当目录名。
+            # 固定 URL 形态：配方钉死带版本号的官方地址与校验值，latest 即配方版本。
+            # 其他版本没有可核实的校验值，不猜地址，交给 -Url 与 -Sha256。
             $url = $recipe.url
-            if ($ver -and ($ver -ne 'latest')) { $ver = "$ver" -replace '^v', '' } else { $ver = '' }
+            $requested = "$ver" -replace '^v', ''
+            if ($recipe.version) {
+                if ($requested -and $requested -ne 'latest' -and $requested -ne "$($recipe.version)") {
+                    Throw-MapError 'version_unavailable' "$name 配方固定为 $($recipe.version)（官方带版本号的地址与校验值）；其他版本请用 -Url 与 -Sha256 指定。"
+                }
+                $ver = "$($recipe.version)"
+            } elseif ($requested -and $requested -ne 'latest') { $ver = $requested } else { $ver = '' }
         } else {
             # GitHub 发布形态：版本号一律按裸版本处理（'v1.5.6' 与 '1.5.6' 等价），latest 走 API
             $ver = "$ver" -replace '^v', ''
@@ -319,7 +410,8 @@ function Invoke-Install {
             throw "目标版本已存在，拒绝覆盖：$knownTarget"
         }
     }
-    if ($WhatIf) { return (New-MapResult 'planned' @{ tool = $name; version = $ver; url = $url; warehouse = $root }) }
+    $integrityPlan = if ($fromRecipe) { 'required' } elseif ($Sha256) { 'user' } else { 'none' }
+    if ($WhatIf) { return (New-MapResult 'planned' @{ tool = $name; version = $ver; url = $url; warehouse = $root; integrity = $integrityPlan }) }
     # 同版本可用副本已在其他位置时，直接复用，不重复安装或迁移。
     if ($ver) {
         $registered = if ($existingMap -and $existingMap.tools[$name]) { @($existingMap.tools[$name].candidates) } else { @() }
@@ -334,6 +426,24 @@ function Invoke-Install {
         if (Test-Path -LiteralPath $knownTarget) { throw "目标版本已存在且没有可验证副本，拒绝覆盖：$knownTarget" }
     }
 
+    # 配方安装：下载前先拿到官方 SHA256，拿不到就不下载（用户 -Sha256 可替代，但要与官方值一致）。
+    $integrity = @{ sha256 = ''; source = 'none' }
+    if ($fromRecipe) {
+        $official = Resolve-RecipeSha256 -Recipe $recipe -Version $ver -Tag $tag -Asset $asset
+        if ($official) {
+            if ($Sha256 -and -not [string]::Equals(($Sha256.Trim() -replace '^sha256:', ''), $official.sha256, [StringComparison]::OrdinalIgnoreCase)) {
+                Throw-MapError 'checksum_conflict' "-Sha256 与官方值（$($official.source)）不一致，拒绝下载。"
+            }
+            $integrity = $official
+        } elseif ($Sha256) {
+            $integrity = @{ sha256 = ($Sha256.Trim() -replace '^sha256:', '').ToLowerInvariant(); source = 'user' }
+        } else {
+            Throw-MapError 'checksum_unavailable' "无法从官方来源取得 $name $ver 的 SHA256（发布资产没有 digest，也没有上游校验文件）；请在官方发布页核实后用 -Sha256 指定。"
+        }
+    } elseif ($Sha256) {
+        $integrity = @{ sha256 = ($Sha256.Trim() -replace '^sha256:', '').ToLowerInvariant(); source = 'user' }
+    }
+
     # 先在暂存目录里下载+解压+验证，全部通过后再整体搬进仓库——
     # 这样失败不会在仓库里留下半个目录（半成品最难排查：它看起来像装好了）。
     $stage = [IO.Path]::GetFullPath((Join-Path $env:TEMP ("tk-" + [guid]::NewGuid().ToString('N'))))
@@ -343,7 +453,8 @@ function Invoke-Install {
     try {
         $zip = Join-Path $stage 'pkg.zip'
         Invoke-NetRetry -What "下载 $url" -Action { Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing }
-        Assert-ArchiveSha256 -ArchivePath $zip -Expected $Sha256
+        Assert-ArchiveSha256 -ArchivePath $zip -Expected $integrity.sha256
+        if ($fromRecipe) { Assert-ArchiveSha1 -ArchivePath $zip -Expected "$($recipe.sha1)" }
         $extract = Join-Path $stage 'x'
         Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
 
@@ -412,7 +523,7 @@ function Invoke-Install {
         $map.tools[$name].preferredPath = $finalExe
         Save-Map $map
         Write-MapMessage "  已登记进地图并设为首选：map.ps1 find $name" -ForegroundColor Green
-        return (New-MapResult 'ok' @{ tool = $name; path = $finalExe; version = $actualVersion; verification = $c.verification; mapFile = Get-MapPath })
+        return (New-MapResult 'ok' @{ tool = $name; path = $finalExe; version = $actualVersion; verification = $c.verification; integrity = $integrity; mapFile = Get-MapPath })
     } catch {
         if ($movedTarget -and -not $finalValidated) {
             if (-not (Test-ToolkitUnderRoot $target $root) -or (Get-ToolkitNormalizedPath $target) -eq (Get-ToolkitNormalizedPath $root)) { throw '安装目标越界，拒绝回滚。' }
