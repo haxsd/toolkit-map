@@ -28,12 +28,13 @@
 | tests/install-contract.ps1 | portable 暂存、校验、版本验证、回滚、已有副本复用、winget 兜底登记与配方官方校验 |
 | tests/download-contract.ps1 | 官方 SHA256 来源、校验文件解析、固定版本配方与证书重试条件（CI 中 PowerShell 5.1 / 7 独立步骤） |
 | tests/version-contract.ps1 | 版本要求比较、预发布、超长数字段与候选排序（表驱动，CI 中 Windows PowerShell 5.1 / 7 与 Linux PowerShell 7 独立步骤） |
-| tests/scan-guards.ps1 | 扫描解析层和底层执行器都跳过 shim |
+| tests/scan-guards.ps1 | 扫描解析层和底层执行器（含 Invoke-ToolkitProbe）都跳过 shim |
+| tests/probe-cache.ps1 | 统一探测执行器的进程内缓存：未变文件不重复启动，修改时间/大小/参数变化即失效，shim 不启动（CI 中 Windows PowerShell 5.1 / 7 与 Linux PowerShell 7） |
 | tests/parity.ps1 | 两个扫描内核在同一沙箱识别相同问题 |
 | tests/verify-shell.ps1 | .sh 语法 |
 | tests/smoke.sh | Unix 扫描、JSON、语言、自定义 shim 与脚本启动器护栏、probeStats 与 `--timing` 阶段键 |
 | tests/check-sh-vars.sh | .sh 里 `$VAR` 后不能紧跟非 ASCII 字符（bash 3.2 兼容） |
-| tests/scan-baseline.ps1 | 用临时地图在真实机器上跑一次 scan，打印首扫墙钟时间与进程启动次数（CI 的 windows-baseline job，只量不判） |
+| tests/scan-baseline.ps1 | 用临时地图在真实机器上跑 scan，打印首扫墙钟时间与进程启动次数；每个宿主冷启动两轮只计第二轮（CI 的 windows-baseline job，先 PS7 后 PS5.1，只量不判） |
 
 按改动范围检查；发布前跑全套。map-contract 同时用 PowerShell 5.1 和 7 执行；真实扫描另用临时 -MapFile 验证，不污染本机地图。测试使用假工具、临时目录与独立地图，不安装工具。
 
