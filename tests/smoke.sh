@@ -103,6 +103,23 @@ fi
 "$CENSUS" --json --lang en > "$FX/out.json" 2>/dev/null
 PATH="$FX/custom-shims:$PATH" "$CENSUS" --json > "$FX/shim.json" 2>/dev/null
 [ ! -e "$FX/shim-executed" ] && pass "自定义 shim 未被扫描执行" || fail "扫描执行了 shim"
+
+# 脚本型启动器：自己不是 shim，但会再去调用 PATH 上的 node（复现 /usr/bin/npm 的
+# `#!/usr/bin/env node`，以及优先同目录 node、否则走 PATH 的 sh 启动器）。
+# 自带假启动器，不依赖 runner 上有没有装 npm。
+mkdir -p "$FX/launchers"
+printf '#!/usr/bin/env node\n' > "$FX/launchers/npm"; chmod +x "$FX/launchers/npm"
+printf '#!/bin/sh\nexec node "$0.js" "$@"\n' > "$FX/launchers/pnpm"; chmod +x "$FX/launchers/pnpm"
+rm -f "$FX/shim-executed"
+PATH="$FX/custom-shims:$FX/launchers:$PATH" "$CENSUS" --json > "$FX/launcher-shim.json" 2>/dev/null
+[ ! -e "$FX/shim-executed" ] && pass "npm/pnpm 启动器未经由 PATH 执行 shim" || fail "npm/pnpm 启动器经由 PATH 执行了 shim"
+# 对照：PATH 上的 node 不是 shim 时，启动器照常探测版本（护栏不能把正常探测一起关掉）
+PATH="$FX/launchers:$PATH" "$CENSUS" --json > "$FX/launcher-ok.json" 2>/dev/null
+if grep -qE '"command": "npm", "resolvesTo": "[^"]*/launchers/npm", "version": "[^"]+"' "$FX/launcher-ok.json"; then
+  pass "node 非 shim 时启动器仍探测版本"
+else
+  fail "node 非 shim 时启动器没有探测版本"
+fi
 if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys' >/dev/null 2>&1; then
   python3 - "$FX/out.json" <<'PY' || FAIL=$((FAIL + 1))
 import json, sys

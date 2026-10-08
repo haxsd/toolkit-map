@@ -93,7 +93,8 @@ function Get-ProbeText {
     param([string]$Exe, [string[]]$Arguments, [int]$MaxLines = 4)
     $script:LastProbe = @{ ok = $false; reason = 'probe_failed'; exitCode = $null }
     # 最底层护栏，所有调用方（含配方专用探测）都不能绕过。
-    if (-not $Exe -or (Test-IsShimPath $Exe) -or (Test-IsStoreAlias $Exe)) { $script:LastProbe.reason = 'skipped'; return '' }
+    # Test-ToolkitProbeSafe 同时拦住经由 #! 或 npm.cmd 再去执行 PATH 上 node shim 的启动器。
+    if (-not $Exe -or -not (Test-ToolkitProbeSafe $Exe) -or (Test-IsStoreAlias $Exe)) { $script:LastProbe.reason = 'skipped'; return '' }
     $p = $null
     try {
         $fileName = $Exe
@@ -153,6 +154,17 @@ function Get-ExeVersion {
     }
     $script:ProbeCache[$key] = $version
     return $version
+}
+function ConvertTo-MapTimestampTicks {
+    # PS7 的 ConvertFrom-Json 把 ISO 时间串自动转成 DateTime（5.1 保持字符串），
+    # 而 "DateTime -ne 字符串" 会按本地时区解析右侧，非 UTC 时区下永远不相等。
+    # 统一成 UTC ticks 再比较：5.1、7 以及两个宿主互相写过的地图结果一致。
+    param($Value)
+    if ($null -eq $Value -or "$Value" -eq '') { return $null }
+    if ($Value -is [datetime]) { return $Value.ToUniversalTime().Ticks }
+    try {
+        return [DateTime]::Parse("$Value", [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime().Ticks
+    } catch { return $null }
 }
 function Test-VersionSatisfies { param([string]$Version, [string]$Wanted) return (Test-ToolkitVersionSatisfies $Version $Wanted) }
 function Get-CandidateSource {
@@ -427,7 +439,8 @@ function Invoke-Find {
     foreach ($candidate in $existing) {
         if (-not [IO.File]::Exists($candidate.path)) { continue }
         $item = Get-Item -LiteralPath $candidate.path
-        if (-not $candidate.verification -or $candidate.size -ne $item.Length -or $candidate.modifiedAt -ne $item.LastWriteTimeUtc.ToString('o')) {
+        $recorded = ConvertTo-MapTimestampTicks $candidate.modifiedAt
+        if (-not $candidate.verification -or $candidate.size -ne $item.Length -or $null -eq $recorded -or $recorded -ne $item.LastWriteTimeUtc.Ticks) {
             $fresh = New-Candidate $candidate.path $candidate.version
             $fresh.registered = $candidate.registered; $fresh.userNote = $candidate.userNote
             if ($candidate.userNote) { $fresh.note = $candidate.userNote }
