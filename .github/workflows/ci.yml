@@ -36,6 +36,13 @@ jobs:
       - name: 文档检查（单语与相对链接）
         shell: powershell
         run: .\tests\check-docs.ps1
+      # 两个扫描内核共用 scripts/census-text.tsv：格式、中英齐全、引用可解析，并实际跑 -Lang en。
+      - name: 文案表检查（PowerShell 5.1）
+        shell: powershell
+        run: .\tests\check-text.ps1
+      - name: 文案表检查（PowerShell 7）
+        shell: pwsh
+        run: .\tests\check-text.ps1
       - name: 地图动作回归（失效路径与安装覆盖护栏）
         shell: powershell
         run: .\tests\map-smoke.ps1
@@ -139,6 +146,9 @@ jobs:
       - name: 版本比较与排序（Linux PowerShell 7）
         shell: pwsh
         run: ./tests/version-contract.ps1
+      - name: 文案表检查（Linux PowerShell 7）
+        shell: pwsh
+        run: ./tests/check-text.ps1
       - name: 冒烟测试（census.sh）
         shell: bash
         run: |
