@@ -35,6 +35,7 @@ param(
     [string]$WingetId = '',                  # install 用：包管理器里的包 ID（默认用工具名）
     [string]$MapFile = '',                   # 覆盖地图位置（默认 ~/.toolkit/map.json）
     [int]$MaxAgeHours = 24,                  # status 用：超过多少小时算旧
+    [ValidateRange(0, 64)][int]$Throttle = 0, # scan/setup 用：版本探测并行度，0 = min(8, CPU 数)，1 = 串行
 
     [switch]$Json,                           # 机器可读输出（agent 用这个）
     [switch]$SkipScan,                       # find 用：地图里没有时不去现场搜

@@ -3,7 +3,8 @@
 #   - 同一个未变的文件 + 同样的参数，第二次不再启动进程（launches 不变，cached 为真）；
 #   - 修改时间变了、大小变了、换了参数，都要重新启动；
 #   - -NoCache 每次都启动；shim 永远不启动、不计数；
-#   - 地图侧的 Get-ExeVersion 走同一个缓存，连续两次探测同一文件只启动一次。
+#   - 地图侧的 Get-ExeVersion 走同一个缓存，连续两次探测同一文件只启动一次；
+#   - 并行批次（P3）：去重、shim 不启动、挂住的工具按超时结束，之后串行再探全部命中缓存。
 # 只跑临时目录里的假工具（Windows 上是 .cmd，其他平台是 #!/bin/sh 脚本），不执行真实工具。
 param()
 $ErrorActionPreference = 'Stop'
@@ -83,6 +84,32 @@ try {
     $v2 = Get-ExeVersion $other
     Check 'Get-ExeVersion 连续两次只启动一次' ($v1 -eq '3.4.5' -and $v2 -eq '3.4.5' -and $mid -eq $n7 + 1 -and (Get-Launches) -eq $mid) "v1=$v1 v2=$v2 first=$($mid - $n7) second=$((Get-Launches) - $mid)"
     Check 'Get-ProbeText 命中缓存时 LastProbe 仍为成功' ($script:LastProbe.ok -and $script:LastProbe.reason -eq 'ok' -and $script:LastProbe.exitCode -eq 0)
+
+    # 并行预热（收敛计划 P3）：Invoke-ToolkitProbeBatch 在 RunspacePool 里探测、结果进同一个缓存
+    $ext = if ($onWindows) { '.cmd' } else { '' }
+    $fast = @(1..3 | ForEach-Object { $f = Join-Path $work ("par$_" + $ext); Write-FakeTool $f "5.0.$_"; $f })
+    $hang = Join-Path $work ('hangtool' + $ext)
+    if ($onWindows) {
+        [IO.File]::WriteAllText($hang, "@echo off`r`nping -n 30 127.0.0.1 >nul`r`necho never`r`n", [Text.Encoding]::ASCII)
+    } else {
+        [IO.File]::WriteAllText($hang, "#!/bin/sh`nsleep 30`necho never`n", [Text.Encoding]::ASCII)
+        & chmod +x $hang
+    }
+    $jobs = @($fast | ForEach-Object { @{ exe = $_; args = @('--version') } }) + @(@{ exe = $hang; args = @('--version') }, @{ exe = $shim; args = @('--version') }, @{ exe = $fast[0]; args = @('--version') })
+    $n8 = Get-Launches
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $planned = Invoke-ToolkitProbeBatch -Jobs $jobs -Throttle 4 -TimeoutMs 3000
+    $sw.Stop()
+    Check '并行批次：去重、跳过 shim，只启动 4 个进程' ($planned -eq 4 -and (Get-Launches) -eq $n8 + 4) "planned=$planned launches=$((Get-Launches) - $n8)"
+    Check '并行批次：挂住的假工具按超时结束，整批远小于 30 秒' ($sw.ElapsedMilliseconds -lt 20000) "ms=$($sw.ElapsedMilliseconds)"
+    $n9 = Get-Launches
+    $h = Invoke-ToolkitProbe $hang @('--version')
+    $okAll = $true
+    foreach ($i in 0..2) { $r = Invoke-ToolkitProbe $fast[$i] @('--version'); if (-not ($r.cached -and $r.ok -and $r.stdout -match "faketool 5\.0\.$($i + 1)")) { $okAll = $false } }
+    Check '并行批次之后串行再探：全部命中缓存、不再启动' ((Get-Launches) -eq $n9 -and $okAll) "launches=$((Get-Launches) - $n9)"
+    Check '挂住的那个结果是 timeout' ($h.reason -eq 'timeout' -and -not $h.ok -and $h.cached) "reason=$($h.reason)"
+    $n10 = Get-Launches
+    Check '-Throttle 1 不预热（等于原来的串行）' ((Invoke-ToolkitProbeBatch -Jobs @(@{ exe = $other; args = @('-x') }) -Throttle 1) -eq 0 -and (Get-Launches) -eq $n10)
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }
