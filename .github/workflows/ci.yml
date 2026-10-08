@@ -44,6 +44,18 @@ jobs:
       - name: 项目选择与接入契约（PowerShell 7）
         shell: pwsh
         run: .\tests\map-contract.ps1
+      - name: 版本比较与排序（PowerShell 5.1）
+        shell: powershell
+        run: .\tests\version-contract.ps1
+      - name: 版本比较与排序（PowerShell 7）
+        shell: pwsh
+        run: .\tests\version-contract.ps1
+      - name: 下载完整性与证书重试（PowerShell 5.1）
+        shell: powershell
+        run: .\tests\download-contract.ps1
+      - name: 下载完整性与证书重试（PowerShell 7）
+        shell: pwsh
+        run: .\tests\download-contract.ps1
       - name: 扫描 shim 护栏
         shell: powershell
         run: .\tests\scan-guards.ps1
@@ -90,6 +102,10 @@ jobs:
           for f in scripts/*.sh tests/*.sh; do
             bash -n "$f" || exit 1
           done
+      # 版本比较是纯函数，在 Linux 的 PowerShell 7 上也跑一遍，防止依赖 Windows 行为。
+      - name: 版本比较与排序（Linux PowerShell 7）
+        shell: pwsh
+        run: ./tests/version-contract.ps1
       - name: 冒烟测试（census.sh）
         shell: bash
         run: |
