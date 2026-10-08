@@ -5,3 +5,5 @@
 # 看起来像脚本坏了。这个仓库同时发 .ps1 和 .sh，所以必须显式钉住。
 * text=auto
 *.sh text eol=lf
+# 期望文件按行、按 TAB 解析，同样钉成 LF（tests/fixtures/census-expected.tsv）。
+*.tsv text eol=lf

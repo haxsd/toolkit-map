@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 测试：census 沙箱的期望告警改由 `tests/fixtures/census-expected.tsv` 统一提供（kind / tool / 字面关键字），`parity.ps1` 与 `smoke.sh` 读同一份，不再各自硬编码、各自漂移；`smoke.sh` 在原有"告警种类"检查之外新增按 JSON 的 kind/tool/关键字断言（纯 awk，不依赖 python3/jq）；`.gitattributes` 钉住 `*.tsv` 为 LF。
 - 配方安装强制校验官方 SHA256：下载前依次取配方钉死值、GitHub 发布资产 digest、上游校验文件（gh 的 checksums.txt、rg 的 CertUtil 格式 .sha256）；都取不到返回 `checksum_unavailable` 且不下载，`-Sha256` 与官方值冲突返回 `checksum_conflict`；结果带 `integrity` 说明来源。修复 `$url`/`$Url` 同名（PowerShell 变量不分大小写）导致配方分支无法与 `-Url` 区分的问题。
 - adb 改为官方带版本号的 `platform-tools_r37.0.1-win.zip`，钉死 SHA256 并同时校验 Google SDK 仓库清单公布的 SHA-1；其他版本返回 `version_unavailable`，WhatIf 不再需要联网解析 latest。
 - 证书重试收窄为吊销检查失败（信任关系 / revocation 类错误），只在 Windows PowerShell 5.1 且本进程开启吊销检查时临时关闭重试一次；PowerShell 7 的 HttpClient 不读 ServicePointManager，原有重试无效，已移除。新增 tests/download-contract.ps1（CI 在 5.1 与 7 下单独运行），install-contract 增加配方校验用例。
