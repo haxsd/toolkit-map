@@ -4,10 +4,10 @@
 
 - 配方安装强制校验官方 SHA256：下载前依次取配方钉死值、GitHub 发布资产 digest、上游校验文件（gh 的 checksums.txt、rg 的 CertUtil 格式 .sha256）；都取不到返回 `checksum_unavailable` 且不下载，`-Sha256` 与官方值冲突返回 `checksum_conflict`；结果带 `integrity` 说明来源。修复 `$url`/`$Url` 同名（PowerShell 变量不分大小写）导致配方分支无法与 `-Url` 区分的问题。
 - adb 改为官方带版本号的 `platform-tools_r37.0.1-win.zip`，钉死 SHA256 并同时校验 Google SDK 仓库清单公布的 SHA-1；其他版本返回 `version_unavailable`，WhatIf 不再需要联网解析 latest。
-- 证书重试收窄为吊销检查失败（信任关系 / revocation 类错误），只在 Windows PowerShell 5.1 且本进程开启吊销检查时临时关闭重试一次；PowerShell 7 的 HttpClient 不读 ServicePointManager，原有重试无效，已移除。新增 tests/download-contract.ps1（map-contract 在 5.1 与 7 下调用），install-contract 增加配方校验用例。
+- 证书重试收窄为吊销检查失败（信任关系 / revocation 类错误），只在 Windows PowerShell 5.1 且本进程开启吊销检查时临时关闭重试一次；PowerShell 7 的 HttpClient 不读 ServicePointManager，原有重试无效，已移除。新增 tests/download-contract.ps1（CI 在 5.1 与 7 下单独运行），install-contract 增加配方校验用例。
 - 版本比较不再使用定长整数：日期型构建号等超长数字段（如 `1.2.20240101123456`）不会再让 find 或扫描抛异常；census.ps1 的声明比较同步修复。
 - 预发布处理统一：semver 的 `-rc.1` 与 Python 的 `3.12.0rc1`、`a2`、`.dev0` 等都视为预发布，只在完整精确匹配时满足要求（此前 `3.12.0rc1` 会被当成满足 `3.12`）。
-- 默认候选排序改用版本排序键：单段版本（`22`）、超长数字段按数值排序，同号正式版优先于预发布；新增表驱动的 tests/version-contract.ps1，由 map-contract 在 PowerShell 5.1 与 7 下调用执行。
+- 默认候选排序改用版本排序键：单段版本（`22`）、超长数字段按数值排序，同号正式版优先于预发布；新增表驱动的 tests/version-contract.ps1，CI 在 Windows PowerShell 5.1 / 7 与 Linux PowerShell 7 下单独运行。
 - 版本号唯一来源改为根目录 `VERSION`：`help` 读取它，check-docs 校验 README/接入指南中的稳定标签与 CHANGELOG 最新版本一致。
 - `map.ps1` 关闭进度条输出，Windows PowerShell 5.1 下载 portable 归档不再被进度刷新拖慢。
 - `install -Via winget`：工具名按其他动作规范化并校验，包 ID 不能以 `-` 开头；只把本次安装后新出现的文件标注为 winget 安装，同名旧文件不冒充，多个新文件时不猜测；新建地图直接使用 v2 结构，去掉被 Save-Map 覆盖的无效首选赋值；也搜索用户级 `%LOCALAPPDATA%\Programs`。
