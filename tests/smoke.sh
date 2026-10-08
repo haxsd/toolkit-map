@@ -148,7 +148,7 @@ warn_has() { # <kind> <tool> <needle>
         t = ""
         p = index(obj, "\"tool\":\"")
         if (p > 0) { t = substr(obj, p + 8); t = substr(t, 1, index(t, "\"") - 1) }
-        if (k == want_kind && (want_tool == "*" || t == want_tool) && index(obj, want_needle) > 0) { found = 1 }
+        if (k == want_kind && (want_tool == "*" || t == want_tool || index("/" t "/", "/" want_tool "/") > 0) && index(obj, want_needle) > 0) { found = 1 }
       }
     }
     END { exit (found ? 0 : 1) }' "$FX/out.json"
