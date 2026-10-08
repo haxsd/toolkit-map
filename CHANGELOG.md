@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 新增 tests/check-sh-vars.sh（CI 的 ubuntu 与 macOS job）：.sh 里 `$VAR` 后紧跟非 ASCII 字符即失败并给出文件与行号，要求写成 `${VAR}`（macOS 的 bash 3.2 会把紧跟的全角字符吞进变量名）；docs/contributing.md 补上这条规则，并修正 version-contract / download-contract 已是独立 CI 步骤的说明。
 - census.ps1 与 census.sh 的中英文案合并为同目录的 `scripts/census-text.tsv`（key<TAB>lang<TAB>text），两边读同一份，不再各维护一张表；两边措辞尚未统一的 4 条（PATH_DIRT 文案、DRIFT/MISSING/NO_MISE 处置建议里的 bootstrap 脚本名）用 `ps1:`/`sh:` 前缀分开保存，输出与之前逐字一致。文案表缺失时两个脚本以退出码 2 明确失败。新增 tests/check-text.ps1 检查格式、中英齐全、脚本引用可解析与 `-Lang en` 输出。
 - CI：`parity.ps1` 与 `map-smoke.ps1` 增加 PowerShell 7 步骤（census.ps1 与地图动作在 PS7 宿主下也逐条验证）；新增 macOS job，用系统自带的 bash 3.2 做语法检查并跑 `smoke.sh`，守住 census.sh 在 macOS 开箱即用的承诺。
 - 测试：census 沙箱的期望告警改由 `tests/fixtures/census-expected.tsv` 统一提供（kind / tool / 字面关键字），`parity.ps1` 与 `smoke.sh` 读同一份，不再各自硬编码、各自漂移；`smoke.sh` 在原有"告警种类"检查之外新增按 JSON 的 kind/tool/关键字断言（纯 awk，不依赖 python3/jq）；`.gitattributes` 钉住 `*.tsv` 为 LF。
