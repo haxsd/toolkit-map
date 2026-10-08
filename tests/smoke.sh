@@ -13,6 +13,7 @@
 #   PATH_DIRT   —— 沙箱 PATH 里塞一条重复条目
 #   MISSING     —— 假声明要求一个没装的运行时（go）
 #   SHADOWED    —— 同一个运行时放两份副本，都不在 PATH 上
+# 期望事实（含 kind/tool/关键字）与 parity.ps1 共用 tests/fixtures/census-expected.tsv。
 # 另有两条按环境而定，不参与断言但会打印出来：
 #   PATH_ORDER  —— 需要本机装了 mise 且纳管了对应版本
 #   NO_MISE     —— 没装 mise 时出现
@@ -101,6 +102,46 @@ fi
 # 先确认 python3 真的能跑：有些环境里 `command -v python3` 成功，但它指向一个失效的
 # shim（实测踩过），那属于环境问题，不该被算成 JSON 校验失败。
 "$CENSUS" --json --lang en > "$FX/out.json" 2>/dev/null
+
+# 期望事实与 parity.ps1 共用 tests/fixtures/census-expected.tsv（scope 为 both 或 smoke 的行）：
+# 告警 kind、tool 与 detail/message 里的字面子串都要对上，比上面只看告警种类更严格。
+# 不依赖 python3 / jq：census.sh 把 warnings 数组写在一行里，字符串内的引号都转义成 \"，
+# 所以 {"kind":" 只会出现在每条告警的开头，按它切分即可。awk 只用 index/substr，
+# 不用多字符分隔符或带花括号的正则（macOS 的 awk 与 ubuntu 的 mawk 行为不一）。
+warn_has() { # <kind> <tool> <needle>
+  awk -v want_kind="$1" -v want_tool="$2" -v want_needle="$3" '
+    BEGIN { mark = "{\"kind\":\""; found = 0 }
+    index($0, "  \"warnings\": [") == 1 {
+      rest = $0
+      while ((i = index(rest, mark)) > 0) {
+        rest = substr(rest, i + length(mark))
+        j = index(rest, mark)
+        obj = (j > 0) ? substr(rest, 1, j - 1) : rest
+        k = substr(obj, 1, index(obj, "\"") - 1)
+        t = ""
+        p = index(obj, "\"tool\":\"")
+        if (p > 0) { t = substr(obj, p + 8); t = substr(t, 1, index(t, "\"") - 1) }
+        if (k == want_kind && (want_tool == "*" || t == want_tool) && index(obj, want_needle) > 0) { found = 1 }
+      }
+    }
+    END { exit (found ? 0 : 1) }' "$FX/out.json"
+}
+EXPECTED="$REPO_ROOT/tests/fixtures/census-expected.tsv"
+LEAF="$(basename "$FX")"
+CHECKED=0
+while IFS="$(printf '\t')" read -r scope kind tool needle; do
+  case "$scope" in both|smoke) ;; *) continue ;; esac   # 注释、空行与其他 scope
+  needle="${needle%"$(printf '\r')"}"
+  needle="${needle//\{sandbox\}/$LEAF}"
+  CHECKED=$((CHECKED + 1))
+  if warn_has "$kind" "$tool" "$needle"; then
+    pass "JSON 告警符合期望：$kind tool=$tool 含 $needle"
+  else
+    fail "JSON 缺少期望告警：$kind tool=$tool 含 $needle（见 tests/fixtures/census-expected.tsv）"
+  fi
+done < "$EXPECTED"
+[ "$CHECKED" -gt 0 ] || fail "期望文件 tests/fixtures/census-expected.tsv 没有可用的行"
+
 PATH="$FX/custom-shims:$PATH" "$CENSUS" --json > "$FX/shim.json" 2>/dev/null
 [ ! -e "$FX/shim-executed" ] && pass "自定义 shim 未被扫描执行" || fail "扫描执行了 shim"
 
