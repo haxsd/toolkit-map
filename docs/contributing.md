@@ -26,12 +26,12 @@
 | tests/check-text.ps1 | census-text.tsv 格式、每个 key 中英齐全、脚本引用可解析、-Lang en 输出与缺失文案表时失败 |
 | tests/check-data.ps1 | census-data.tsv 列数、kind 与 os 取值、无重复、两边必需的 kind 齐全、值的形状与占位符、缺表时失败（CI 中 Windows PowerShell 5.1 / 7 与 Linux PowerShell 7） |
 | tests/map-smoke.ps1 | 失效路径修复、版本 stderr、安装失败和拒绝覆盖 |
-| tests/map-contract.ps1 | 动态项目选择、验证状态、重扫保留、查询缓存、并发、接入和 JSON |
+| tests/map-contract.ps1 | 动态项目选择、验证状态、重扫保留、查询缓存、并发、并行扫描与串行结果一致、接入和 JSON |
 | tests/install-contract.ps1 | portable 暂存、校验、版本验证、回滚、已有副本复用、winget 兜底登记与配方官方校验 |
 | tests/download-contract.ps1 | 官方 SHA256 来源、校验文件解析、固定版本配方与证书重试条件（CI 中 PowerShell 5.1 / 7 独立步骤） |
 | tests/version-contract.ps1 | 版本要求比较、预发布、超长数字段与候选排序（表驱动，CI 中 Windows PowerShell 5.1 / 7 与 Linux PowerShell 7 独立步骤） |
 | tests/scan-guards.ps1 | 扫描解析层和底层执行器（含 Invoke-ToolkitProbe）都跳过 shim |
-| tests/probe-cache.ps1 | 统一探测执行器的进程内缓存：未变文件不重复启动，修改时间/大小/参数变化即失效，shim 不启动（CI 中 Windows PowerShell 5.1 / 7 与 Linux PowerShell 7） |
+| tests/probe-cache.ps1 | 统一探测执行器的进程内缓存：未变文件不重复启动，修改时间/大小/参数变化即失效，shim 不启动；并行批次去重、挂住的工具按超时结束（CI 中 Windows PowerShell 5.1 / 7 与 Linux PowerShell 7） |
 | tests/parity.ps1 | 两个扫描内核在同一沙箱识别相同问题 |
 | tests/verify-shell.ps1 | .sh 语法 |
 | tests/smoke.sh | Unix 扫描、JSON、语言、自定义 shim 与脚本启动器护栏、probeStats 与 `--timing` 阶段键 |

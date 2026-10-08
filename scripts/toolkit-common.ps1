@@ -129,7 +129,7 @@ function Read-ToolkitDataTable {
 # 护栏在任何执行之前：Test-ToolkitProbeSafe 不通过就不启动，也不查缓存。
 # 缓存只在本进程内存里，键是 路径|长度|修改时间(UTC ticks)|参数：文件被替换（大小或修改时间变化）
 # 或换了参数都会重新启动。命中缓存不算进程启动（ToolkitProbeStats.launches 不变）。
-# 跨进程复用（地图里 #7 的候选校验缓存之外的那种）是后续计划 P4 的事，这里不落盘。
+# 缓存不落盘；跨次调用的复用只靠地图里 #7 的候选校验信息。
 $script:ToolkitProbeCache = @{}
 $script:ToolkitProbeStats = @{ launches = 0; ms = [int64]0; cacheHits = 0 }
 
@@ -142,37 +142,18 @@ function Get-ToolkitProbeCacheKey {
     } catch { return '' }
 }
 
-function Invoke-ToolkitProbe {
-    param([string]$Exe, [string[]]$Arguments, [int]$TimeoutMs = 20000, [switch]$NoCache)
-    $result = @{ ok = $false; stdout = ''; stderr = ''; exitCode = $null; reason = 'probe_failed'; cached = $false }
-    # 最底层护栏：所有调用方都不能绕过。同时拦住经由 #! 或 npm.cmd 再去执行 PATH 上 node shim 的启动器。
-    if (-not $Exe -or -not (Test-ToolkitProbeSafe $Exe)) { $result.reason = 'skipped'; return $result }
-    $ext = [IO.Path]::GetExtension($Exe).ToLowerInvariant()
-    # 不探测 PowerShell 脚本的版本：拖慢且结果无意义
-    if ($ext -eq '.ps1') { $result.reason = 'unsupported_probe'; return $result }
-
-    $key = if ($NoCache) { '' } else { Get-ToolkitProbeCacheKey $Exe $Arguments }
-    if ($key -and $script:ToolkitProbeCache.ContainsKey($key)) {
-        $hit = $script:ToolkitProbeCache[$key].Clone()
-        $hit.cached = $true
-        try { $script:ToolkitProbeStats.cacheHits += 1 } catch { }
-        return $hit
-    }
-
-    $fileName = $Exe
-    $argLine = (@($Arguments) | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
-    if ($ext -in @('.cmd', '.bat')) {
-        # .cmd/.bat 必须经由 cmd.exe 解释。/d 不跑 AutoRun，/s 让外层引号按字面剥掉。
-        $fileName = if ($env:ComSpec) { $env:ComSpec } else { 'cmd.exe' }
-        $argLine = '/d /s /c ""' + $Exe + '" ' + $argLine + '"'
-    }
+# 真正启动进程的那一段，写成自包含的脚本块：只用 .NET，不引用 $script: 变量或外部函数，
+# 所以既能在当前线程里 & 调用，也能原样交给 RunspacePool 里的工作线程（runspace 看不到外层的函数和变量）。
+# 返回 @{ ok; stdout; stderr; exitCode; reason; launched; ms }。
+$script:ToolkitProbeWorker = {
+    param([string]$FileName, [string]$ArgLine, [int]$TimeoutMs)
+    $r = @{ ok = $false; stdout = ''; stderr = ''; exitCode = $null; reason = 'probe_failed'; launched = $false; ms = [int64]0 }
     $p = $null
-    $sw = $null
-    $launched = $false
+    $sw = [Diagnostics.Stopwatch]::StartNew()
     try {
         $psi = New-Object Diagnostics.ProcessStartInfo
-        $psi.FileName = $fileName
-        $psi.Arguments = $argLine
+        $psi.FileName = $FileName
+        $psi.Arguments = $ArgLine
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
         $psi.UseShellExecute = $false
@@ -181,38 +162,141 @@ function Invoke-ToolkitProbe {
         $psi.EnvironmentVariables['MISE_AUTO_INSTALL'] = '0'
         $psi.EnvironmentVariables['MISE_NOT_FOUND_AUTO_INSTALL'] = '0'
         $psi.EnvironmentVariables['MISE_AUTO_UPDATE'] = '0'
-        $sw = [Diagnostics.Stopwatch]::StartNew()
         $p = [Diagnostics.Process]::Start($psi)
-        $launched = $true
-        try { $script:ToolkitProbeStats.launches += 1 } catch { }
+        $r.launched = $true
         # 必须同时读两个流：只读一个的话，另一个管道缓冲区写满就会死锁
         $stdout = $p.StandardOutput.ReadToEndAsync()
         $stderr = $p.StandardError.ReadToEndAsync()
         # 超时保护：损坏的安装或等锁的管理器会让 --version 永久挂住
         if (-not $p.WaitForExit($TimeoutMs)) {
-            try { if ($PSVersionTable.PSVersion.Major -ge 7) { $p.Kill($true) } else { $p.Kill() } } catch { }
-            $result.reason = 'timeout'
+            # 尽量连子进程一起结束（.cmd 经由 cmd.exe 启动，真正挂住的常是它的子进程）：
+            # PS7 用 Kill($true)；Windows PowerShell 5.1 的 .NET Framework 没有整树结束，
+            # 退而用 taskkill /T，失败再只结束直接子进程。
+            $killed = $false
+            if ($PSVersionTable.PSVersion.Major -ge 7) {
+                try { $p.Kill($true); $killed = $true } catch { }
+            } elseif ([IO.Path]::DirectorySeparatorChar -eq '\') {
+                try {
+                    $tk = New-Object Diagnostics.ProcessStartInfo
+                    $tk.FileName = 'taskkill.exe'
+                    $tk.Arguments = '/PID ' + $p.Id + ' /T /F'
+                    $tk.UseShellExecute = $false
+                    $tk.CreateNoWindow = $true
+                    $tkp = [Diagnostics.Process]::Start($tk)
+                    $killed = $tkp.WaitForExit(5000)
+                    $tkp.Dispose()
+                } catch { }
+            }
+            if (-not $killed) { try { $p.Kill() } catch { } }
+            $r.reason = 'timeout'
         } else {
-            $result.exitCode = $p.ExitCode
+            $r.exitCode = $p.ExitCode
             # 进程退出了但孙进程还占着管道时不无限等
             if (-not $stdout.Wait(2000) -or -not $stderr.Wait(2000)) {
-                $result.reason = 'timeout'
+                $r.reason = 'timeout'
             } else {
-                $result.stdout = [string]$stdout.Result
-                $result.stderr = [string]$stderr.Result
-                $result.ok = $true
-                $result.reason = 'ok'
+                $r.stdout = [string]$stdout.Result
+                $r.stderr = [string]$stderr.Result
+                $r.ok = $true
+                $r.reason = 'ok'
             }
         }
     } catch {
-        $result.reason = 'probe_failed'
+        $r.reason = 'probe_failed'
     } finally {
-        if ($sw) { try { $script:ToolkitProbeStats.ms += [int64]$sw.Elapsed.TotalMilliseconds } catch { } }
+        $r.ms = [int64]$sw.Elapsed.TotalMilliseconds
         if ($p) { $p.Dispose() }
     }
+    return $r
+}
+
+# 护栏 + 组装命令行。不能执行时返回 @{ skip = reason }，否则返回 @{ fileName; argLine; key }。
+function Get-ToolkitProbePlan {
+    param([string]$Exe, [string[]]$Arguments, [switch]$NoCache)
+    # 最底层护栏：所有调用方都不能绕过。同时拦住经由 #! 或 npm.cmd 再去执行 PATH 上 node shim 的启动器。
+    if (-not $Exe -or -not (Test-ToolkitProbeSafe $Exe)) { return @{ skip = 'skipped' } }
+    $ext = [IO.Path]::GetExtension($Exe).ToLowerInvariant()
+    # 不探测 PowerShell 脚本的版本：拖慢且结果无意义
+    if ($ext -eq '.ps1') { return @{ skip = 'unsupported_probe' } }
+    $fileName = $Exe
+    $argLine = (@($Arguments) | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
+    if ($ext -in @('.cmd', '.bat')) {
+        # .cmd/.bat 必须经由 cmd.exe 解释。/d 不跑 AutoRun，/s 让外层引号按字面剥掉。
+        $fileName = if ($env:ComSpec) { $env:ComSpec } else { 'cmd.exe' }
+        $argLine = '/d /s /c ""' + $Exe + '" ' + $argLine + '"'
+    }
+    $key = if ($NoCache) { '' } else { Get-ToolkitProbeCacheKey $Exe $Arguments }
+    return @{ skip = ''; fileName = $fileName; argLine = $argLine; key = $key }
+}
+
+# 工作线程（或当前线程）跑完一个探测后，在主线程里记账：计数、累计耗时、写缓存。
+function Complete-ToolkitProbe {
+    param([hashtable]$Plan, [hashtable]$Raw)
+    if ($Raw.launched) {
+        try { $script:ToolkitProbeStats.launches += 1; $script:ToolkitProbeStats.ms += [int64]$Raw.ms } catch { }
+    }
+    $result = @{ ok = [bool]$Raw.ok; stdout = [string]$Raw.stdout; stderr = [string]$Raw.stderr; exitCode = $Raw.exitCode; reason = $Raw.reason; cached = $false }
     # 只缓存真的启动过的结果（含超时：同一个未变的文件再等 20 秒也不会有不同结论）
-    if ($key -and $launched) { $script:ToolkitProbeCache[$key] = $result.Clone() }
+    if ($Plan.key -and $Raw.launched) { $script:ToolkitProbeCache[$Plan.key] = $result.Clone() }
     return $result
+}
+
+function Invoke-ToolkitProbe {
+    param([string]$Exe, [string[]]$Arguments, [int]$TimeoutMs = 20000, [switch]$NoCache)
+    $plan = Get-ToolkitProbePlan -Exe $Exe -Arguments $Arguments -NoCache:$NoCache
+    if ($plan.skip) { return @{ ok = $false; stdout = ''; stderr = ''; exitCode = $null; reason = $plan.skip; cached = $false } }
+    if ($plan.key -and $script:ToolkitProbeCache.ContainsKey($plan.key)) {
+        $hit = $script:ToolkitProbeCache[$plan.key].Clone()
+        $hit.cached = $true
+        try { $script:ToolkitProbeStats.cacheHits += 1 } catch { }
+        return $hit
+    }
+    $raw = & $script:ToolkitProbeWorker $plan.fileName $plan.argLine $TimeoutMs
+    return (Complete-ToolkitProbe $plan $raw)
+}
+
+# 并行预热探测缓存（收敛计划 P3）：一批 @{ exe; args } 在 RunspacePool 里同时跑，结果写进
+# 与 Invoke-ToolkitProbe 同一个缓存。之后照常串行调用 Invoke-ToolkitProbe 就全部命中缓存，
+# 输出与串行完全一致，只是快。
+#   - 护栏、去重、查缓存都在主线程、派发之前做；工作线程只跑自包含的 $script:ToolkitProbeWorker。
+#   - 计数、写缓存也只在主线程做（工作线程不碰共享状态）。
+#   - Throttle <= 1 时什么也不做：调用方随后的串行探测就是原来的行为。
+function Invoke-ToolkitProbeBatch {
+    param([object[]]$Jobs, [int]$Throttle = 1, [int]$TimeoutMs = 20000)
+    if ($Throttle -le 1) { return 0 }
+    $plans = New-Object System.Collections.Generic.List[hashtable]
+    $queued = @{}
+    foreach ($job in @($Jobs)) {
+        if (-not $job) { continue }
+        $plan = Get-ToolkitProbePlan -Exe $job.exe -Arguments @($job.args)
+        if ($plan.skip -or -not $plan.key) { continue }
+        if ($queued.ContainsKey($plan.key) -or $script:ToolkitProbeCache.ContainsKey($plan.key)) { continue }
+        $queued[$plan.key] = $true
+        $plans.Add($plan)
+    }
+    if ($plans.Count -eq 0) { return 0 }
+    $pool = [RunspaceFactory]::CreateRunspacePool(1, [Math]::Min($Throttle, $plans.Count))
+    $pool.Open()
+    $running = New-Object System.Collections.Generic.List[object]
+    try {
+        $workerText = $script:ToolkitProbeWorker.ToString()
+        foreach ($plan in $plans) {
+            $ps = [PowerShell]::Create()
+            $ps.RunspacePool = $pool
+            [void]$ps.AddScript($workerText).AddArgument($plan.fileName).AddArgument($plan.argLine).AddArgument($TimeoutMs)
+            $running.Add(@{ ps = $ps; handle = $ps.BeginInvoke(); plan = $plan })
+        }
+        foreach ($item in $running) {
+            $raw = $null
+            try { $raw = @($item.ps.EndInvoke($item.handle)) | Where-Object { $_ -is [hashtable] } | Select-Object -First 1 } catch { }
+            if ($raw) { $null = Complete-ToolkitProbe $item.plan $raw }
+        }
+    } finally {
+        foreach ($item in $running) { $item.ps.Dispose() }
+        $pool.Close()
+        $pool.Dispose()
+    }
+    return $plans.Count
 }
 
 function Get-ToolkitCanonicalName {

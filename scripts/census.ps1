@@ -592,7 +592,18 @@ function Get-Placement {
 # ============================================================
 
 function Get-Declarations {
-    return (Get-ToolkitDeclarations)
+    # tools 原本是哈希表，键的顺序每次运行都可能不同（JSON、文本和告警的顺序跟着乱）。
+    # 这里换成按工具名（序数比较）排好的有序字典；只用到 .Keys 与下标，行为不变。
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($d in @(Get-ToolkitDeclarations)) {
+        $keys = [string[]]@($d.tools.Keys)
+        [Array]::Sort($keys, [StringComparer]::Ordinal)
+        $sorted = [ordered]@{}
+        foreach ($k in $keys) { $sorted[$k] = $d.tools[$k] }
+        $d.tools = $sorted
+        $out.Add($d)
+    }
+    return $out.ToArray()
 }
 
 # 尽力解析声明文件里的"工具 -> 期望版本"。
@@ -1327,7 +1338,12 @@ foreach ($r in $unmanaged) {
     if (-not $stats.ContainsKey($r.tool)) { $stats[$r.tool] = @() }
     if ($stats[$r.tool] -notcontains $r.version) { $stats[$r.tool] += $r.version }
 }
-$report.summary.byTool = $stats
+# 同理按工具名排序，免得 summary.byTool 的键序每次运行都不同
+$statKeys = [string[]]@($stats.Keys)
+[Array]::Sort($statKeys, [StringComparer]::Ordinal)
+$byTool = [ordered]@{}
+foreach ($k in $statKeys) { $byTool[$k] = $stats[$k] }
+$report.summary.byTool = $byTool
 
 if ($Json) {
     $report | ConvertTo-Json -Depth 6
