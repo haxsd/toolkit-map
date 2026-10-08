@@ -251,6 +251,7 @@ function Get-FirstLine {
         return ''
     }
 
+    $probeSw = $null
     try {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName               = $fileName
@@ -260,7 +261,11 @@ function Get-FirstLine {
         $psi.UseShellExecute        = $false
         $psi.CreateNoWindow         = $true
 
+        $probeSw = [System.Diagnostics.Stopwatch]::StartNew()
         $p  = [System.Diagnostics.Process]::Start($psi)
+        # 探测计数（probeStats）。单独 try：scan-guards 只抽出本函数单独运行，那里没有 $ProbeStats，
+        # 计数失败绝不能影响探测结果。
+        try { $ProbeStats['launches'] += 1 } catch { }
         $so = $p.StandardOutput.ReadToEndAsync()
         $se = $p.StandardError.ReadToEndAsync()
 
@@ -278,6 +283,8 @@ function Get-FirstLine {
         return "$line".Trim()
     } catch {
         return ''
+    } finally {
+        if ($probeSw) { try { $ProbeStats['ms'] += [int64]$probeSw.Elapsed.TotalMilliseconds } catch { } }
     }
 }
 
@@ -287,6 +294,7 @@ function Get-FirstLine {
 # 顺带把 MISE_AUTO_UPDATE 关掉：诊断不该等着检查更新，结果也才可复现。
 function Invoke-CaptureWithTimeout {
     param([string]$Exe, [string[]]$Arguments, [int]$TimeoutMs = 20000)
+    $probeSw = $null
     $cmd = Get-Command $Exe -ErrorAction SilentlyContinue
     if (-not $cmd) { return '' }
     if (-not (Test-ToolkitProbeSafe $cmd.Source)) { return '' }
@@ -304,7 +312,9 @@ function Invoke-CaptureWithTimeout {
         $psi.EnvironmentVariables['MISE_AUTO_INSTALL'] = '0'
         $psi.EnvironmentVariables['MISE_NOT_FOUND_AUTO_INSTALL'] = '0'
 
+        $probeSw = [System.Diagnostics.Stopwatch]::StartNew()
         $p  = [System.Diagnostics.Process]::Start($psi)
+        try { $ProbeStats['launches'] += 1 } catch { }
         $so = $p.StandardOutput.ReadToEndAsync()
         $se = $p.StandardError.ReadToEndAsync()   # 必须同时读两个流，否则管道写满会死锁
         if (-not $p.WaitForExit($TimeoutMs)) {
@@ -314,6 +324,8 @@ function Invoke-CaptureWithTimeout {
         return $so.Result
     } catch {
         return ''
+    } finally {
+        if ($probeSw) { try { $ProbeStats['ms'] += [int64]$probeSw.Elapsed.TotalMilliseconds } catch { } }
     }
 }
 
@@ -483,6 +495,10 @@ function ConvertTo-RuntimeRecord {
 # 计时收集器。用普通变量放在脚本作用域，Measure-Phase 直接往里追加。
 # 刻意不用 $script: 前缀——在脚本顶层和函数内部对它的解析行为容易产生歧义。
 $TimingItems = New-Object System.Collections.Generic.List[object]
+# 探测进程计数：Get-FirstLine / Invoke-CaptureWithTimeout 每启动一个外部进程就记一次，
+# 并累计从启动到退出（或超时）的毫秒数。与 $TimingItems 同理，用普通变量 + 原地修改。
+# 输出到 JSON 的 probeStats 字段（附加字段，schemaVersion 不变），供并行化前后对比。
+$ProbeStats = @{ launches = 0; ms = [int64]0 }
 function Measure-Phase {
     param([string]$Name, [scriptblock]$Body)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -1388,6 +1404,10 @@ Add-ReportField $report 'timings'      {
         [pscustomobject]@{ phase = (Get-StableKey $_.phase); ms = $_.ms }
     })
 }
+# probeStats 总是输出（不依赖 -Timing）：计数本身零开销，map 扫描要拿它做基线。
+Add-ReportField $report 'probeStats'   {
+    [pscustomobject]@{ launches = [int]$ProbeStats['launches']; ms = [int64]$ProbeStats['ms'] }
+}
 Add-ReportField $report 'summary'      {
     [pscustomobject]@{
         runtimeCount = @($unmanaged).Count
@@ -1582,7 +1602,9 @@ if ($Timing) {
         Write-Host ('  ' + (T 'timing.line' @{ phase = (Get-LabelText $t.phase); ms = $t.ms })) -ForegroundColor DarkGray
     }
     $sum = ($TimingItems | Measure-Object -Property ms -Sum).Sum
-    Write-Host ('  ' + (T 'timing.total' @{ ms = $sum })) -ForegroundColor White
+    # 合计行与 census.sh 同格式（timing.line）。旧写法把 ms 传给不含 {ms} 的 timing.total，数字被吞掉了。
+    Write-Host ('  ' + (T 'timing.line' @{ phase = (T 'timing.total'); ms = $sum })) -ForegroundColor White
+    Write-Host ('  ' + (T 'timing.probes' @{ count = $ProbeStats['launches']; ms = $ProbeStats['ms'] })) -ForegroundColor DarkGray
 }
 
 Write-Host ''

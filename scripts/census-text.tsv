@@ -75,6 +75,10 @@ timing.line	zh	{phase}: {ms} ms
 timing.line	en	{phase}: {ms} ms
 timing.total	zh	合计
 timing.total	en	total
+timing.probes	zh	探测进程：{count} 个，耗时 {ms} ms
+timing.probes	en	probe processes: {count}, {ms} ms
+timing.probes.noms	zh	探测进程：{count} 个（bash 5 以下不统计耗时）
+timing.probes.noms	en	probe processes: {count} (duration needs bash 5+)
 lbl.0. PATH 索引	zh	0. PATH 索引
 lbl.0. PATH 索引	en	0. PATH index
 lbl.1. 声明层	zh	1. 声明层
@@ -83,8 +87,6 @@ lbl.2. mise 纳管层	zh	2. mise 纳管层
 lbl.2. mise 纳管层	en	2. Managed (mise)
 lbl.3. 约定层	zh	3. 约定层
 lbl.3. 约定层	en	3. Conventions (shims)
-lbl.4. 定向探测	zh	4. 定向探测
-lbl.4. 定向探测	en	4. Targeted probing
 lbl.3. 约定层（命名 shim）	zh	3. 约定层（命名 shim）
 lbl.3. 约定层（命名 shim）	en	3. Conventions (shims)
 lbl.4a. 候选根目录	zh	4a. 候选根目录
