@@ -81,7 +81,7 @@ printf '  这次报出的告警: %s\n' "${KINDS%,}"
 for want in CONVENTION DRIFT XDG_SHIFT PATH_DIRT MISSING SHADOWED; do
   case ",$KINDS," in
     *",$want,"*) pass "报出了 $want" ;;
-    *)           fail "缺少 $want（沙箱是确定的，这就是回归）" ;;
+    *)           fail "缺少 ${want}（沙箱是确定的，这就是回归）" ;;
   esac
 done
 
@@ -96,6 +96,22 @@ if grep -qE '^\s+\[CONVENTION\] Found a naming convention' "$FX/out-en.txt"; the
   pass "英文模式的告警正文已本地化"
 else
   fail "英文模式的告警正文仍是中文"
+fi
+# 文案来自同目录的 scripts/census-text.tsv：漏查的 key 会原样露出键名
+if grep -qE 'warn\.[A-Z_]+\.(message|action)|(^| )(sec|sum|no)\.[a-zA-Z]+' "$FX/out-en.txt" "$FX/out.txt"; then
+  fail "输出里残留了未解析的文案 key"
+else
+  pass "输出里没有残留的文案 key"
+fi
+# 文案表缺失时必须明确失败（退出码 2 + 提示），而不是把键名当文案输出
+mkdir -p "$FX/no-text"
+cp "$CENSUS" "$FX/no-text/census.sh"
+"$FX/no-text/census.sh" --json > /dev/null 2> "$FX/no-text.err"
+NO_TEXT_CODE=$?
+if [ "$NO_TEXT_CODE" -eq 2 ] && grep -q 'census-text.tsv' "$FX/no-text.err"; then
+  pass "文案表缺失时以退出码 2 失败并指明 census-text.tsv"
+else
+  fail "文案表缺失时没有明确失败（退出码 ${NO_TEXT_CODE}）"
 fi
 
 # JSON 模式：结构完整 + 可被机器解析。
@@ -137,7 +153,7 @@ while IFS="$(printf '\t')" read -r scope kind tool needle; do
   if warn_has "$kind" "$tool" "$needle"; then
     pass "JSON 告警符合期望：$kind tool=$tool 含 $needle"
   else
-    fail "JSON 缺少期望告警：$kind tool=$tool 含 $needle（见 tests/fixtures/census-expected.tsv）"
+    fail "JSON 缺少期望告警：$kind tool=$tool 含 ${needle}（见 tests/fixtures/census-expected.tsv）"
   fi
 done < "$EXPECTED"
 [ "$CHECKED" -gt 0 ] || fail "期望文件 tests/fixtures/census-expected.tsv 没有可用的行"

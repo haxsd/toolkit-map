@@ -58,200 +58,32 @@ json_escape() {
 # ============================================================
 # 语言与文案
 # ============================================================
-# 文案表用 TSV 形式（键@@语言@@文本）放在 here-doc 里，用 awk 按需查。
-# 刻意不用关联数组：macOS 自带的 /bin/bash 是 3.2，不支持 declare -A，
+# 文案表放在同目录的 census-text.tsv（key<TAB>lang<TAB>text），与 census.ps1 共用一份，
+# 用 awk 按需查。刻意不用关联数组：macOS 自带的 /bin/bash 是 3.2，不支持 declare -A，
 # 而这个脚本承诺在 macOS 上开箱即用。
-catalog() {
-  cat <<'CATALOG'
-title@@zh@@运行时普查报告 (census)
-title@@en@@runtime-census report
-meta@@zh@@生成时间: {time}   主机: {user}@{arch}   当前目录: {cwd}
-meta@@en@@generated {time}   host {user}@{arch}   cwd {cwd}
-sec.decl@@zh@@1. 声明层 —— 谁在要求哪些工具与版本
-sec.decl@@en@@1. Declarations — who asks for which tools and versions
-sec.managed@@zh@@2. 纳管层 —— mise 管理的工具
-sec.managed@@en@@2. Managed — tools that mise manages
-sec.conv@@zh@@3. 约定层 —— 带版本号的命名 shim（最容易失传的约定）
-sec.conv@@en@@3. Conventions — version-suffixed shims (the kind that gets lost)
-sec.inv@@zh@@4. 工具清单 —— 磁盘上实际存在的运行时与工具（含纳管与未纳管）
-sec.inv@@en@@4. Inventory — runtimes and tools actually present on disk (managed or not)
-sec.res@@zh@@5. 解析层 —— 命令实际解析到哪
-sec.res@@en@@5. Resolution — what each command actually resolves to
-sec.warn@@zh@@6. 告警 —— 需要人工确认的问题
-sec.warn@@en@@6. Warnings — things that need a human decision
-sec.summary@@zh@@汇总
-sec.summary@@en@@Summary
-sec.timing@@zh@@性能分解 —— 各阶段耗时
-sec.timing@@en@@Timing — per-stage cost
-no.decl@@zh@@（未发现任何 mise.toml / .tool-versions 声明）
-no.decl@@en@@(no mise.toml / .tool-versions declarations found)
-no.mise@@zh@@mise 未安装（PATH 上找不到）。
-no.mise@@en@@mise is not installed (not found on PATH).
-no.managed@@zh@@mise 已安装，但尚未纳管任何工具。
-no.managed@@en@@mise is installed but manages no tools yet.
-no.conv@@zh@@（未发现）
-no.conv@@en@@(none found)
-no.warn@@zh@@未发现问题。
-no.warn@@en@@No problems found.
-scope.global@@zh@@[全局]
-scope.global@@en@@[global]
-scope.project@@zh@@[项目]
-scope.project@@en@@[project]
-conv.line@@zh@@{shim} 名称声明 {declared} 实际 {actual} [{state}]
-conv.line@@en@@{shim} declares {declared}, actual {actual} [{state}]
-state.ok@@zh@@OK
-state.ok@@en@@OK
-state.bad@@zh@@不可用
-state.bad@@en@@not usable
-inv.count@@zh@@{tool}  共 {count} 个
-inv.count@@en@@{tool}  {count} found
-res.hits@@zh@@{command} -> {path}  ({version})  [{hits} 个 PATH 命中]
-res.hits@@en@@{command} -> {path}  ({version})  [{hits} PATH hits]
-res.line@@zh@@{command} -> {path}  ({version})
-res.line@@en@@{command} -> {path}  ({version})
-res.stub@@zh@@^ 警告：实测无法执行（应用执行别名的目标未安装，运行 --version 无输出、退出码 9009）
-res.stub@@en@@^ warning: cannot actually run (app-execution alias whose target app is missing; --version gives no output, exit 9009)
-sum.runtimes@@zh@@发现的运行时/工具条目数: {count}
-sum.runtimes@@en@@Runtime/tool entries found: {count}
-sum.byTool@@zh@@{tool}  {count} 个版本: {versions}
-sum.byTool@@en@@{tool}  {count} versions: {versions}
-sum.placement@@zh@@位置分布: {text}
-sum.placement@@en@@Placement: {text}
-sum.root@@zh@@规范根:   {root}
-sum.root@@en@@Canonical root: {root}
-sum.warnings@@zh@@告警数量: {count}
-sum.warnings@@en@@Warnings: {count}
-timing.total@@zh@@合计
-timing.total@@en@@total
-lbl.托管@@zh@@托管
-lbl.托管@@en@@managed
-lbl.宿主@@zh@@宿主
-lbl.宿主@@en@@bundled with IDE
-lbl.公认@@zh@@公认
-lbl.公认@@en@@standard location
-lbl.规范根@@zh@@规范根
-lbl.规范根@@en@@canonical root
-lbl.游离@@zh@@游离
-lbl.游离@@en@@stray
-lbl.游离位置@@zh@@游离位置
-lbl.游离位置@@en@@stray location
-lbl.不可用@@zh@@不可用
-lbl.不可用@@en@@not usable
-lbl.系统安装@@zh@@系统安装
-lbl.系统安装@@en@@system install
-lbl.IDE 内置@@zh@@IDE 内置
-lbl.IDE 内置@@en@@bundled with IDE
-lbl.自定义位置@@zh@@自定义位置
-lbl.自定义位置@@en@@custom location
-lbl.版本管理器@@zh@@版本管理器
-lbl.版本管理器@@en@@version manager
-lbl.mise@@zh@@mise
-lbl.mise@@en@@mise
-lbl.conda@@zh@@conda
-lbl.conda@@en@@conda
-lbl.scoop@@zh@@scoop
-lbl.scoop@@en@@scoop
-lbl.chocolatey@@zh@@chocolatey
-lbl.chocolatey@@en@@chocolatey
-lbl.homebrew@@zh@@homebrew
-lbl.homebrew@@en@@homebrew
-lbl.0. PATH 索引@@zh@@0. PATH 索引
-lbl.0. PATH 索引@@en@@0. PATH index
-lbl.1. 声明层@@zh@@1. 声明层
-lbl.1. 声明层@@en@@1. Declarations
-lbl.2. mise 纳管层@@zh@@2. mise 纳管层
-lbl.2. mise 纳管层@@en@@2. Managed (mise)
-lbl.3. 约定层@@zh@@3. 约定层
-lbl.3. 约定层@@en@@3. Conventions (shims)
-lbl.4. 定向探测@@zh@@4. 定向探测
-lbl.4. 定向探测@@en@@4. Targeted probing
-lbl.5. 解析层@@zh@@5. 解析层
-lbl.5. 解析层@@en@@5. Resolution
-lbl.6. 汇总告警@@zh@@6. 汇总告警
-lbl.6. 汇总告警@@en@@6. Warnings
-dirt.dupes@@zh@@重复条目 {n} 条
-dirt.dupes@@en@@duplicate entries: {n}
-dirt.quoted@@zh@@带引号的条目 {n} 条
-dirt.quoted@@en@@quoted entries: {n}
-dirt.join@@zh@@、
-dirt.join@@en@@ and 
-drift.onlyTpl@@zh@@模板有而部署副本没有: {keys}
-drift.onlyTpl@@en@@in the template but not deployed: {keys}
-drift.onlyDep@@zh@@部署副本有而模板没有: {keys}
-drift.onlyDep@@en@@deployed but not in the template: {keys}
-drift.sameKeys@@zh@@[tools] 的键相同，但内容有差异（版本或注释不同）
-drift.sameKeys@@en@@same [tools] keys, different content (versions or comments)
-drift.join@@zh@@；
-drift.join@@en@@; 
-warn.STUB.message@@zh@@命令 '{command}' 解析到 '{path}'，实测无法执行（运行 --version 无输出、退出码 9009）。这类文件是 Windows 应用执行别名，目标应用没装时执行会静默失败，而 Get-Command / where.exe 都会把它当成可用命令。
-warn.STUB.message@@en@@'{command}' resolves to '{path}', which cannot actually run (probing --version gives no output, exit code 9009). This is a Windows app-execution alias: when the target app is missing the call fails silently, yet Get-Command and where.exe both list it as usable.
-warn.STUB.action@@zh@@换用其它命令，或安装该别名对应的应用
-warn.STUB.action@@en@@Use another command, or install the app behind the alias
-warn.PATH_ORDER.message@@zh@@声明要求 {tool} {wanted}（{file}），mise 也装有 {have}，但 '{command}' 解析到 '{path}'（{version}）。未激活 mise 的场景（cmd、图形程序、IDE 任务、-NoProfile 脚本）会用到错版本；根因是 PATH 组合顺序，不是运行时本身有问题。
-warn.PATH_ORDER.message@@en@@'{file}' asks for {tool} {wanted} and mise has {have}, but '{command}' resolves to '{path}' ({version}). Contexts without mise activation (cmd, GUI apps, IDE tasks, -NoProfile scripts) get the wrong version — the root cause is PATH ordering, not the runtime itself.
-warn.PATH_ORDER.action@@zh@@交互式会话里 mise activate 会把 shims 前置来救场；要让所有场景都对，需要把 shims 放到用户级 PATH 首位（bootstrap 会做），机器级条目（如 Oracle 的 javapath）需要管理员权限调整或让位
-warn.PATH_ORDER.action@@en@@mise activate prepends the shims inside interactive sessions; to fix every context, put the shims first on the user PATH (bootstrap does this) — machine-level entries such as Oracle javapath need admin rights to change
-warn.SHADOWED.message@@zh@@'{tool}' 在磁盘上有 {total} 个副本，其中 {hidden} 个不在 PATH 上，无法被直接调用。被遮蔽的位置见下。
-warn.SHADOWED.message@@en@@'{tool}' exists {total} times on disk; {hidden} cannot be reached through PATH (the hidden copies are listed below).
-warn.SHADOWED.action@@zh@@要固定用某一版就写进声明文件；不要靠 PATH 顺序记住它
-warn.SHADOWED.action@@en@@Pin the version you want in a declaration file instead of relying on PATH order
-warn.CONVENTION.message@@zh@@发现自定义命名约定 '{shim}'（文件名里声明版本 {declared}，实际 {actual}）。这类约定不在任何标准里，必须写进声明文件否则会失传。
-warn.CONVENTION.message@@en@@Found a naming convention: '{shim}' (the filename claims {declared}, the binary is actually {actual}). Conventions that live only in a filename are invisible to every tool — record it in a declaration file or it will be lost.
-warn.CONVENTION.action@@zh@@把这条约定登记到声明文件（mise.toml / .tool-versions）
-warn.CONVENTION.action@@en@@Record it in a declaration file (mise.toml / .tool-versions)
-warn.PATH_DIRT.message@@zh@@PATH 里有{parts}。它们不改变解析结果，但会让「改了却没生效」这类问题更难查。
-warn.PATH_DIRT.message@@en@@PATH contains {parts}. They do not change resolution, but they hide “I changed it but nothing took effect” problems.
-warn.PATH_DIRT.action@@zh@@清理这些条目（重复条目可以直接删掉）
-warn.PATH_DIRT.action@@en@@Clean them up (duplicate entries can simply be dropped)
-warn.DRIFT.message@@zh@@部署的全局声明（{deployed}）与仓库模板不一致。模板代表这台机器想要的状态，漂移意味着模板里新加的工具永远不会被安装。
-warn.DRIFT.message@@en@@The deployed machine manifest ({deployed}) differs from the repo template. The template is the state this machine wants; while they drift, tools added to the template are never installed.
-warn.DRIFT.action@@zh@@刷新: scripts/bootstrap.sh --refresh-config（会先备份）
-warn.DRIFT.action@@en@@Refresh it: scripts/bootstrap.sh --refresh-config (backs up first)
-warn.XDG_SHIFT.message@@zh@@本机设置了 XDG_CONFIG_HOME={xdg}，mise 的全局配置目录会跟着搬到这里（{config}）。后果是 ~/.config/mise/config.toml 不再是全局配置，而是「从工作目录向上发现」的配置——工作目录不在用户目录之下时它不生效。
-warn.XDG_SHIFT.message@@en@@XDG_CONFIG_HOME={xdg} is set, so mise moves its global config directory to {config}. As a result ~/.config/mise/config.toml is no longer the global config: it becomes a config discovered by walking up from the working directory, and has no effect outside the home tree.
-warn.XDG_SHIFT.action@@zh@@要么去掉这个变量（推荐，机器声明就写在 ~/.config/mise/config.toml），要么把声明迁到 {config}
-warn.XDG_SHIFT.action@@en@@Either unset the variable (recommended: the manifest lives in ~/.config/mise/config.toml) or move the manifest to {config}
-warn.STRAY.message@@zh@@有 {count} 个工具/运行时放在非规范位置，且没有任何管理器纳管它们。它们只靠 PATH 被找到——PATH 一变就失传。建议登记到声明文件；今后新装的工具请落在 {root}。
-warn.STRAY.message@@en@@{count} tool(s)/runtime(s) sit outside the canonical root and are tracked by no manager. They are reachable only through PATH, so a PATH change loses them. Record them in a declaration file; install future tools under {root}.
-warn.STRAY.action@@zh@@登记它们（不要搬动路径：路径可能被项目配置或 IDE 写死）
-warn.STRAY.action@@en@@Record them — do not move the paths (project config or IDEs may hard-code them)
-warn.UNDECLARED.message@@zh@@当前目录的 package.json 要求 node {wanted}，但没有任何工具读得到的声明文件。engines 只在版本不符时给警告，不会切换版本——这就是当初需要 node22.cmd 那类私有约定的原因。
-warn.UNDECLARED.message@@en@@This directory's package.json asks for node {wanted}, but no tool can read a declaration here. engines only warns on mismatch; it never switches versions — which is why private conventions like node22.cmd existed.
-warn.UNDECLARED.action@@zh@@在项目根目录建 mise.toml（[tools] node = "22"）或 .tool-versions（nodejs 22）；之后 cd 进项目会自动用对版本
-warn.UNDECLARED.action@@en@@Add mise.toml ([tools] node = "22") or .tool-versions (nodejs 22) at the project root; from then on cd-ing in selects the right version
-warn.MISSING.message@@zh@@声明文件 '{file}' 要求 {tool} {wanted}，但本机没有发现它——既不在 PATH 上，也没有被任何管理器纳管。
-warn.MISSING.message@@en@@'{file}' asks for {tool} {wanted}, but it was not found on this machine — not on PATH, and not managed by anything.
-warn.MISSING.action@@zh@@执行 mise install 把它装上（新机器可直接跑 scripts/bootstrap.sh）
-warn.MISSING.action@@en@@Install it with mise install (on a new machine, just run scripts/bootstrap.sh)
-warn.NO_MISE.message@@zh@@本机未安装 mise。运行时只能靠 PATH 解析，无法按项目自动切换版本。
-warn.NO_MISE.message@@en@@mise is not installed. Runtimes can only be resolved through PATH, so per-project version switching is unavailable.
-warn.NO_MISE.action@@zh@@执行 scripts/bootstrap.sh 建立声明式层
-warn.NO_MISE.action@@en@@Run scripts/bootstrap.sh to set up the declarative layer
-CATALOG
-}
+# 文案表必须与本脚本放在同一目录（克隆、发布 ZIP、技能联接都是整个源码目录，天然满足）；
+# 缺了就直接失败：静默退化成键名会让 --json 的 message/action 全部变成 warn.XXX.message。
+TEXT_FILE="$SCRIPT_DIR/census-text.tsv"
+if [ ! -f "$TEXT_FILE" ]; then
+  echo "[census] 找不到文案表 ${TEXT_FILE}（census-text.tsv 必须与 census.sh 放在同一目录）" >&2
+  exit 2
+fi
 
 # 取一条文案并用 k=v 参数替换 {占位符}。缺失的键返回键名本身，
 # 这样漏翻译会立刻在输出里露出来，而不是静默变成空白。
-# 文案表只在第一次调用时生成一次并落成临时文件：报告里 T 会被调用几十次，
-# 每次都重跑一次 catalog+awk 会白白多出上百个进程（实测占掉数秒）。
-TEXT_FILE=""
-ensure_text_file() {
-  [ -n "$TEXT_FILE" ] && return 0
-  TEXT_FILE="${TMPDIR:-/tmp}/census-text-$$.tsv"
-  catalog > "$TEXT_FILE" 2>/dev/null || TEXT_FILE=""
-  [ -n "$TEXT_FILE" ] && trap 'rm -f "$TEXT_FILE"' EXIT
-  return 0
-}
+# 查找顺序：sh: 前缀的本实现专用文案 > 无前缀文案；当前语言 > 任意语言（文件里 zh 在前）。
 T() {
   local key="$1"; shift
   local s
-  ensure_text_file
-  if [ -n "$TEXT_FILE" ]; then
-    s="$(awk -F'@@' -v k="$key" -v l="$OUT_LANG" '$1==k && $2==l {print $3; exit}' "$TEXT_FILE")"
-    [ -n "$s" ] || s="$(awk -F'@@' -v k="$key" '$1==k {print $3; exit}' "$TEXT_FILE")"
-  else
-    s="$(catalog | awk -F'@@' -v k="$key" -v l="$OUT_LANG" '$1==k && $2==l {print $3; exit}')"
-  fi
+  s="$(awk -F'\t' -v k="$key" -v l="$OUT_LANG" '
+    function consider(rank, txt) { if (rank < best_rank) { best_rank = rank; best = txt } }
+    BEGIN { best_rank = 5; best = "" }
+    /^#/ || NF < 3 { next }
+    $1 == "sh:" k && $2 == l { consider(1, $3); next }
+    $1 == k       && $2 == l { consider(2, $3); next }
+    $1 == "sh:" k            { consider(3, $3); next }
+    $1 == k                  { consider(4, $3); next }
+    END { if (best_rank < 5) print best }' "$TEXT_FILE")"
   [ -n "$s" ] || s="$key"
   local kv k2 v2 pat
   for kv in "$@"; do

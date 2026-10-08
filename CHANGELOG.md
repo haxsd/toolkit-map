@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- census.ps1 与 census.sh 的中英文案合并为同目录的 `scripts/census-text.tsv`（key<TAB>lang<TAB>text），两边读同一份，不再各维护一张表；两边措辞尚未统一的 4 条（PATH_DIRT 文案、DRIFT/MISSING/NO_MISE 处置建议里的 bootstrap 脚本名）用 `ps1:`/`sh:` 前缀分开保存，输出与之前逐字一致。文案表缺失时两个脚本以退出码 2 明确失败。新增 tests/check-text.ps1 检查格式、中英齐全、脚本引用可解析与 `-Lang en` 输出。
 - CI：`parity.ps1` 与 `map-smoke.ps1` 增加 PowerShell 7 步骤（census.ps1 与地图动作在 PS7 宿主下也逐条验证）；新增 macOS job，用系统自带的 bash 3.2 做语法检查并跑 `smoke.sh`，守住 census.sh 在 macOS 开箱即用的承诺。
 - 测试：census 沙箱的期望告警改由 `tests/fixtures/census-expected.tsv` 统一提供（kind / tool / 字面关键字），`parity.ps1` 与 `smoke.sh` 读同一份，不再各自硬编码、各自漂移；`smoke.sh` 在原有"告警种类"检查之外新增按 JSON 的 kind/tool/关键字断言（纯 awk，不依赖 python3/jq）；`.gitattributes` 钉住 `*.tsv` 为 LF。
 - 配方安装强制校验官方 SHA256：下载前依次取配方钉死值、GitHub 发布资产 digest、上游校验文件（gh 的 checksums.txt、rg 的 CertUtil 格式 .sha256）；都取不到返回 `checksum_unavailable` 且不下载，`-Sha256` 与官方值冲突返回 `checksum_conflict`；结果带 `integrity` 说明来源。修复 `$url`/`$Url` 同名（PowerShell 变量不分大小写）导致配方分支无法与 `-Url` 区分的问题。
