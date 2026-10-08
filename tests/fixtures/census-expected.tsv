@@ -7,9 +7,6 @@
 #   tool    告警的 tool 字段；* 表示不比较
 #   needle  告警 detail/message 中必须出现的字面子串；{sandbox} 换成沙箱目录名
 #
-# STRAY 的 tool 暂用 *：census.ps1 填的是工具名（如 node），census.sh 固定填 stray，
-# 这是已知漂移，留给收敛计划的 C4 对齐。
-#
 # 新增断言时 needle 只用 ASCII：CI runner 多是英文系统，子进程输出里的非 ASCII 字符会被替换。
 
 both	CONVENTION	node	node22
@@ -17,5 +14,5 @@ both	DRIFT	mise	config.toml
 both	MISSING	census-absent-tool	census-absent-tool
 both	PATH_DIRT	PATH	{sandbox}
 both	SHADOWED	node	rt1
-both	STRAY	*	rt2
+both	STRAY	node	rt2
 smoke	XDG_SHIFT	mise	{sandbox}
