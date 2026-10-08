@@ -42,6 +42,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 的 Invoke-WebRequest 逐块刷新进度条，下载大文件会慢一个数量级。
+$ProgressPreference = 'SilentlyContinue'
 
 # ---------- 路径与常量 ----------
 
@@ -50,6 +52,13 @@ $ErrorActionPreference = 'Stop'
 # 统一仓库：新装的工具落在这里，按 <工具>/<版本>/ 并列。
 # 注意它不进 PATH —— PATH 只应该有一个间接层，多版本塞进 PATH 只会互相遮蔽。
 
+
+# 版本号唯一来源是仓库根目录的 VERSION；文档里的稳定标签由 tests/check-docs.ps1 校验一致。
+function Get-ToolkitVersion {
+    $file = Join-Path (Split-Path $PSScriptRoot -Parent) 'VERSION'
+    if (-not [IO.File]::Exists($file)) { return '' }
+    return ([IO.File]::ReadAllText($file)).Trim()
+}
 
 $CensusScript = Join-Path $PSScriptRoot 'census.ps1'
 
@@ -169,6 +178,38 @@ function Assert-ArchiveSha256 {
     Write-MapMessage '  SHA256 校验通过。' -ForegroundColor DarkGray
 }
 
+# winget 兜底安装的可替换步骤：测试用假实现替换，不触网、不读本机注册表。
+function Invoke-WingetCommand {
+    param([string]$Exe, [string[]]$Arguments)
+    $output = @(& $Exe @Arguments 2>&1)
+    return @{ exitCode = $LASTEXITCODE; output = $output }
+}
+function Get-InstallerRefreshedPath {
+    return ([Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH', 'User'))
+}
+function Test-InstalledSince {
+    # 安装器常保留文件的原始修改时间，所以创建时间与修改时间任一晚于安装开始即可（留 5 秒余量）。
+    param([string]$P, [datetime]$Since)
+    $item = Get-Item -LiteralPath $P -ErrorAction SilentlyContinue
+    if (-not $item) { return $false }
+    $edge = $Since.AddSeconds(-5)
+    return ($item.CreationTimeUtc -ge $edge -or $item.LastWriteTimeUtc -ge $edge)
+}
+function Find-NewInstalledExecutable {
+    param([string]$Name, [datetime]$Since)
+    $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs' }))
+    $seen = @{}
+    foreach ($root in $roots) {
+        if (-not $root -or -not [IO.Directory]::Exists($root)) { continue }
+        Get-ChildItem -LiteralPath $root -Recurse -Depth 3 -File -Filter "$Name.*" -ErrorAction SilentlyContinue |
+            Where-Object { $_.BaseName -eq $Name -and $_.Extension -in @('.exe', '.cmd', '.bat') -and (Test-InstalledSince $_.FullName $Since) } |
+            ForEach-Object {
+                $key = Get-ToolkitNormalizedPath $_.FullName
+                if (-not $seen.ContainsKey($key)) { $seen[$key] = $true; $_.FullName }
+            }
+    }
+}
+
 function Invoke-Install {
     if (-not $Tool) { throw "用法：map.ps1 install <tool>@<版本|latest>（或 install <tool> -Url <zip 直链> [-Sha256 <校验值>]，或 install <tool> -Via winget）" }
     $existingMap = Read-Map # 先验证地图，不能装完才发现地图损坏。
@@ -178,55 +219,57 @@ function Invoke-Install {
     # 自己的位置，装完在地图里标注真实路径与"不在仓库"的原因——它仍然是可发现的。
     if ($Via) {
         if ($Via -ne 'winget') { throw "目前只支持 -Via winget（其余情况请人工安装后用 map.ps1 add 登记）" }
+        # 地图键与其他动作一致：规范化 + 单个名称校验；包 ID 不能以 - 开头，避免被 winget 当成选项。
+        $name = Get-ToolkitCanonicalName $Tool
+        if ($Tool -match '@' -or $name -notmatch '^[a-z0-9][a-z0-9._+-]*$') {
+            Throw-MapError 'invalid_argument' '工具名必须是单个名称，不能包含路径、分隔符或 @版本（winget 版本由包管理器决定）。'
+        }
         $id = if ($WingetId) { $WingetId } else { $Tool }
+        if ($id -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') { Throw-MapError 'invalid_argument' 'winget 包 ID 只能包含字母、数字与 . _ + -，且不能以 - 开头。' }
         Write-MapMessage "用 winget 安装 $id（装到包管理器自己的位置，不在统一仓库）…" -ForegroundColor Cyan
-        if ($WhatIf) { return (New-MapResult 'planned' @{ tool = $Tool; via = 'winget'; packageId = $id; destination = 'package-manager' }) }
+        if ($WhatIf) { return (New-MapResult 'planned' @{ tool = $name; via = 'winget'; packageId = $id; destination = 'package-manager' }) }
 
         $wingetPaths = @(Get-PathHits 'winget' | Where-Object { -not (Test-IsShimPath $_) -and [IO.Path]::GetExtension($_) -in @('.exe', '.cmd', '.bat') })
         if (-not $wingetPaths.Count) { Throw-MapError 'installer_missing' '未找到可直接调用的 winget；不会执行 shim 安装器。' }
-        $wingetOutput = @(& $wingetPaths[0] install --id $id --exact --silent --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1)
-        $wingetExit = $LASTEXITCODE
-        $wingetOutput | Select-Object -Last 3 | ForEach-Object { Write-MapMessage ('  ' + $_) }
-        if ($wingetExit -ne 0) {
-            throw "winget 安装失败（退出码 $wingetExit）：$id"
-        }
+        $installStart = (Get-Date).ToUniversalTime()
+        $winget = Invoke-WingetCommand -Exe $wingetPaths[0] -Arguments @('install', '--id', $id, '--exact', '--silent', '--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity')
+        @($winget.output) | Select-Object -Last 3 | ForEach-Object { Write-MapMessage ('  ' + $_) }
+        if ($winget.exitCode -ne 0) { throw "winget 安装失败（退出码 $($winget.exitCode)）：$id" }
 
         # 关键一步：当前进程的 PATH 是安装前的旧环境（子进程继承，不会跟着注册表变），
         # 所以先用注册表现算一份新 PATH 再搜，否则"装好了却找不到"。
         $saved = $env:PATH
         try {
-            $env:PATH = ([Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH', 'User'))
-            $cands = @(Get-ToolCandidates -Name $Tool -RuntimeIndex @{})
-            # 有些安装器不把目录写进 PATH：再往公认安装位置里找一次
-            if ($cands.Count -eq 0) {
-                foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
-                    if (-not $root) { continue }
-                    $hit = @(Get-ChildItem -LiteralPath $root -Recurse -Depth 3 -File -ErrorAction SilentlyContinue |
-                             Where-Object { $_.BaseName -eq $Tool -and $_.Extension -in @('.exe', '.cmd', '.bat') } |
-                             Select-Object -First 1)
-                    if ($hit.Count -gt 0) {
-                        $cands = @((New-Candidate -P $hit[0].FullName))
-                        break
-                    }
-                }
+            $env:PATH = Get-InstallerRefreshedPath
+            $cands = @(Get-ToolCandidates -Name $name -RuntimeIndex @{})
+            $fresh = @($cands | Where-Object { Test-InstalledSince $_.path $installStart })
+            # 有些安装器不把目录写进 PATH：再往公认安装位置里找本次新装的文件。
+            # 只认安装开始之后出现的文件，多于一个就不猜，避免把同名的旧文件登记成 winget 安装。
+            if (-not $fresh.Count) {
+                $hits = @(Find-NewInstalledExecutable -Name $name -Since $installStart)
+                if ($hits.Count -gt 1) { Throw-MapError 'installed_ambiguous' "winget 装完后找到多个新的 $name 可执行文件，不猜测：$($hits -join '; ')。请确认后用 add 登记。" }
+                if ($hits.Count -eq 1) { $c = New-Candidate -P $hits[0]; $fresh = @($c); $cands = @($cands) + @($c) }
             }
             if ($cands.Count -eq 0) {
-                Throw-MapError 'installed_not_discovered' "winget 装完了，但没找到 $Tool 的可执行文件。请确认路径后用 add 登记。"
+                Throw-MapError 'installed_not_discovered' "winget 装完了，但没找到 $name 的可执行文件。请确认路径后用 add 登记。"
             }
             $map = Read-Map
-            if ($null -eq $map) { $map = @{ schemaVersion = 1; warehouse = (Get-WarehouseRoot); tools = @{} } }
-            if (-not $map.tools.ContainsKey($Tool)) { $map.tools[$Tool] = @{ preferred = ''; candidates = @() } }
+            if ($null -eq $map) { $map = @{ schemaVersion = 2; warehouse = Get-WarehouseRoot; tools = @{}; scannedAt = $null; pathSnapshot = $saved } }
+            if (-not $map.tools.ContainsKey($name)) { $map.tools[$name] = @{ candidates = @(); preferred = ''; preferredPath = '' } }
+            $freshPaths = @($fresh | ForEach-Object { $_.path })
             foreach ($c in $cands) {
-                $c.note = 'winget 安装（不在统一仓库）；升级/卸载交给 winget'
-                if (-not ($map.tools[$Tool].candidates | Where-Object { $_.path -eq $c.path })) {
-                    $map.tools[$Tool].candidates = @($map.tools[$Tool].candidates) + @($c)
+                # 只有本次新出现的文件才标注为 winget 安装；PATH 上原有的同名副本照常登记、不改说明。
+                if ($freshPaths -contains $c.path) { $c.note = 'winget 安装（不在统一仓库）；升级/卸载交给 winget' }
+                if (-not (@($map.tools[$name].candidates) | Where-Object { $_.path -eq $c.path })) {
+                    $map.tools[$name].candidates = @($map.tools[$name].candidates) + @($c)
                 }
             }
-            if (-not $map.tools[$Tool].preferred) { $map.tools[$Tool].preferred = @($map.tools[$Tool].candidates)[0].id }
             Save-Map $map
-            Write-MapMessage ("  已登记进地图：map.ps1 find {0}" -f $Tool) -ForegroundColor Green
+            Write-MapMessage ("  已登记进地图：map.ps1 find {0}" -f $name) -ForegroundColor Green
         } finally { $env:PATH = $saved }
-        return (New-MapResult 'ok' @{ tool = $Tool; via = 'winget'; mapFile = Get-MapPath })
+        $fields = @{ tool = $name; via = 'winget'; packageId = $id; installed = $freshPaths; mapFile = Get-MapPath }
+        if (-not $freshPaths.Count) { $fields.hint = '未发现本次新出现的可执行文件（可能是原位升级）；已登记 PATH 上现有的副本，请用 find 核对。' }
+        return (New-MapResult 'ok' $fields)
     }
 
     $name = $Tool; $ver = $Version
@@ -396,7 +439,7 @@ try {
         'install' { Invoke-Install }
         'setup'   { Invoke-Setup }
         'doctor'  { Invoke-Doctor }
-        'help'    { New-MapResult 'ok' @{ version = '0.2.3'; actions = @('setup', 'doctor', 'scan', 'status', 'find', 'add', 'update', 'install'); hint = 'find <工具> [-Project <目录>] [-Version <版本>] -Json；setup [-Project <目录>] [-WhatIf]' } }
+        'help'    { New-MapResult 'ok' @{ version = (Get-ToolkitVersion); actions = @('setup', 'doctor', 'scan', 'status', 'find', 'add', 'update', 'install'); hint = 'find <工具> [-Project <目录>] [-Version <版本>] -Json；setup [-Project <目录>] [-WhatIf]' } }
         default   { Throw-MapError 'invalid_action' "未知动作：$Action；执行 help 查看用法。" }
     }
     if ($null -eq $result) { $result = New-MapResult 'ok' @{ mapFile = Get-MapPath } }
