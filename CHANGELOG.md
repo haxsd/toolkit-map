@@ -1,5 +1,10 @@
 # 更新记录
 
+## 未发布
+
+- 扫描与探测不再经由脚本型启动器间接执行 shim：npm/npx/pnpm/yarn/corepack 的 `#!/usr/bin/env node` 或"同目录没有 node 就走 PATH"会落到 PATH 上的 node shim。census.sh、census.ps1 与地图探测共用同一套规则，解释器不安全时只登记路径、不执行；smoke.sh 自带假启动器复现该场景。
+- 修复 PowerShell 7 在非 UTC 时区下每次 find 都重新探测候选并重写 map.json / map.md：modifiedAt 统一按 UTC ticks 比较，5.1 与 7 行为一致；map-contract 增加连续查询不探测、不写盘的断言。
+
 ## v0.2.3 — 首次使用与支持入口
 
 - README 按陌生用户旅程重排：直观场景、稳定版下载、单项目接入、Git 验证与可复制的 agent 验收提示。
