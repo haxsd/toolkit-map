@@ -96,6 +96,7 @@ function Get-ProbeText {
     # Test-ToolkitProbeSafe 同时拦住经由 #! 或 npm.cmd 再去执行 PATH 上 node shim 的启动器。
     if (-not $Exe -or -not (Test-ToolkitProbeSafe $Exe) -or (Test-IsStoreAlias $Exe)) { $script:LastProbe.reason = 'skipped'; return '' }
     $p = $null
+    $probeSw = $null
     try {
         $fileName = $Exe
         $argLine = ($Arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
@@ -114,7 +115,10 @@ function Get-ProbeText {
         $psi.EnvironmentVariables['MISE_AUTO_INSTALL'] = '0'
         $psi.EnvironmentVariables['MISE_NOT_FOUND_AUTO_INSTALL'] = '0'
         $psi.EnvironmentVariables['MISE_AUTO_UPDATE'] = '0'
+        $probeSw = [Diagnostics.Stopwatch]::StartNew()
         $p = [Diagnostics.Process]::Start($psi)
+        # 探测计数（scan 结果的 probeStats）。单独 try：计数失败绝不能影响探测结果。
+        try { $script:ProbeStats.launches += 1 } catch { }
         $stdout = $p.StandardOutput.ReadToEndAsync()
         $stderr = $p.StandardError.ReadToEndAsync()
         if (-not $p.WaitForExit(20000)) {
@@ -127,9 +131,14 @@ function Get-ProbeText {
         $script:LastProbe.ok = $true
         $script:LastProbe.reason = 'ok'
         return (@(("$($stdout.Result)`n$($stderr.Result)" -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -First $MaxLines) -join "`n").Trim()
-    } catch { return '' } finally { if ($p) { $p.Dispose() } }
+    } catch { return '' } finally {
+        if ($probeSw) { try { $script:ProbeStats.ms += [int64]$probeSw.Elapsed.TotalMilliseconds } catch { } }
+        if ($p) { $p.Dispose() }
+    }
 }
 $script:ProbeCache = @{}
+# 本进程里 Get-ProbeText 启动过的外部进程数与累计耗时（毫秒）。Invoke-Scan 取前后差值。
+$script:ProbeStats = @{ launches = 0; ms = [int64]0 }
 function Get-ExeVersion {
     param([string]$ExePath)
     if (-not $ExePath) { return '' }
@@ -374,10 +383,16 @@ function Merge-Candidates {
 }
 function Invoke-Scan {
     Write-MapMessage '扫描本机（只读探测，不执行 shim）…'
+    # 计量（probeStats）：只量不改行为，给"首扫并行化"留一份前后对比的基线。
+    $scanSw = [Diagnostics.Stopwatch]::StartNew()
+    $launchesBefore = [int]$script:ProbeStats.launches
+    $msBefore = [int64]$script:ProbeStats.ms
     $old = Read-Map
     # 当前宿主路径同时支持 Windows PowerShell 5.1 与 PowerShell 7。
     $hostExe = (Get-Process -Id $PID).Path
+    $censusSw = [Diagnostics.Stopwatch]::StartNew()
     $output = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $CensusScript -Json
+    $censusWallMs = [int64]$censusSw.Elapsed.TotalMilliseconds
     if ($LASTEXITCODE -ne 0) { Throw-MapError 'scan_failed' "census 退出码：$LASTEXITCODE" }
     try { $census = ($output | Out-String) | ConvertFrom-Json } catch { Throw-MapError 'scan_failed' 'census 未返回有效 JSON。' }
     $index = @{}
@@ -403,7 +418,23 @@ function Invoke-Scan {
         $map.tools[$name] = @{ candidates = $candidates; preferred = ''; preferredPath = if ($previous) { "$($previous.preferredPath)" } else { '' } }
     }
     Save-Map $map
-    return (New-MapResult 'ok' @{ mapFile = Get-MapPath; tools = $map.tools.Count; scannedAt = $map.scannedAt; warnings = $map.censusSummary.warnings })
+    # census 的 probeStats 是附加字段：旧版或替身 census 没有它时按 0 计。
+    $censusLaunches = 0; $censusProbeMs = [int64]0
+    if ($census.PSObject.Properties['probeStats'] -and $census.probeStats) {
+        if ($null -ne $census.probeStats.launches) { $censusLaunches = [int]$census.probeStats.launches }
+        if ($null -ne $census.probeStats.ms) { $censusProbeMs = [int64]$census.probeStats.ms }
+    }
+    $mapLaunches = [int]$script:ProbeStats.launches - $launchesBefore
+    $mapProbeMs = [int64]$script:ProbeStats.ms - $msBefore
+    # launches = census 子进程本身 1 个 + census 内的版本探测 + 本进程的版本探测（命中 ProbeCache 的不算）。
+    $probeStats = @{
+        launches = 1 + $censusLaunches + $mapLaunches
+        probeMs  = $censusProbeMs + $mapProbeMs
+        wallMs   = [int64]$scanSw.Elapsed.TotalMilliseconds
+        census   = @{ launches = $censusLaunches; probeMs = $censusProbeMs; wallMs = $censusWallMs }
+        map      = @{ launches = $mapLaunches; probeMs = $mapProbeMs }
+    }
+    return (New-MapResult 'ok' @{ mapFile = Get-MapPath; tools = $map.tools.Count; scannedAt = $map.scannedAt; warnings = $map.censusSummary.warnings; probeStats = $probeStats })
 }
 function Invoke-Status {
     $map = Read-Map

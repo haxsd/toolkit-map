@@ -128,6 +128,18 @@ try {
     $rawKeys = @(@($zhJson.warnings) | Where-Object { "$($_.message) $($_.action)" -match '\bwarn\.[A-Z_]+\.' })
     Check 'census.ps1 的告警 message/action 都已解析成文案' ($rawKeys.Count -eq 0) (($rawKeys | ForEach-Object { $_.kind }) -join ', ')
 
+    # -Timing：阶段键落在与 census.sh 共用的集合里、ms 为非负整数；probeStats.launches 为非负整数。
+    $timed = Invoke-Census $censusPs1 @('-Json', '-Timing')
+    $timedJson = $null; try { $timedJson = $timed.out | ConvertFrom-Json } catch { }
+    $phaseSet = @('path-index', 'declarations', 'managed', 'conventions', 'roots', 'probe', 'deep-scan', 'resolution', 'warnings')
+    $timings = @(if ($timedJson) { @($timedJson.timings) } else { @() })
+    $badTimings = @($timings | Where-Object { $phaseSet -notcontains $_.phase -or -not ($_.ms -is [int] -or $_.ms -is [long]) -or $_.ms -lt 0 } | ForEach-Object { "$($_.phase)=$($_.ms)" })
+    $missingPhases = @('declarations', 'managed', 'conventions', 'roots', 'probe', 'resolution', 'warnings' | Where-Object { @($timings | ForEach-Object { $_.phase }) -notcontains $_ })
+    Check 'census.ps1 -Timing 的阶段键与 census.sh 一致，ms 为非负整数' ($null -ne $timedJson -and $badTimings.Count -eq 0 -and $missingPhases.Count -eq 0) ("异常: $($badTimings -join ', ') 缺: $($missingPhases -join ', ')")
+    $probeLaunches = $null
+    if ($timedJson -and $timedJson.PSObject.Properties.Name -contains 'probeStats' -and $timedJson.probeStats) { $probeLaunches = $timedJson.probeStats.launches }
+    Check 'census.ps1 的 probeStats.launches 是非负整数' (($probeLaunches -is [int] -or $probeLaunches -is [long]) -and $probeLaunches -ge 0) "launches=$probeLaunches"
+
     # 文案表缺失：复制一份 census.ps1（和它依赖的 toolkit-common.ps1）到没有 tsv 的目录
     $lonely = Join-Path $work 'no-text'
     New-Item -ItemType Directory -Force -Path $lonely | Out-Null

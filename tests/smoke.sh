@@ -190,6 +190,35 @@ else
   printf '  [跳过] 没有可用的 python3，未校验 JSON 结构\n'
 fi
 
+# probeStats（附加字段，schemaVersion 仍为 1）：launches 是非负整数，ms 是非负整数或 null（bash < 5 量不到）。
+# 用 grep 而不是 python3：macOS 冒烟也要跑到这一条。
+if grep -qE '"probeStats": \{"launches": [0-9]+, "ms": ([0-9]+|null)\}' "$FX/out.json"; then
+  pass "JSON 带 probeStats，launches 为非负整数"
+else
+  fail "JSON 缺 probeStats 或 launches 不是非负整数"
+fi
+# --timing 的阶段键必须落在与 census.ps1 共用的集合里，ms 是非负整数——两边才能逐阶段对比。
+"$CENSUS" --json --timing > "$FX/timing.json" 2>/dev/null
+_timings="$(grep '"timings"' "$FX/timing.json" || true)"
+_phases="$(printf '%s' "$_timings" | grep -oE '"phase":"[^"]*"' | sed -E 's/"phase":"([^"]*)"/\1/' | tr '\n' ' ')"
+_bad_phase=""
+for _ph in $_phases; do
+  case " path-index declarations managed conventions roots probe deep-scan resolution warnings " in
+    *" ${_ph} "*) ;;
+    *) _bad_phase="${_bad_phase} ${_ph}" ;;
+  esac
+done
+_bad_ms="$(printf '%s' "$_timings" | grep -oE '"ms":[^,}]*' | grep -vE '^"ms":[0-9]+$' || true)"
+_core_missing=""
+for _ph in declarations managed conventions roots probe resolution warnings; do
+  case " ${_phases} " in *" ${_ph} "*) ;; *) _core_missing="${_core_missing} ${_ph}" ;; esac
+done
+if [ -z "${_bad_phase}${_bad_ms}${_core_missing}" ]; then
+  pass "--timing 阶段键与 census.ps1 一致，ms 为非负整数"
+else
+  fail "--timing 阶段键/毫秒不对：未知=[${_bad_phase}] 缺=[${_core_missing}] ms=[${_bad_ms}]"
+fi
+
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf ' 全部通过\n\n'

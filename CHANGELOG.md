@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 计量（收敛计划 P1，只量不改行为）：census.ps1 / census.sh 的 JSON 新增附加字段 `probeStats {launches, ms}`（版本探测启动的外部进程数与累计耗时，schemaVersion 仍为 1）；`--timing` 两边改用同一组阶段键（census.sh 把原来的 roots 拆成 roots / probe / deep-scan），bash 5 及以上用 EPOCHREALTIME 计到毫秒，文本输出两边同格式并补上合计与探测进程数（census.ps1 原来的合计行丢了数字）。`map.ps1 scan` 的结果新增 `probeStats`（总进程数、探测耗时、整次墙钟及 census/地图分项）。新增 tests/scan-baseline.ps1 与 CI 的 windows-baseline job，在真实 runner 上记录首扫基线；smoke / parity / check-text / map-contract 增加 probeStats 为非负整数的断言。
 - 新增 tests/check-sh-vars.sh（CI 的 ubuntu 与 macOS job）：.sh 里 `$VAR` 后紧跟非 ASCII 字符即失败并给出文件与行号，要求写成 `${VAR}`（macOS 的 bash 3.2 会把紧跟的全角字符吞进变量名）；docs/contributing.md 补上这条规则，并修正 version-contract / download-contract 已是独立 CI 步骤的说明。
 - census.ps1 与 census.sh 的中英文案合并为同目录的 `scripts/census-text.tsv`（key<TAB>lang<TAB>text），两边读同一份，不再各维护一张表；两边措辞尚未统一的 4 条（PATH_DIRT 文案、DRIFT/MISSING/NO_MISE 处置建议里的 bootstrap 脚本名）用 `ps1:`/`sh:` 前缀分开保存，输出与之前逐字一致。文案表缺失时两个脚本以退出码 2 明确失败。新增 tests/check-text.ps1 检查格式、中英齐全、脚本引用可解析与 `-Lang en` 输出。
 - CI：`parity.ps1` 与 `map-smoke.ps1` 增加 PowerShell 7 步骤（census.ps1 与地图动作在 PS7 宿主下也逐条验证）；新增 macOS job，用系统自带的 bash 3.2 做语法检查并跑 `smoke.sh`，守住 census.sh 在 macOS 开箱即用的承诺。

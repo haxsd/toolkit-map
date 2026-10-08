@@ -5,6 +5,7 @@ name: CI
 #              断言两边都发现了沙箱里埋的同一批雷（tests/parity.ps1）
 #   ubuntu  —— 在真 bash 下跑 census.sh 的冒烟测试，并给所有 .sh 做 bash -n
 #   macos   —— 在系统自带的 bash 3.2 与 BSD 工具上跑同一份冒烟测试
+#   windows-baseline —— 真实 runner 上跑一次 map.ps1 scan，记录首扫墙钟与进程数（只量不判）
 # 不做的：不跑 bootstrap（它会真的改机器：写 PATH、写 profile、下载运行时）。
 #
 # 失败时把测试输出转发成 GitHub 注解（::error::）：注解可以匿名从 API 读到，
@@ -132,6 +133,22 @@ jobs:
               ForEach-Object { Write-Host "::error::$($_.Trim())" }
           }
           exit $code
+
+  windows-baseline:
+    # 收敛计划 P1：首扫并行化之前的基线。真实 runner 上用临时地图跑一次 map.ps1 scan，
+    # 把墙钟时间与进程启动次数打成 ::notice 注解和 step summary（只量不判，不设阈值）。
+    # 单独成 job：真实扫描的耗时随 runner 浮动，不该挤占 windows job 的 8 分钟预算。
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: 首扫基线（Windows PowerShell 5.1）
+        shell: powershell
+        run: .\tests\scan-baseline.ps1 -Label 'PS5.1'
+      - name: 首扫基线（PowerShell 7）
+        shell: pwsh
+        run: .\tests\scan-baseline.ps1 -Label 'PS7'
+
   ubuntu:
     runs-on: ubuntu-latest
     timeout-minutes: 8

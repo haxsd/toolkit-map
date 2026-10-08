@@ -31,8 +31,9 @@
 | tests/scan-guards.ps1 | 扫描解析层和底层执行器都跳过 shim |
 | tests/parity.ps1 | 两个扫描内核在同一沙箱识别相同问题 |
 | tests/verify-shell.ps1 | .sh 语法 |
-| tests/smoke.sh | Unix 扫描、JSON、语言、自定义 shim 与脚本启动器护栏 |
+| tests/smoke.sh | Unix 扫描、JSON、语言、自定义 shim 与脚本启动器护栏、probeStats 与 `--timing` 阶段键 |
 | tests/check-sh-vars.sh | .sh 里 `$VAR` 后不能紧跟非 ASCII 字符（bash 3.2 兼容） |
+| tests/scan-baseline.ps1 | 用临时地图在真实机器上跑一次 scan，打印首扫墙钟时间与进程启动次数（CI 的 windows-baseline job，只量不判） |
 
 按改动范围检查；发布前跑全套。map-contract 同时用 PowerShell 5.1 和 7 执行；真实扫描另用临时 -MapFile 验证，不污染本机地图。测试使用假工具、临时目录与独立地图，不安装工具。
 
