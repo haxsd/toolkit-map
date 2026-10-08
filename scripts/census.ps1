@@ -98,6 +98,23 @@ foreach ($line in ([IO.File]::ReadAllText($script:TextPath, [Text.Encoding]::UTF
 }
 Remove-Variable -Name line, parts, key, isOverride, overridden -ErrorAction SilentlyContinue
 
+# 扫描数据（探测相对路径、候选根目录、解析命令表、约定命令名）放在同目录的 census-data.tsv，
+# 与 census.sh 共用一份；每行 kind<TAB>os<TAB>value，这里取 os 为 win 或 all 的行。
+# 缺表或缺必需的 kind 都直接失败：静默退化成空列表会让扫描"成功"地什么都找不到。
+$script:DataPath = Join-Path $PSScriptRoot 'census-data.tsv'
+if (-not [IO.File]::Exists($script:DataPath)) {
+    [Console]::Error.WriteLine("[census] 找不到扫描数据表 $($script:DataPath)（census-data.tsv 必须与 census.ps1 放在同一目录）")
+    exit 2
+}
+$script:CensusData = Read-ToolkitDataTable -Path $script:DataPath -Os 'win'
+foreach ($kind in @('probe-rel', 'conda-dir', 'conda-rel', 'root', 'ide-glob', 'resolve', 'convention', 'convention-skip')) {
+    if (-not $script:CensusData.ContainsKey($kind) -or $script:CensusData[$kind].Count -eq 0) {
+        [Console]::Error.WriteLine("[census] 扫描数据表 $($script:DataPath) 缺少 $kind 行（os 为 win 或 all）")
+        exit 2
+    }
+}
+Remove-Variable -Name kind -ErrorAction SilentlyContinue
+
 # 取一条文案并用 facts 替换 {占位符}。缺失的键返回键名本身，
 # 这样漏翻译会立刻在输出里露出来，而不是静默变成空白。
 function T {
@@ -664,8 +681,9 @@ function Get-ConventionShims {
     param([string[]]$PathDirs)
     $records = New-Object System.Collections.Generic.List[object]
 
-    # 形如 node22 / node-22 / python312 / java8 / go1.22 的可执行文件命名约定
-    $pattern = '^(node|nodejs|npm|npx|pnpm|yarn|python|python3|py|pip|uv|java|javac|mvn|gradle|go|cargo|rustc|deno|bun|dotnet|php|ruby)(?:[-_]?v?)(\d+(?:\.\d+){0,3})$'
+    # 形如 node22 / node-22 / python312 / java8 / go1.22 的可执行文件命名约定；命令名来自 census-data.tsv
+    $pattern = '^(' + ($script:CensusData['convention'] -join '|') + ')(?:[-_]?v?)(\d+(?:\.\d+){0,3})$'
+    $skipPattern = '^(' + ($script:CensusData['convention-skip'] -join '|') + ')[23](\.\d+){0,2}$'
 
     $exts = @('.exe', '.cmd', '.bat', '.ps1', '.sh', '')
 
@@ -684,7 +702,7 @@ function Get-ConventionShims {
 
             # python2 / python3 / pip3 / python3.12 这类是跨平台公认的名字，
             # 不属于"只存在于文件名里的本地私有约定"，不该被当作约定上报
-            if ($base -match '^(python|pip)[23](\.\d+){0,2}$') { continue }
+            if ($base -match $skipPattern) { continue }
 
             # 0 字节的商店别名存根不可用，已由 STUB 告警单独覆盖，这里不重复报
             if (-not (Test-RealExecutable $file.FullName)) { continue }
@@ -732,16 +750,8 @@ function Get-ConventionShims {
 #     <root>\jbr\bin\java.exe      IDE 内置运行时（JetBrains 的 JBR 里有完整 JDK）
 #     <root>\Scripts\python.exe    Windows 虚拟环境
 # 只做"存在性检查"而不是列目录，因为一次 stat 比一次目录枚举便宜得多。
-$script:ProbeRelatives = @(
-    'node.exe',
-    'bin\node.exe',
-    'python.exe',
-    'Scripts\python.exe',
-    'java.exe',
-    'bin\java.exe',
-    'jbr\bin\java.exe',
-    'jre\bin\java.exe'
-)
+# 清单在 census-data.tsv（kind = probe-rel）。
+$script:ProbeRelatives = $script:CensusData['probe-rel'].ToArray()
 
 # 判断一个运行时安装来自哪个渠道，用于报告里区分来源。
 function Get-InstallSource {
@@ -757,47 +767,21 @@ function Get-InstallSource {
     return '自定义位置'
 }
 
+# census-data.tsv 里根目录的 {占位符} 换成同名环境变量；未设置时展开成空串
+# （与原来直接写 "$env:APPDATA\nvm" 的行为一致，展开出的相对路径会被后面的存在性检查过滤掉）。
+function Expand-CensusDataPath {
+    param([string]$Value)
+    return [regex]::Replace($Value, '\{([A-Za-z_][A-Za-z0-9_]*)\}', { param($m) "$([Environment]::GetEnvironmentVariable($m.Groups[1].Value))" })
+}
+
 function Get-CandidateRoots {
-    $h = $env:USERPROFILE
     $roots = @()
 
-    # --- 版本管理器 ---
-    $roots += "$env:APPDATA\nvm"
-    $roots += "$env:APPDATA\fnm"
-    $roots += "$env:LOCALAPPDATA\fnm"
-    $roots += "$env:LOCALAPPDATA\fnm_multishells"
-    $roots += "$env:APPDATA\nvs"
-    $roots += "$h\.volta\tools\image"
-    $roots += "$h\.asdf"
-    $roots += "$env:LOCALAPPDATA\mise"
-    $roots += "$h\.local\share\mise"
-    $roots += "$h\.pyenv"
-    $roots += "$h\scoop\apps"
-    $roots += 'C:\ProgramData\chocolatey\lib'
+    # --- 静态候选根：版本管理器、conda、系统安装、IDE 安装目录（census-data.tsv，kind = root）---
+    foreach ($root in $script:CensusData['root']) { $roots += (Expand-CensusDataPath $root) }
 
-    # --- conda ---
-    $roots += "$h\miniconda3"
-    $roots += "$h\anaconda3"
-    $roots += 'C:\ProgramData\miniconda3'
-    $roots += 'C:\ProgramData\Anaconda3'
-
-    # --- 系统安装 ---
-    $roots += 'C:\Program Files\nodejs'
-    $roots += 'C:\Program Files\Java'
-    $roots += 'C:\Program Files (x86)\Java'
-    $roots += 'C:\Program Files\Eclipse Adoptium'
-    $roots += 'C:\Program Files\Microsoft'
-    $roots += 'C:\Program Files\Zulu'
-    $roots += 'C:\Program Files\Amazon Corretto'
-    $roots += 'C:\Program Files\BellSoft'
-    $roots += 'C:\Program Files\Semeru'
-    $roots += 'C:\Program Files\RedHat'
-
-    # --- IDE 内置运行时（JetBrains 的 jbr 里带完整 JDK，最容易被忽略）---
-    $idePatterns = @('*pycharm*', '*IntelliJ*', '*JetBrains*', '*webstorm*', '*goland*', '*Android*Studio*')
-    foreach ($c in @('C:\Program Files\JetBrains', 'D:\Program Files\JetBrains', "$h\AppData\Local\Programs")) {
-        if (Test-DirQuick $c) { $roots += $c }
-    }
+    # --- IDE 内置运行时（JetBrains 的 jbr 里带完整 JDK，最容易被忽略）：每个盘符根下按名称找 ---
+    $idePatterns = $script:CensusData['ide-glob'].ToArray()
     foreach ($drive in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | Where-Object { $_.Root -match '^[A-Z]:\\$' })) {
         foreach ($pat in $idePatterns) {
             foreach ($hit in (Get-ChildItem -Path (Join-Path $drive.Root $pat) -Directory -ErrorAction SilentlyContinue)) {
@@ -854,12 +838,11 @@ function Get-UnmanagedRecords {
         }
 
         # conda 专门处理：环境位于 envs\<环境名>\ 下，解释器可能在根或 Scripts 里
-        foreach ($envDirName in @('envs', 'env')) {
+        foreach ($envDirName in $script:CensusData['conda-dir']) {
             $envRoot = Join-Path $root $envDirName
             if (-not (Test-DirQuick $envRoot)) { continue }
             foreach ($env in (Get-SubDirectories $envRoot)) {
-                & $tryAdd (Join-Path $env 'python.exe') $root
-                & $tryAdd (Join-Path $env 'Scripts\python.exe') $root
+                foreach ($rel in $script:CensusData['conda-rel']) { & $tryAdd (Join-Path $env $rel) $root }
             }
         }
     }
@@ -914,16 +897,12 @@ function Resolve-CommandInPath {
 function Get-Resolution {
     param([hashtable]$PathIndex, [int]$DirCount, [string[]]$ExtraCommands = @())
 
-    $probeList = @(
-        'node', 'npm', 'npx', 'pnpm', 'yarn',
-        'python', 'python3', 'py', 'pip', 'uv',
-        'java', 'javac', 'mvn', 'gradle',
-        'go', 'cargo', 'rustc', 'deno', 'bun', 'dotnet', 'mise',
-        # 环境能力类命令：它们本身不是"运行时"，但决定这台机器能做什么——
-        # pwsh 决定 mise 能不能按项目自动切换版本，winget 是 bootstrap 的首选安装来源，
-        # docker 决定 .sh 脚本在这台机器上能否被验证。
-        'pwsh', 'winget', 'git', 'docker', 'conda'
-    )
+    # 默认解析的命令表在 census-data.tsv（kind = resolve）。除了语言运行时，还有环境能力类命令：
+    # pwsh 决定 mise 能不能按项目自动切换版本，winget 是 bootstrap 的首选安装来源，
+    # docker 决定 .sh 脚本在这台机器上能否被验证。
+    # 注意 scan-guards.ps1 会把本函数单独抽出来运行，它自己加载同一份数据表。
+    # 用 ToArray()：Windows PowerShell 5.1 上 @() 作用于泛型 List 可能抛 "Argument types do not match"。
+    $probeList = $script:CensusData['resolve'].ToArray()
 
     # 声明里点名的工具也要解析。这个套件面向的是【所有工具】，不是只认语言的运行时：
     # 声明里写了 jadx / nmap / ffmpeg / jq，就应该能看到它们解析到哪、装了没有。
