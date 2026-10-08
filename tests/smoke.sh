@@ -148,7 +148,7 @@ warn_has() { # <kind> <tool> <needle>
         t = ""
         p = index(obj, "\"tool\":\"")
         if (p > 0) { t = substr(obj, p + 8); t = substr(t, 1, index(t, "\"") - 1) }
-        if (k == want_kind && (want_tool == "*" || t == want_tool) && index(obj, want_needle) > 0) { found = 1 }
+        if (k == want_kind && (want_tool == "*" || t == want_tool || index("/" t "/", "/" want_tool "/") > 0) && index(obj, want_needle) > 0) { found = 1 }
       }
     }
     END { exit (found ? 0 : 1) }' "$FX/out.json"
@@ -228,6 +228,50 @@ if [ -z "${_bad_phase}${_bad_ms}${_core_missing}" ]; then
   pass "--timing 阶段键与 census.ps1 一致，ms 为非负整数"
 else
   fail "--timing 阶段键/毫秒不对：未知=[${_bad_phase}] 缺=[${_core_missing}] ms=[${_bad_ms}]"
+fi
+
+# 回归（第 4 阶段候选根）：候选根目录里含空格的路径不能被按空白切分。
+# 旧写法 `for r in $CANDIDATE_ROOTS` 会把 "$FX/data dir/mise" 拆成 "$FX/data" 和 "dir/mise"，
+# 于是探测落到两个不存在的目录上。静态候选根来自 census-data.tsv，其中 {MISE_DATA}
+# 展开成 $XDG_DATA_HOME/mise，所以把 XDG_DATA_HOME 指到一个带空格的目录，
+# 就能造出一个"本身就带空格的候选根"。
+mkdir -p "$FX/data dir/mise/spacey/bin"
+printf '#!/bin/sh\necho v17.0.0\n' > "$FX/data dir/mise/spacey/bin/node"
+chmod +x "$FX/data dir/mise/spacey/bin/node"
+XDG_DATA_HOME="$FX/data dir" "$CENSUS" --json > "$FX/space.json" 2>/dev/null
+if grep -qF "$FX/data dir/mise/spacey/bin/node" "$FX/space.json"; then
+  pass "候选根目录含空格时仍被逐行探测到"
+else
+  fail "候选根目录含空格时被空白切分，没探测到那个 node"
+fi
+
+# 回归（第 5 阶段解析层）：声明里点名、同时又在默认解析表里的命令只能出现一次。
+# 沙箱声明了 node（见上面的 config.toml），而 node 也在 census-data.tsv 的默认解析表里。
+_n_node="$(grep -c '"command": "node"' "$FX/out.json" || true)"
+if [ "${_n_node:-0}" -eq 1 ]; then
+  pass "默认解析表与声明表去重：node 只解析一次"
+else
+  fail "node 在 resolution 里出现了 ${_n_node:-0} 次（应为 1）"
+fi
+
+# 回归（UNDECLARED）：项目里有 .nvmrc / .node-version 时不该报 UNDECLARED
+# （census.ps1 把它们也算项目声明）；只有 package.json 的 engines 时才报。
+# 两个项目目录都用沙箱环境（HOME/PATH/XDG 均不变），只差一个 .nvmrc。
+mkdir -p "$FX/proj-plain" "$FX/proj-nvmrc"
+printf '{ "name": "x", "engines": { "node": ">=22" } }\n' > "$FX/proj-plain/package.json"
+printf '{ "name": "x", "engines": { "node": ">=22" } }\n' > "$FX/proj-nvmrc/package.json"
+printf '22\n' > "$FX/proj-nvmrc/.nvmrc"
+( cd "$FX/proj-plain" && "$CENSUS" --json > "$FX/proj-plain.json" 2>/dev/null )
+( cd "$FX/proj-nvmrc" && "$CENSUS" --json > "$FX/proj-nvmrc.json" 2>/dev/null )
+if grep -q '"UNDECLARED"' "$FX/proj-plain.json"; then
+  pass "只有 package.json 时报出 UNDECLARED"
+else
+  fail "只有 package.json 时没有报出 UNDECLARED"
+fi
+if grep -q '"UNDECLARED"' "$FX/proj-nvmrc.json"; then
+  fail "有 .nvmrc 时仍然报出 UNDECLARED"
+else
+  pass "有 .nvmrc 时不再报 UNDECLARED"
 fi
 
 printf '\n'

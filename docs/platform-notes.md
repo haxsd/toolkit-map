@@ -81,3 +81,12 @@ JetBrains 系 IDE 的安装目录里有 `jbr/`，里面是完整的 JDK，版本
 - **计时分辨率**：shell 版在 bash 5 及以上用 `EPOCHREALTIME` 计到毫秒，不额外起进程；
   macOS 自带的 bash 3.2 没有它，退回 `date +%s`（macOS 不认 `%N`），这时 `timings` 的值是
   1000 的整数倍，`probeStats.ms` 为 null。字段名与单位与 PowerShell 版一致（毫秒）。
+- **探测超时后的进程清理**：PowerShell 7 用 `Kill($true)` 结束整棵进程树；Windows PowerShell 5.1
+  的 .NET Framework 没有原生的整树结束，改用 `taskkill /T /F` 尽力清理，taskkill 本身失败时
+  只结束直接子进程。
+- **串行扫描**：`map.ps1 scan -Throttle 1`（`setup` 同理）就是原来的串行扫描；默认并行度是
+  `min(8, CPU 数)`，结果与串行一致。
+- **PATH 脏数据检查**：重复条目两边都查；带引号的 PATH 条目只在 Windows 上查——引号包裹的条目
+  是 Windows 特有的写法。
+- **mise 纳管清单**：census.sh 读 `mise ls` 的文本（tool / version / requested），不带 installPath；
+  可移植地解析 `mise ls --json` 需要 jq，而 census.sh 刻意不引入 jq。

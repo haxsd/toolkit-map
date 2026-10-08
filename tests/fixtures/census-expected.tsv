@@ -5,10 +5,9 @@
 #   scope   both = 两个测试都断言；parity / smoke = 只在该测试的沙箱里成立
 #   kind    告警代码（稳定 ASCII）
 #   tool    告警的 tool 字段；* 表示不比较
+#           STRAY 的 tool 是游离工具名用 / 连接的列表（如 java/node），期望值是其中一项即可：
+#           真实 runner 上的候选根（如 macOS 的 Android Studio 内置 JBR）也会贡献游离工具
 #   needle  告警 detail/message 中必须出现的字面子串；{sandbox} 换成沙箱目录名
-#
-# STRAY 的 tool 暂用 *：census.ps1 填的是工具名（如 node），census.sh 固定填 stray，
-# 这是已知漂移，留给收敛计划的 C4 对齐。
 #
 # 新增断言时 needle 只用 ASCII：CI runner 多是英文系统，子进程输出里的非 ASCII 字符会被替换。
 
@@ -17,5 +16,5 @@ both	DRIFT	mise	config.toml
 both	MISSING	census-absent-tool	census-absent-tool
 both	PATH_DIRT	PATH	{sandbox}
 both	SHADOWED	node	rt1
-both	STRAY	*	rt2
+both	STRAY	node	rt2
 smoke	XDG_SHIFT	mise	{sandbox}

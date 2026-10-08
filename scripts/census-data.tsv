@@ -13,6 +13,8 @@
 #   resolve          解析层默认要解析的命令（声明里点名的工具另外追加）
 #   convention       约定层识别的命令名（node22 / python312 这类带版本号的命名 shim）
 #   convention-skip  跨平台公认的 <名字>2 / <名字>3[.x] 不算约定（python3 / pip3 / python3.12）
+#   bootstrap       两个实现展示用到的平台脚本名（scripts/bootstrap.ps1 或 scripts/bootstrap.sh）
+#   bootstrap-refresh 刷新部署全局声明用的平台命令（scripts/bootstrap.ps1 -RefreshConfig 或 scripts/bootstrap.sh --refresh-config）
 # 校验：tests/check-data.ps1（列数、os 取值、无重复、每个 kind 两边都有值）。
 probe-rel	all	node.exe
 probe-rel	win	bin\node.exe
@@ -139,3 +141,7 @@ convention	all	php
 convention	all	ruby
 convention-skip	all	python
 convention-skip	all	pip
+bootstrap	win	scripts/bootstrap.ps1
+bootstrap	unix	scripts/bootstrap.sh
+bootstrap-refresh	win	scripts/bootstrap.ps1 -RefreshConfig
+bootstrap-refresh	unix	scripts/bootstrap.sh --refresh-config

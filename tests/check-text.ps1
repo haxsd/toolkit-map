@@ -6,8 +6,7 @@
 .DESCRIPTION
   检查四件事：
     1. 格式：每个数据行恰好是 key<TAB>lang<TAB>text，lang 只能是 zh / en，(key, lang) 不重复；
-    2. 双语齐全：每个 key（含 ps1: / sh: 前缀的实现专用 key）zh 与 en 都有且非空，
-       前缀 key 成对出现（有 ps1: 就必须有 sh:，反之亦然）；
+    2. 双语齐全：每个 key zh 与 en 都有且非空；不允许出现任何 ps1: / sh: 平台前缀 key；
     3. 引用可解析：两个脚本里写死的 T '<key>' 和各自产生的告警种类（warn.<KIND>.message/action）
        在本实现的视角下都查得到——漏一条，输出里就会露出键名本身；
     4. 实际运行：census.ps1 -Lang en / zh 输出对应语言的章节标题、不残留键名；
@@ -70,27 +69,19 @@ $missing = @($keys | Where-Object {
 })
 Check "每个 key 都有非空的 zh 与 en（共 $($keys.Count) 个 key）" ($missing.Count -eq 0) ("缺: " + ($missing -join ', '))
 
-$unpaired = @()
-foreach ($k in $keys) {
-    if ($k -like 'ps1:*' -and -not ($keys -ccontains ('sh:' + $k.Substring(4)))) { $unpaired += $k }
-    if ($k -like 'sh:*'  -and -not ($keys -ccontains ('ps1:' + $k.Substring(3)))) { $unpaired += $k }
-}
-Check 'ps1: / sh: 前缀的 key 成对出现' ($unpaired.Count -eq 0) ($unpaired -join ', ')
+$prefixed = @($keys | Where-Object { $_ -like 'ps1:*' -or $_ -like 'sh:*' })
+Check '不允许 ps1: / sh: 平台前缀' ($prefixed.Count -eq 0) ($prefixed -join ', ')
 
 # ---------- 3. 脚本里的引用都能解析 ----------
-function Test-Resolves {
-    param([string]$Key, [string]$Prefix)
-    return ($keys -ccontains $Key) -or ($keys -ccontains ($Prefix + $Key))
-}
 foreach ($impl in @(
-    @{ Name = 'census.ps1'; Path = $censusPs1; Prefix = 'ps1:'; KindPattern = "New-Warning\s+-Kind\s+'([A-Z_]+)'" },
-    @{ Name = 'census.sh';  Path = $censusSh;  Prefix = 'sh:';  KindPattern = 'add_warn\s+"([A-Z_]+)"' }
+    @{ Name = 'census.ps1'; Path = $censusPs1; KindPattern = "New-Warning\s+-Kind\s+'([A-Z_]+)'" },
+    @{ Name = 'census.sh';  Path = $censusSh;  KindPattern = 'add_warn\s+"([A-Z_]+)"' }
 )) {
     $src = [IO.File]::ReadAllText($impl.Path, [Text.Encoding]::UTF8)
     $used = @([regex]::Matches($src, "\bT\s+'([^'`$]+)'") | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
     $kinds = @([regex]::Matches($src, $impl.KindPattern) | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
     foreach ($kind in $kinds) { $used += "warn.$kind.message"; $used += "warn.$kind.action" }
-    $unresolved = @($used | Where-Object { -not (Test-Resolves $_ $impl.Prefix) })
+    $unresolved = @($used | Where-Object { -not ($keys -ccontains $_) })
     Check "$($impl.Name) 用到的 $($used.Count) 个文案 key 都查得到（含 $($kinds.Count) 种告警）" ($unresolved.Count -eq 0) ("查不到: " + ($unresolved -join ', '))
 }
 

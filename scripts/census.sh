@@ -81,12 +81,14 @@ fi
 data_list() {
   awk -F'\t' -v k="$1" '{ sub(/\r$/, "") } /^#/ || NF != 3 { next } $1 == k && ($2 == "unix" || $2 == "all") { print $3 }' "$DATA_FILE"
 }
-for _kind in probe-rel conda-dir conda-rel root resolve convention convention-skip; do
+for _kind in probe-rel conda-dir conda-rel root resolve convention convention-skip bootstrap bootstrap-refresh; do
   if [ -z "$(data_list "$_kind")" ]; then
     echo "[census] 扫描数据表 ${DATA_FILE} 缺少 ${_kind} 行（os 为 unix 或 all）" >&2
     exit 2
   fi
 done
+BOOTSTRAP_CMD="$(data_list bootstrap | head -n1)"
+REFRESH_CMD="$(data_list bootstrap-refresh | head -n1)"
 # 下面这些列表按空白切分使用（与原来写死在 for 循环里的词表一致），值里不能有空格。
 PROBE_RELS="$(data_list probe-rel | tr '\n' ' ')"
 CONDA_DIRS="$(data_list conda-dir | tr '\n' ' ')"
@@ -98,19 +100,17 @@ CONV_SKIP="$(data_list convention-skip | tr '\n' '|')"; CONV_SKIP="${CONV_SKIP%|
 
 # 取一条文案并用 k=v 参数替换 {占位符}。缺失的键返回键名本身，
 # 这样漏翻译会立刻在输出里露出来，而不是静默变成空白。
-# 查找顺序：sh: 前缀的本实现专用文案 > 无前缀文案；当前语言 > 任意语言（文件里 zh 在前）。
+# 查找顺序：当前语言 > 任意语言（文件里 zh 在前）；不再支持平台前缀。
 T() {
   local key="$1"; shift
   local s
   s="$(awk -F'\t' -v k="$key" -v l="$OUT_LANG" '
     function consider(rank, txt) { if (rank < best_rank) { best_rank = rank; best = txt } }
-    BEGIN { best_rank = 5; best = "" }
+    BEGIN { best_rank = 3; best = "" }
     /^#/ || NF < 3 { next }
-    $1 == "sh:" k && $2 == l { consider(1, $3); next }
-    $1 == k       && $2 == l { consider(2, $3); next }
-    $1 == "sh:" k            { consider(3, $3); next }
-    $1 == k                  { consider(4, $3); next }
-    END { if (best_rank < 5) print best }' "$TEXT_FILE")"
+    $1 == k && $2 == l { consider(1, $3); next }
+    $1 == k           { consider(2, $3); next }
+    END { if (best_rank < 3) print best }' "$TEXT_FILE")"
   [ -n "$s" ] || s="$key"
   local kv k2 v2 pat
   for kv in "$@"; do
@@ -173,6 +173,8 @@ add_conv()    { CONV_ROWS="${CONV_ROWS}${1}|${2}|${3}|${4}|${5}
 # 用法: add_warn <KIND> <TOOL> <DETAIL> [k=v ...]
 add_warn()    {
   local kind="$1" tool="$2" detail="$3"; shift 3
+  # 平台脚本名作为文案事实传给 T；没有对应占位符的文案会安全忽略这些 k=v
+  set -- "$@" "bootstrap=${BOOTSTRAP_CMD}" "refresh=${REFRESH_CMD}"
   local message action entry
   message="$(T "warn.$kind.message" "$@")"
   action="$(T "warn.$kind.action" "$@")"
@@ -656,7 +658,7 @@ probe_root() {
 
 MISE_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/mise"
 # 静态候选根目录来自 census-data.tsv（kind = root）。{HOME} / {MISE_DATA} 在这里展开，
-# 拼成换行分隔的字符串，下面仍用原来的 `for r in $CANDIDATE_ROOTS` 逐个探测（行为不变）。
+# 拼成换行分隔的字符串，下面逐行读取（见读取处注释：不能按空白切分）。
 CANDIDATE_ROOTS="
 "
 while IFS= read -r _root; do
@@ -672,7 +674,18 @@ EOF
 # 单独打一个点是为了让两边的阶段键一一对应：roots / probe / deep-scan。
 tick '4a. 候选根目录'
 
-for r in $CANDIDATE_ROOTS; do probe_root "$r"; done
+# 逐行读取候选根（换行分隔），不能用 `for r in $CANDIDATE_ROOTS`：
+# 那会按空白切分，像 "/Applications/Android Studio.app/Contents/jbr" 或含空格的 $HOME
+# 会被拆成多个词，探测就落到不存在的目录上（回归：候选根本身带空格时探测不到）；
+# 路径里的 * ? [ 也会被当成通配符展开。
+# 从 fd 3 读而不是用管道喂循环：probe_root 会启动子进程，它们可能读 stdin，
+# 用管道会让子进程把剩下的候选根"吃掉"。
+while IFS= read -r r <&3; do
+  [ -n "$r" ] || continue
+  probe_root "$r"
+done 3<<EOF
+${CANDIDATE_ROOTS}
+EOF
 
 # PATH 上的目录本身，以及它们的父目录（捕捉 ~/tools/bin -> ~/tools/node22 这类约定）
 IFS_OLD="$IFS"; IFS=':'
@@ -774,8 +787,18 @@ probe_cmd() {
 # 固定列表只是"默认值得看一眼的常见命令"；声明里点名的工具也一并解析，
 # 因为这个套件面向的是【所有工具】，不是只认语言的运行时。
 DECLARED_CMDS="$(declared_tools | awk -F'|' '{print $1}' | sort -u | tr '\n' ' ')"
-# 默认命令表来自 census-data.tsv（kind = resolve）
+# 默认命令表来自 census-data.tsv（kind = resolve）。
+# 两张表会有交集（声明里写了 node，默认表里也有 node），必须去重，否则同一个命令会在
+# resolution 里出现两条——census.ps1 的 -ExtraCommands 只在命令不在默认表里时才追加。
+# 顺序 = 默认表顺序 + 声明表里新增的命令，保证输出稳定。
+PROBE_CMDS=""
 for c in $RESOLVE_CMDS $DECLARED_CMDS; do
+  case " ${PROBE_CMDS} " in
+    *" ${c} "*) continue ;;
+  esac
+  PROBE_CMDS="${PROBE_CMDS}${PROBE_CMDS:+ }${c}"
+done
+for c in $PROBE_CMDS; do
   probe_cmd "$c"
 done
 tick '5. 解析层'
@@ -822,14 +845,26 @@ fi
 STRAY_ROWS="$(printf '%s' "$RUNTIME_ROWS" | awk -F'|' '$5=="游离" && $6=="yes" {print $1" "$2" @ "$3}')"
 STRAY_COUNT="$(printf '%s\n' "$STRAY_ROWS" | grep -c . || true)"
 if [ "${STRAY_COUNT:-0}" -gt 0 ]; then
-  add_warn "STRAY" "stray" "$(printf '%s' "$STRAY_ROWS" | tr '\n' '|' | sed 's/|$//; s/|/ | /g')" \
+  # tool 字段必须与 census.ps1 一致：游离运行时的工具名去重、排序后用 / 连接
+  # （只有 node 时是 "node"，同时有 java 和 node 时是 "java/node"）。
+  # 旧写法固定填 "stray"，消费者拿不到"到底是哪个工具"，也和 census.ps1 对不上。
+  STRAY_TOOLS="$(printf '%s\n' "$STRAY_ROWS" | awk 'NF {print $1}' | LC_ALL=C sort -u | tr '\n' '/' | sed 's:/$::')"
+  add_warn "STRAY" "$STRAY_TOOLS" "$(printf '%s' "$STRAY_ROWS" | tr '\n' '|' | sed 's/|$//; s/|/ | /g')" \
     "count=$STRAY_COUNT" "root=$TOOLS_ROOT"
 fi
 
 # 5) 项目有版本约束，但没有工具读得到的声明文件
 #    package.json 的 engines 只在版本不符时给一条警告，它不会切换版本。
 #    于是"这个项目需要某个版本"这个事实只存在于 engines 里，用上它得靠人记住某个路径。
-if [ -z "$PROJECT_DECL_FILES" ] && [ -f "$(pwd)/package.json" ]; then
+#    "项目有声明"的口径与 census.ps1 一致：除 mise.toml / .mise.toml / .tool-versions
+#    （当前目录向上）之外，当前目录里的 .nvmrc / .node-version 也算——它们同样在表达
+#    "这个项目要什么版本"，漏了它们会误报 UNDECLARED。
+#    （只在本判定里算数，不进 DECL_FILES / declared_tools。）
+HAS_PROJECT_DECL=0
+[ -n "$PROJECT_DECL_FILES" ] && HAS_PROJECT_DECL=1
+[ -f "$(pwd)/.nvmrc" ] && HAS_PROJECT_DECL=1
+[ -f "$(pwd)/.node-version" ] && HAS_PROJECT_DECL=1
+if [ "$HAS_PROJECT_DECL" -eq 0 ] && [ -f "$(pwd)/package.json" ]; then
   WANT_NODE="$(grep -oE '"node"[[:space:]]*:[[:space:]]*"[^"]*"' "$(pwd)/package.json" 2>/dev/null \
     | head -n1 | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/')"
   if [ -n "$WANT_NODE" ]; then
