@@ -47,7 +47,7 @@
 ```powershell
 $project = (Get-Location).Path
 $installDir = Join-Path $env:USERPROFILE 'Projects\toolkit-map'
-git clone --branch v0.2.3 --depth 1 https://github.com/haxsd/toolkit-map $installDir
+git clone --branch v0.3.0 --depth 1 https://github.com/haxsd/toolkit-map $installDir
 if ($LASTEXITCODE -ne 0) { throw '下载未完成。已有安装请按升级指南处理，不要覆盖。' }
 $map = Join-Path $installDir 'scripts\map.ps1'
 $ps = (Get-Process -Id $PID).Path

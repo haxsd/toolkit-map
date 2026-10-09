@@ -1,6 +1,6 @@
 # 更新记录
 
-## 未发布
+## v0.3.0 — 更安全、更快、两端一致的扫描
 
 - 收敛计划 C4 / C5（语义对齐与文档补充）：census.sh 的 STRAY 告警 tool 改为游离工具名（去重、排序后以 / 连接，与 census.ps1 一致），tests/fixtures/census-expected.tsv 去掉 STRAY 的通配符；census.sh 候选根目录改为逐行读取，含空格的路径（如 `/Applications/Android Studio.app/Contents/jbr`、带空格的 `$HOME`）不再被拆开；解析层默认命令与声明命令去重，同一命令不再出现两条；UNDECLARED 判定把当前目录的 .nvmrc / .node-version 也算项目声明；census.ps1 的 powershell / pwsh 版本探测修复（此前会多启动一次进程且版本恒为空，现在只用 `-Command $PSVersionTable` 探测一次）；census-text.tsv 去掉 ps1: / sh: 前缀：PATH_DIRT 文案统一，bootstrap 脚本名与刷新命令改由 census-data.tsv 的 bootstrap / bootstrap-refresh 行（os = win / unix）以占位符传入，check-text 拒绝前缀 key，check-data 要求两边都有这两种行；mise 纳管清单在 census.sh 仍读 `mise ls` 文本（不引入 jq），阶段键两边已一致；文档补充新增工具只改两张数据表、PowerShell 5.1 超时清理与 `-Throttle 1` 说明；smoke.sh 新增空格根目录、去重与 .nvmrc 回归用例。
 - 首扫并行探测（收敛计划 P3）：`map.ps1 scan` 先收集所有候选路径，再在 RunspacePool 里并行跑各候选的第一次版本探测，结果写进探测缓存，然后按原顺序逐个建候选（全部命中缓存），所以地图内容与串行一致、启动次数不变。新增 `-Throttle`（scan / setup，默认 min(8, CPU 数)，`-Throttle 1` 即原来的串行）；shim 护栏、缓存写入与 Save-Map 都在主线程，Save-Map 仍只写一次。探测超时保留：PS7 用 `Kill($true)` 结束整棵进程树，Windows PowerShell 5.1 改用 `taskkill /T /F`（.NET Framework 没有整树结束），失败时退回只结束直接子进程。scan 结果的 `probeStats.map` 附带实际 `throttle`。census.ps1 的 `declarations[].tools` 与 `summary.byTool` 改为按工具名排序（此前哈希表键序每次运行不同，JSON、文本与告警顺序跟着变）。probe-cache 增加并行批次与挂住的假工具超时用例，map-contract 增加 `-Throttle 1` 与 `-Throttle 4` 扫描结果（去掉时间字段后）相同的断言。
