@@ -107,9 +107,9 @@ Git 克隆安装：先检查本地修改，工作区干净时更新到稳定标�
 $installDir = "$env:USERPROFILE\Projects\toolkit-map" # 按真实安装目录改
 git -C $installDir status --short
 # 确认上一步没有本地修改后执行；任一步失败就先处理，别继续。
-git -C $installDir fetch --depth 1 origin tag v0.2.3
+git -C $installDir fetch --depth 1 origin tag v0.3.0
 if ($LASTEXITCODE -ne 0) { throw '获取版本失败' }
-git -C $installDir switch --detach v0.2.3
+git -C $installDir switch --detach v0.3.0
 if ($LASTEXITCODE -ne 0) { throw '切换版本失败' }
 $map = Join-Path $installDir 'scripts\map.ps1'
 ```
@@ -146,7 +146,7 @@ New-Item -ItemType Junction -Path (Join-Path $skillParent 'toolkit-map') -Target
 
 ```powershell
 $project = (Get-Location).Path
-$installDir = 'C:\your-install\toolkit-map-v0.2.3' # 替换为你解压后的源码根目录
+$installDir = 'C:\your-install\toolkit-map-v0.3.0' # 替换为你解压后的源码根目录
 $map = Join-Path $installDir 'scripts\map.ps1'
 $ps = (Get-Process -Id $PID).Path
 & $ps -NoProfile -ExecutionPolicy Bypass -File $map setup -Project $project -WhatIf -Json
