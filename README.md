@@ -51,19 +51,21 @@ git clone --branch v0.3.0 --depth 1 https://github.com/haxsd/toolkit-map $instal
 if ($LASTEXITCODE -ne 0) { throw '下载未完成。已有安装请按升级指南处理，不要覆盖。' }
 $map = Join-Path $installDir 'scripts\map.ps1'
 $ps = (Get-Process -Id $PID).Path
+# 下面统一用 toolkit 调用，它等价于「用当前 PowerShell 宿主单次运行 map.ps1」
+function toolkit { & $ps -NoProfile -ExecutionPolicy Bypass -File $map @args }
 ```
 
 已有安装见[升级步骤](docs/agent-integration.md#升级与刷新规则)。没有 Git 或希望下载 ZIP 时，改走 [ZIP 接入路线](docs/agent-integration.md#没有-git-时从-zip-接入)，它使用系统 PowerShell 验证地图。
 
 ### 2. 预览并接入
 
-检查下载的源码后，使用当前 PowerShell 宿主单次运行脚本；这不会修改全局执行策略。组织组策略的限制需遵循组织要求。
+检查下载的源码后执行；`toolkit` 就是上一步定义的那层包装，等价于 `& $ps -NoProfile -ExecutionPolicy Bypass -File $map <动作>`，不会修改全局执行策略。组织组策略的限制需遵循组织要求。
 
 ```powershell
-& $ps -NoProfile -ExecutionPolicy Bypass -File $map setup -Project $project -WhatIf -Json
-& $ps -NoProfile -ExecutionPolicy Bypass -File $map setup -Project $project
-& $ps -NoProfile -ExecutionPolicy Bypass -File $map doctor -Project $project -Json
-& $ps -NoProfile -ExecutionPolicy Bypass -File $map find git -Project $project
+toolkit setup -Project $project -WhatIf -Json
+toolkit setup -Project $project
+toolkit doctor -Project $project -Json
+toolkit find git -Project $project
 ```
 
 预览返回 `status: planned`；`setup` 首次建图并将规则写入当前项目的 `AGENTS.md`，已有内容保留、修改前备份。首次扫描可能需要等待，耗时取决于候选数量与探测情况。它不安装运行时、不改 PATH。
@@ -91,13 +93,13 @@ $ps = (Get-Process -Id $PID).Path
 
 ## 常用命令
 
-下面假定已设置 `$ps`、`$map`、`$project`。每个动作都支持 `-Json`，stdout 一个 JSON 对象；检查退出码、`ok`、`status`、`requirement` 和 `verification` 后再调用工具。
+下面假定已完成上面的接入（`$project` 与 `toolkit` 已就绪）。每个动作都支持 `-Json`，stdout 一个 JSON 对象；检查退出码、`ok`、`status`、`requirement` 和 `verification` 后再调用工具。
 
 ```powershell
-& $ps -NoProfile -ExecutionPolicy Bypass -File $map status -Json
-& $ps -NoProfile -ExecutionPolicy Bypass -File $map find node -Project $project -Json
-& $ps -NoProfile -ExecutionPolicy Bypass -File $map add node -Path 'C:\existing-node\node.exe' -Json
-& $ps -NoProfile -ExecutionPolicy Bypass -File $map install rg@latest -WhatIf -Json
+toolkit status -Json
+toolkit find node -Project $project -Json
+toolkit add node -Path 'C:\existing-node\node.exe' -Json
+toolkit install rg@latest -WhatIf -Json
 ```
 
 完整命令、结果状态、适配器与声明规则见[参考手册](docs/reference.md)。全局规则、Claude Code、Cursor MDC 和可选技能安装见[agent 接入指南](docs/agent-integration.md)。
