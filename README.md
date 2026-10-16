@@ -85,7 +85,7 @@ toolkit find git -Project $project
 | 能力 | 当前支持 | 边界 |
 |---|---|---|
 | 发现已有工具 | 已登记路径、PATH、统一仓库、mise 安装目录，以及扫描内核识别的位置 | 非穷尽全盘；其他位置可用 `add` 登记 |
-| 验证与选择 | 运行时与 CLI 的路径、版本、验证状态；按项目要求选择 | 未知工具默认尝试 `--version`；特殊参数需适配器 |
+| 验证与选择 | 运行时与 CLI 的路径、版本、验证状态；按项目要求选择 | 未知工具默认尝试 `--version`；特殊参数需适配器；**没有声明时不会主动选更新的版本** |
 | 项目声明 | 常见 mise、`.tool-versions`、Node/Python 版本文件和 Node `engines` | 轻量读取器，不解释完整 TOML/mise 环境语义 |
 | portable 安装 | gh、jadx、rg/ripgrep、fd（Windows x64）、adb；自定义 ZIP | 不自动安装所有能发现的工具；下载版本在最终位置再次验证 |
 | 安装器 | 明确使用 `-Via winget` | 位置由包管理器决定 |
@@ -106,6 +106,7 @@ toolkit install rg@latest -WhatIf -Json
 
 ## 常见问题
 
+- **没有项目声明时，会帮我选到最新的版本吗？** 不会。选择顺序是 `-Version` 参数 > 项目声明（`mise.toml`、`.tool-versions`、`.nvmrc` 等）> 父目录/全局声明 > 系统默认（PATH 上的那个）。**没有声明时它尊重系统默认，`find` 不是"升级到最新"**：PATH 上是 Node 16、机器另有 Node 24 时，`find node` 返回的是 16。要特定版本就写项目声明或传 `-Version`；声明要求的版本没有已验证副本时返回 `version_mismatch`，**不会退回旧版本**。
 - **会把工具搬走或改 PATH 吗？** 扫描和接入不会；已有副本留在原处。`install` 是单独的明确操作。`bootstrap` 是可选环境配置，会修改机器，不在上述接入流程中。
 - **必须用 mise 吗？** 无需安装 mise 也能发现、登记和查询工具；项目需要完整管理器环境时再使用 mise。
 - **工具默认放 C 盘吗？** 地图默认在 `~/.toolkit/map.json`，新 portable 工具默认在 `~/toolchains`。`TOOLCHAIN_ROOT` 可改仓库位置，`TEMP` 与管理器缓存需分别考虑。接入规则仅在预计安装占用 **≥1 GB** 时询问位置，CLI 本身不估算或弹窗。见[存储指南](docs/storage.md)。
