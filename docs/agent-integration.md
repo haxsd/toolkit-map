@@ -140,7 +140,7 @@ New-Item -ItemType Junction -Path (Join-Path $skillParent 'toolkit-map') -Target
 
 ## 没有 Git 时从 ZIP 接入
 
-从 [Release](https://github.com/haxsd/toolkit-map/releases/latest) 下载源码 ZIP 和 SHA256SUMS.txt。按[故障排查](troubleshooting.md)比对校验值、解除 ZIP 下载标记后解压。源码根目录应直接包含 `SKILL.md` 和 `scripts`，不要指向它的上一级。
+从 [Release](https://github.com/haxsd/toolkit-map/releases/latest) 下载源码 ZIP（SHA256 见该 Release 说明）。按[故障排查](troubleshooting.md)比对校验值、解除 ZIP 下载标记后解压。源码根目录应直接包含 `SKILL.md` 和 `scripts`，不要指向它的上一级。
 
 在要接入的真实项目中打开 PowerShell，设置一次真实源码目录，然后运行：
 

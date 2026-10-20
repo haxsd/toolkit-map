@@ -86,7 +86,7 @@ $ps = (Get-Process -Id $PID).Path
 
 ## 浏览器下载的 ZIP 被拦截
 
-从 Release 同时下载源码 ZIP 和 `SHA256SUMS.txt`，用 `Get-FileHash -LiteralPath <ZIP绝对路径> -Algorithm SHA256` 比对 ZIP 的校验值。确认来源和校验一致后，在 ZIP 文件属性中解除锁定，再解压。若组织策略仍禁止执行，按组织要求处理，单次 Bypass 不能覆盖组策略。
+从 Release 下载源码 ZIP，用 `Get-FileHash -LiteralPath <ZIP绝对路径> -Algorithm SHA256` 计算 ZIP 的校验值，与 Release 说明里的 SHA256 比对。确认来源和校验一致后，在 ZIP 文件属性中解除锁定，再解压。若组织策略仍禁止执行，按组织要求处理，单次 Bypass 不能覆盖组策略。
 
 ## 验收
 
