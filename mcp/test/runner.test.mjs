@@ -82,6 +82,14 @@ test('buildInvocation omits empty optional values', () => {
   ]);
 });
 
+test('buildInvocation can disable live search for isolated tests', () => {
+  const invocation = buildInvocation('find', { tool: 'node', skipScan: true }, {
+    script: '/repo/scripts/map.ps1',
+    powershell: 'pwsh'
+  });
+  assert.ok(invocation.args.includes('-SkipScan'));
+});
+
 test('runMap parses one JSON object and strips a UTF-8 BOM', async (t) => {
   const script = tempScript(t);
   const payload = { schemaVersion: 2, action: 'status', ok: true, status: 'ok', tools: 20 };

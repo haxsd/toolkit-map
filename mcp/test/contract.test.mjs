@@ -71,17 +71,17 @@ test('real map outputs conform to the frozen result and map schemas', windowsOnl
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin);
   const runtime = path.join(bin, 'runtime-a.cmd');
-  writeFakeNode(runtime, '22.23.2');
+  writeFakeNode(runtime, '22.99.2');
   const mapFile = path.join(dir, 'map.json');
   const project = path.join(dir, 'project');
   fs.mkdirSync(project);
-  fs.writeFileSync(path.join(project, '.nvmrc'), '22\n', 'utf8');
+  fs.writeFileSync(path.join(project, '.nvmrc'), '22.99.2\n', 'utf8');
 
   const help = mapCli(mapFile, ['help']);
   assertValid(RESULT_SCHEMA, help, 'help');
   assert.equal(help.status, 'ok');
 
-  const add = mapCli(mapFile, ['add', 'node', '-Path', runtime, '-Version', '22.23.2']);
+  const add = mapCli(mapFile, ['add', 'node', '-Path', runtime, '-Version', '22.99.2']);
   assertValid(RESULT_SCHEMA, add, 'add');
   assert.equal(add.ok, true);
 
@@ -89,7 +89,7 @@ test('real map outputs conform to the frozen result and map schemas', windowsOnl
   assertValid(MAP_SCHEMA, map, 'map.json');
 
   return Promise.all([
-    runMap('find', { tool: 'node', project }, {
+    runMap('find', { tool: 'node', project, skipScan: true }, {
       script: MAP_SCRIPT,
       mapFile,
       powershell: POWERSHELL
@@ -109,12 +109,12 @@ test('real map outputs conform to the frozen result and map schemas', windowsOnl
     assertValid(RESULT_SCHEMA, status, 'status');
     assertValid(RESULT_SCHEMA, doctor, 'doctor');
     assert.equal(find.ok, true);
-    assert.equal(find.requirement.version, '22');
+    assert.equal(find.requirement.version, '22.99.2');
     assert.equal(status.status, 'ok');
     assert.equal(doctor.status, 'attention_required');
 
-    fs.writeFileSync(path.join(project, '.nvmrc'), '24\n', 'utf8');
-    return runMap('find', { tool: 'node', project }, {
+    fs.writeFileSync(path.join(project, '.nvmrc'), '24.99.9\n', 'utf8');
+    return runMap('find', { tool: 'node', project, skipScan: true }, {
       script: MAP_SCRIPT,
       mapFile,
       powershell: POWERSHELL

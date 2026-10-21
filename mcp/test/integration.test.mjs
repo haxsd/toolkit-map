@@ -17,6 +17,10 @@ function writeFakeNode(file, version) {
   fs.writeFileSync(file, `@echo off\r\necho v${version}\r\n`, 'utf8');
 }
 
+function realPath(value) {
+  return fs.realpathSync.native(value);
+}
+
 function mapAdd(mapFile, tool, toolPath) {
   const output = execFileSync(POWERSHELL, [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
@@ -37,8 +41,8 @@ test('real map.ps1 selects the version required by the project', windowsOnly, (t
   fs.mkdirSync(bin);
   const node16 = path.join(bin, 'runtime-a.cmd');
   const node22 = path.join(bin, 'runtime-b.cmd');
-  writeFakeNode(node16, '16.20.2');
-  writeFakeNode(node22, '22.23.2');
+  writeFakeNode(node16, '16.99.1');
+  writeFakeNode(node22, '22.99.2');
 
   const mapFile = path.join(dir, 'map.json');
   const added16 = mapAdd(mapFile, 'node', node16);
@@ -48,19 +52,19 @@ test('real map.ps1 selects the version required by the project', windowsOnly, (t
 
   const project = path.join(dir, 'project');
   fs.mkdirSync(project);
-  fs.writeFileSync(path.join(project, '.nvmrc'), '22\n', 'utf8');
+  fs.writeFileSync(path.join(project, '.nvmrc'), '22.99.2\n', 'utf8');
 
-  return runMap('find', { tool: 'node', project }, {
+  return runMap('find', { tool: 'node', project, skipScan: true }, {
     script: MAP_SCRIPT,
     mapFile,
     powershell: POWERSHELL
   }).then((result) => {
     assert.equal(result.ok, true);
     assert.equal(result.status, 'ok');
-    assert.equal(result.version, '22.23.2');
-    assert.equal(result.path, node22);
+    assert.equal(result.version, '22.99.2');
+    assert.equal(realPath(result.path), realPath(node22));
     assert.equal(result.verification, 'verified');
-    assert.equal(result.requirement.version, '22');
+    assert.equal(result.requirement.version, '22.99.2');
     assert.equal(result.requirement.scope, 'project');
   });
 });
@@ -72,7 +76,7 @@ test('real map.ps1 returns version_mismatch without falling back', windowsOnly, 
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin);
   const node16 = path.join(bin, 'runtime-a.cmd');
-  writeFakeNode(node16, '16.20.2');
+  writeFakeNode(node16, '16.99.1');
 
   const mapFile = path.join(dir, 'map.json');
   assert.equal(mapAdd(mapFile, 'node', node16).ok, true);
@@ -83,7 +87,7 @@ test('real map.ps1 returns version_mismatch without falling back', windowsOnly, 
     engines: { node: '>=18' }
   }), 'utf8');
 
-  return runMap('find', { tool: 'node', project }, {
+  return runMap('find', { tool: 'node', project, skipScan: true }, {
     script: MAP_SCRIPT,
     mapFile,
     powershell: POWERSHELL
@@ -103,8 +107,8 @@ test('MCP server end to end selects the project version and exits cleanly', wind
   fs.mkdirSync(bin);
   const node16 = path.join(bin, 'runtime-a.cmd');
   const node22 = path.join(bin, 'runtime-b.cmd');
-  writeFakeNode(node16, '16.20.2');
-  writeFakeNode(node22, '22.23.2');
+  writeFakeNode(node16, '16.99.1');
+  writeFakeNode(node22, '22.99.2');
 
   const mapFile = path.join(dir, 'map.json');
   assert.equal(mapAdd(mapFile, 'node', node16).ok, true);
@@ -112,11 +116,14 @@ test('MCP server end to end selects the project version and exits cleanly', wind
 
   const project = path.join(dir, 'project');
   fs.mkdirSync(project);
-  fs.writeFileSync(path.join(project, '.nvmrc'), '22\n', 'utf8');
+  fs.writeFileSync(path.join(project, '.nvmrc'), '22.99.2\n', 'utf8');
 
   const child = spawn(process.execPath, [path.join(REPO_ROOT, 'mcp', 'server.mjs')], {
     env: { ...process.env, TOOLKIT_MAP_FILE: mapFile, TOOLKIT_MAP_PROJECT: project },
     stdio: ['pipe', 'pipe', 'pipe']
+  });
+  t.after(() => {
+    try { child.kill(); } catch { /* already exited */ }
   });
   child.stdout.setEncoding('utf8');
   child.stderr.setEncoding('utf8');
@@ -161,8 +168,8 @@ test('MCP server end to end selects the project version and exits cleanly', wind
 
   const message = await resultPromise;
   assert.equal(message.result.isError, false);
-  assert.equal(message.result.structuredContent.path, node22);
-  assert.equal(message.result.structuredContent.version, '22.23.2');
+  assert.equal(realPath(message.result.structuredContent.path), realPath(node22));
+  assert.equal(message.result.structuredContent.version, '22.99.2');
 
   const exitCode = await new Promise((resolve) => {
     child.on('close', resolve);

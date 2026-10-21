@@ -48,6 +48,7 @@ export function buildInvocation(action, options = {}, config = {}) {
       args.push('find', String(options.tool));
       pushOption(args, '-Project', options.project);
       pushOption(args, '-Version', options.version);
+      if (options.skipScan) args.push('-SkipScan');
       break;
     case 'status':
       args.push('status');
