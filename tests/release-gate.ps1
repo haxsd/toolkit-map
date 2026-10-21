@@ -17,6 +17,13 @@ $checks = @(
 )
 
 $failed = New-Object System.Collections.Generic.List[string]
+$version = ([IO.File]::ReadAllText((Join-Path (Split-Path $PSScriptRoot -Parent) 'VERSION'), [Text.Encoding]::UTF8)).Trim()
+$notesPath = Join-Path (Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) 'docs') 'releases') "v$version.md"
+if (-not [IO.File]::Exists($notesPath)) {
+    Write-Host "  [门禁失败] 缺少发布说明：$notesPath" -ForegroundColor Red
+    Write-Host "::error::缺少发布说明：$notesPath"
+    exit 1
+}
 Write-Host ''
 Write-Host ' 发布门禁：完整回归' -ForegroundColor White
 foreach ($name in $checks) {

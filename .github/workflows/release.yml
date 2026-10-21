@@ -56,13 +56,6 @@ jobs:
           $version = (Get-Content -LiteralPath VERSION -Raw -Encoding UTF8).Trim()
           $zip = Join-Path (Join-Path $PWD 'dist') "toolkit-map-v$version-runtime.zip"
           $sha = "$zip.sha256"
-          $notes = @"
-          toolkit-map v$version
-
-          下载 toolkit-map-v$version-runtime.zip 即可运行（含 scripts、MCP、schema 与文档；不含顶层 tests/ 与 CI）。
-          SHA256 见同名 .sha256 文件；需要浏览完整源码时使用本页下方的 Source code (zip)。
-          安装与接入见 README，兼容承诺见 docs/contract.md。
-          "@
-          $notesPath = Join-Path $PWD 'release-notes.md'
-          [IO.File]::WriteAllText($notesPath, $notes, (New-Object Text.UTF8Encoding($false)))
+          $notesPath = Join-Path (Join-Path (Join-Path $PWD 'docs') 'releases') "v$version.md"
+          if (-not (Test-Path -LiteralPath $notesPath)) { throw "缺少发布说明：$notesPath" }
           gh release create "v$version" $zip $sha --title "v$version" --notes-file $notesPath --verify-tag

@@ -70,7 +70,7 @@ census-text.tsv 与 census-data.tsv 是两个扫描内核的唯一数据来源�
 
 ## 发布
 
-1. 修改根目录 `VERSION`（help 自动读取），再按 tests/check-docs.ps1 的提示同步 CHANGELOG 与文档中的稳定标签。
+1. 修改根目录 `VERSION`（help 自动读取），再按 tests/check-docs.ps1 的提示同步 CHANGELOG 与文档中的稳定标签；新增 `docs/releases/vX.Y.Z.md` 作为 Release 说明（UTF-8，workflow 直接用它，不在 PowerShell 里拼中文）。
 2. 全套检查与两个宿主的契约测试通过。
 3. 推送分支，PR CI 通过后合并 main。
 4. 从合并提交创建并推送版本标签 `vX.Y.Z`；`.github/workflows/release.yml` 会校验标签与 `VERSION` 一致、跑 MCP 测试与 `tests/release-gate.ps1` 完整回归，再用 `scripts/build-release.ps1` 生成运行时 ZIP 与 SHA256 并创建 GitHub Release。门禁失败时不发布。
