@@ -10,4 +10,4 @@
 .\scripts\demo.ps1
 ```
 
-发布相关改动请运行 `tests/release-gate.ps1`。文档保持中文单语；`.ps1` 使用 UTF-8 BOM，`.sh` 使用 LF 且无 BOM。
+发布相关改动请运行 `tests/release-gate.ps1`。文档保持中文单语；`.ps1` 使用 UTF-8 BOM，`.sh` 使用 LF 且无 BOM。内部计划、交接与账户事项不进本仓库；`tests/records-guard.ps1` 会检查公开树边界。

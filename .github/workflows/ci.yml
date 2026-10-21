@@ -56,6 +56,12 @@ jobs:
       - name: 契约冻结（PowerShell 7）
         shell: pwsh
         run: .\tests\check-contract.ps1
+      - name: 公开树边界（PowerShell 5.1）
+        shell: powershell
+        run: .\tests\records-guard.ps1
+      - name: 公开树边界（PowerShell 7）
+        shell: pwsh
+        run: .\tests\records-guard.ps1
       - name: doctor 摘要（PowerShell 5.1）
         shell: powershell
         run: .\tests\doctor-bundle.ps1
@@ -240,6 +246,9 @@ jobs:
       - name: 契约冻结（Linux PowerShell 7）
         shell: pwsh
         run: ./tests/check-contract.ps1
+      - name: 公开树边界（Linux PowerShell 7）
+        shell: pwsh
+        run: ./tests/records-guard.ps1
       - name: 统一探测执行器缓存（Linux PowerShell 7）
         shell: pwsh
         run: ./tests/probe-cache.ps1

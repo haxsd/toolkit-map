@@ -46,6 +46,7 @@ census-text.tsv 与 census-data.tsv 是两个扫描内核的唯一数据来源�
 | tests/scan-baseline.ps1 | 用临时地图在真实机器上跑 scan，打印首扫墙钟时间与进程启动次数；每个宿主冷启动两轮只计第二轮（CI 的 windows-baseline job，先 PS7 后 PS5.1，只量不判） |
 | mcp/test | MCP 协议协商、工具参数、运行器超时/BOM、stdio 无日志污染与配置生成；Windows 用临时地图跑真实 `map.ps1` 与端到端调用（CI Node 22，Windows / Ubuntu） |
 | tests/check-contract.ps1 | 状态枚举、脚本字面量、schema 与 `docs/contract.md` 的一致性；VERSION 与 package 版本同步（跨平台） |
+| tests/records-guard.ps1 | 检查公开树是否混入内部计划、交接、审查或真实环境资料；当前树必须干净（跨平台） |
 | tests/doctor-bundle.ps1 | `doctor -Bundle` 的摘要字段、无地图/有地图两种情况，并断言不包含候选与 PATH 快照 |
 | tests/quickstart-write.ps1 | 用假 Node 与临时地图跑 `quickstart -Mcp -WriteMcp`，检查 Cursor/Claude 配置写入、已有服务器保留、备份与 `-WhatIf` 不写 |
 | tests/release-package.ps1 | 调用 `build-release.ps1` 构建临时运行时包，检查 ZIP/SHA256、必需文件、VERSION 与排除项 |
@@ -67,6 +68,7 @@ census-text.tsv 与 census-data.tsv 是两个扫描内核的唯一数据来源�
 - 地图写入必须经过完整读改写锁与原子写入；损坏/未来格式不能当空地图覆盖。
 - 新接入规则先预览，已有内容保留、备份，重复执行幂等。
 - 文档单语中文；扫描内核文案可保留已有英文输出。
+- 内部计划、交接说明、账户/密钥与真实环境信息不进公开仓库；公开树由 `tests/records-guard.ps1` 检查。
 
 ## 发布
 

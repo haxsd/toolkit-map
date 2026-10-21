@@ -3,6 +3,7 @@ $checks = @(
     'check-text.ps1',
     'check-data.ps1',
     'check-contract.ps1',
+    'records-guard.ps1',
     'doctor-bundle.ps1',
     'quickstart-write.ps1',
     'release-package.ps1',
