@@ -12,7 +12,7 @@
 | scripts/census-text.tsv | 两个扫描内核共用的中英文案（key、lang、text），必须与脚本同目录 |
 | scripts/census-data.tsv | 两个扫描内核共用的扫描数据（kind、os、value）：探测相对路径、候选根目录、解析命令表、约定命令名；os 为 win（census.ps1）/ unix（census.sh）/ all，必须与脚本同目录 |
 | scripts/bootstrap.ps1 / bootstrap.sh | 可选的 mise 环境配置，会修改机器 |
-| scripts/quickstart.ps1 | 项目接入：执行 setup，按需查找 Node 18+ 并打印 MCP 配置；`-WhatIf` 只预览 |
+| scripts/quickstart.ps1 | 项目接入：执行 setup，按需查找 Node 18+；`-Mcp` 打印配置，`-WriteMcp` 写入项目级 Cursor/Claude 配置（备份并保留其他服务器）；`-WhatIf` 只预览 |
 | scripts/build-release.ps1 | 从 HEAD 构建运行时 ZIP（剥离测试/CI）并生成 SHA256；发布 workflow 复用同一脚本 |
 | scripts/demo.ps1 | 临时地图上的 2 分钟演示，不读写本机地图 |
 | mcp/ | 零依赖 Node 18+ MCP stdio 适配器（三个只读工具）与测试 |
@@ -47,7 +47,9 @@ census-text.tsv 与 census-data.tsv 是两个扫描内核的唯一数据来源�
 | mcp/test | MCP 协议协商、工具参数、运行器超时/BOM、stdio 无日志污染与配置生成；Windows 用临时地图跑真实 `map.ps1` 与端到端调用（CI Node 22，Windows / Ubuntu） |
 | tests/check-contract.ps1 | 状态枚举、脚本字面量、schema 与 `docs/contract.md` 的一致性；VERSION 与 package 版本同步（跨平台） |
 | tests/doctor-bundle.ps1 | `doctor -Bundle` 的摘要字段、无地图/有地图两种情况，并断言不包含候选与 PATH 快照 |
+| tests/quickstart-write.ps1 | 用假 Node 与临时地图跑 `quickstart -Mcp -WriteMcp`，检查 Cursor/Claude 配置写入、已有服务器保留、备份与 `-WhatIf` 不写 |
 | tests/release-package.ps1 | 调用 `build-release.ps1` 构建临时运行时包，检查 ZIP/SHA256、必需文件、VERSION 与排除项 |
+| tests/release-gate.ps1 | 发布前完整回归入口：文案/数据/契约/doctor/quickstart/发布包/地图/扫描/parity 一次跑完 |
 | mcp/test/contract.test.mjs | Windows 上用临时地图校验 `help` / `add` / `find` / `status` / `doctor` / `setup -WhatIf` 与 map.json 是否符合冻结 schema |
 
 按改动范围检查；发布前跑全套。map-contract 同时用 PowerShell 5.1 和 7 执行；真实扫描另用临时 -MapFile 验证，不污染本机地图。测试使用假工具、临时目录与独立地图，不安装工具。
@@ -71,7 +73,7 @@ census-text.tsv 与 census-data.tsv 是两个扫描内核的唯一数据来源�
 1. 修改根目录 `VERSION`（help 自动读取），再按 tests/check-docs.ps1 的提示同步 CHANGELOG 与文档中的稳定标签。
 2. 全套检查与两个宿主的契约测试通过。
 3. 推送分支，PR CI 通过后合并 main。
-4. 从合并提交创建并推送版本标签 `vX.Y.Z`；`.github/workflows/release.yml` 会校验标签与 `VERSION` 一致、重跑文档/契约检查，用 `scripts/build-release.ps1` 生成运行时 ZIP 与 SHA256，并创建 GitHub Release。Release 只上传这个运行时包与校验文件；GitHub 自动提供的 `Source code (zip/tar.gz)` 用于浏览完整源码，不作为安装包。
+4. 从合并提交创建并推送版本标签 `vX.Y.Z`；`.github/workflows/release.yml` 会校验标签与 `VERSION` 一致、跑 MCP 测试与 `tests/release-gate.ps1` 完整回归，再用 `scripts/build-release.ps1` 生成运行时 ZIP 与 SHA256 并创建 GitHub Release。门禁失败时不发布。
 5. 确认 Release 页面、运行时包、SHA256 与标签提交一致。workflow 失败时先修复再发新补丁版本；不要为了重跑而移动已推送的标签。
 6. 发布后重新跑一次 `setup` 或替换 Cursor 全局规则，确认稳定标签、Release 页面与文档一致。
 

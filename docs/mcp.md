@@ -32,7 +32,7 @@ $node
 & $node mcp\server.mjs --print-config
 ```
 
-想连同项目 `AGENTS.md` 一起接入时，可以用 `scripts/quickstart.ps1 -Project <目录> -Mcp`：它先执行 `setup`，再用地图找到 Node 18+ 并打印同样的配置；`-WhatIf` 只预览。
+想连同项目 `AGENTS.md` 一起接入时，可以用 `scripts/quickstart.ps1 -Project <目录> -Mcp -WriteMcp`：它先执行 `setup`，再用地图找到 Node 18+，把配置写入项目级文件（默认 Cursor 的 `.cursor/mcp.json`；`-McpClient claude` 写 `.mcp.json`，`both` 两个都写）。已有文件会先备份，其他 `mcpServers` 条目保留；已有文件不是合法 JSON 时拒绝覆盖。`-WhatIf` 只预览，不写文件。Codex 的 TOML 仍按下面手动粘贴。
 
 输出是一段可直接粘贴的 `mcpServers` JSON，`command` 和 `args` 都是绝对路径。需要 Codex 的 TOML 时：
 

@@ -14,7 +14,7 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
         with:
@@ -32,7 +32,17 @@ jobs:
         run: |
           .\tests\check-docs.ps1
           .\tests\check-encodings.ps1
-          .\tests\check-contract.ps1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: MCP 测试
+        run: node --test mcp/test/protocol.test.mjs mcp/test/runner.test.mjs mcp/test/server.test.mjs mcp/test/integration.test.mjs mcp/test/contract.test.mjs
+
+      - name: 发布门禁（完整回归）
+        shell: powershell
+        run: .\tests\release-gate.ps1
 
       - name: 构建运行时包
         shell: powershell

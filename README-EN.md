@@ -74,11 +74,11 @@ Want to see it first? Run `.\scripts\demo.ps1` from the source directory (tempor
 
 ```powershell
 $d = Join-Path $env:USERPROFILE 'Projects\toolkit-map'
-git clone --branch v1.0.0 --depth 1 https://github.com/haxsd/toolkit-map $d
-& powershell -NoProfile -ExecutionPolicy Bypass -File "$d\scripts\quickstart.ps1" -Project (Get-Location).Path -Mcp
+git clone --branch v1.1.0 --depth 1 https://github.com/haxsd/toolkit-map $d
+& powershell -NoProfile -ExecutionPolicy Bypass -File "$d\scripts\quickstart.ps1" -Project (Get-Location).Path -Mcp -WriteMcp
 ```
 
-`quickstart` writes the project `AGENTS.md` and prints the MCP config; it does not overwrite existing servers in client config files. If you ran the block above, skip to step 2; the step-by-step route follows.
+`quickstart` writes the project `AGENTS.md` and prints the MCP config; it does not overwrite existing servers in client config files. If you ran the block above, skip to step 2; the step-by-step route follows. Add `-WriteMcp` to write the project-level Cursor `.cursor/mcp.json` (default) or Claude Code `.mcp.json` (`-McpClient claude` / `both`); existing entries are preserved and the file is backed up first.
 
 ### 1. Download the stable release
 
@@ -87,7 +87,7 @@ Open PowerShell in the project you want to wire up and run:
 ```powershell
 $project = (Get-Location).Path
 $installDir = Join-Path $env:USERPROFILE 'Projects\toolkit-map'
-git clone --branch v1.0.0 --depth 1 https://github.com/haxsd/toolkit-map $installDir
+git clone --branch v1.1.0 --depth 1 https://github.com/haxsd/toolkit-map $installDir
 if ($LASTEXITCODE -ne 0) { throw 'Download did not finish. If you already have an install, follow the upgrade guide instead of overwriting.' }
 $map = Join-Path $installDir 'scripts\map.ps1'
 $ps = (Get-Process -Id $PID).Path

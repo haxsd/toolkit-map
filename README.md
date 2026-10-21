@@ -74,11 +74,11 @@ toolkit-map 在调用前回答三个问题：
 
 ```powershell
 $d = Join-Path $env:USERPROFILE 'Projects\toolkit-map'
-git clone --branch v1.0.0 --depth 1 https://github.com/haxsd/toolkit-map $d
-& powershell -NoProfile -ExecutionPolicy Bypass -File "$d\scripts\quickstart.ps1" -Project (Get-Location).Path -Mcp
+git clone --branch v1.1.0 --depth 1 https://github.com/haxsd/toolkit-map $d
+& powershell -NoProfile -ExecutionPolicy Bypass -File "$d\scripts\quickstart.ps1" -Project (Get-Location).Path -Mcp -WriteMcp
 ```
 
-`quickstart` 只写项目 `AGENTS.md` 并打印 MCP 配置，不覆盖客户端已有的服务器配置。已经运行上面的块时可直接跳到第 2 步；下面是分步说明。
+`quickstart` 只写项目 `AGENTS.md` 并打印 MCP 配置，不覆盖客户端已有的服务器配置。已经运行上面的块时可直接跳到第 2 步；下面是分步说明。加 `-WriteMcp` 可直接写入项目级 Cursor `.cursor/mcp.json`（默认）或 Claude Code `.mcp.json`（`-McpClient claude` / `both`），修改前备份并保留其他服务器。
 
 ### 1. 下载稳定版
 
@@ -87,7 +87,7 @@ git clone --branch v1.0.0 --depth 1 https://github.com/haxsd/toolkit-map $d
 ```powershell
 $project = (Get-Location).Path
 $installDir = Join-Path $env:USERPROFILE 'Projects\toolkit-map'
-git clone --branch v1.0.0 --depth 1 https://github.com/haxsd/toolkit-map $installDir
+git clone --branch v1.1.0 --depth 1 https://github.com/haxsd/toolkit-map $installDir
 if ($LASTEXITCODE -ne 0) { throw '下载未完成。已有安装请按升级指南处理，不要覆盖。' }
 $map = Join-Path $installDir 'scripts\map.ps1'
 $ps = (Get-Process -Id $PID).Path

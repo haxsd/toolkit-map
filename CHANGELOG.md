@@ -1,5 +1,12 @@
 # 更新记录
 
+## v1.1.0 — 一键写入 MCP 配置与发布门禁
+
+- `quickstart.ps1` 新增 `-WriteMcp`：写入项目级 Cursor `.cursor/mcp.json`（默认）或 Claude Code `.mcp.json`（`-McpClient claude` / `both`）；已有文件先备份、保留其他 `mcpServers`，非法 JSON 拒绝覆盖。`-WhatIf` 仍只预览。
+- 发布 workflow 增加发布门禁：先跑 MCP 测试与 `tests/release-gate.ps1`（文案、数据、契约、doctor、quickstart、发布包、地图、扫描、parity），全部通过后才构建运行时包并创建 Release；门禁失败不发布。
+- 新增 `tests/quickstart-write.ps1`（假 Node + 临时地图验证合并、备份与 `-WhatIf`）与 `tests/release-gate.ps1`（完整回归入口）。
+- 版本号提升到 1.1.0；JSON result v2、地图 v2 与 MCP 工具契约仍按 1.0.0 的冻结规则演进。
+
 ## v1.0.0 — MCP 接入、采用层与契约冻结
 
 - 新增 `mcp/` 零依赖 Node 18+ stdio 适配器：`toolkit_find` / `toolkit_status` / `toolkit_doctor` 三个只读工具，内部调用现有 `map.ps1 -Json`；不暴露安装、登记、扫描与更新动作，不修改地图或 PATH。
