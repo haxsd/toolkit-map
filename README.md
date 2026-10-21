@@ -182,7 +182,7 @@ MCP 与规则文件可以同时启用；MCP 不会自动改写 `AGENTS.md`，`se
 
 ## 文档
 
-[参考手册](docs/reference.md) · [契约冻结](docs/contract.md) · [MCP 接入](docs/mcp.md) · [2 分钟演示](docs/demo.md) · [agent 接入](docs/agent-integration.md) · [平台说明](docs/platform-notes.md) · [存储与大工具安装](docs/storage.md) · [故障排查](docs/troubleshooting.md) · [撤销与卸载](docs/uninstall.md) · [贡献指南](docs/contributing.md) · [更新记录](CHANGELOG.md)
+[参考手册](docs/reference.md) · [契约冻结](docs/contract.md) · [MCP 接入](docs/mcp.md) · [2 分钟演示](docs/demo.md) · [agent 接入](docs/agent-integration.md) · [平台说明](docs/platform-notes.md) · [存储与大工具安装](docs/storage.md) · [故障排查](docs/troubleshooting.md) · [撤销与卸载](docs/uninstall.md) · [贡献指南](docs/contributing.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
 ## 常见问题
 
