@@ -1,5 +1,12 @@
 # 更新记录
 
+## v1.1.1 — 发布流程与社区文件收尾
+
+- 纯补丁版本，无运行时行为变更：让最新标签同时包含发布说明、贡献入口、安全策略、行为准则与 PR 模板。
+- Release 说明从 `docs/releases/vX.Y.Z.md`（UTF-8）读取；发布门禁检查该文件存在。这修复了 PowerShell 5.1 在 workflow 内联中文字面量时按 ANSI 解码导致的 Release 说明乱码。
+- 仓库启用私密漏洞报告，`SECURITY.md` 与私密入口一致；GitHub 社区健康度检查所需的贡献、行为准则、issue/PR 模板齐全。
+- 版本号提升到 1.1.1；JSON result v2、地图 v2 与 MCP 工具契约仍按 1.0.0 的冻结规则演进。
+
 ## v1.1.0 — 一键写入 MCP 配置与发布门禁
 
 - `quickstart.ps1` 新增 `-WriteMcp`：写入项目级 Cursor `.cursor/mcp.json`（默认）或 Claude Code `.mcp.json`（`-McpClient claude` / `both`）；已有文件先备份、保留其他 `mcpServers`，非法 JSON 拒绝覆盖。`-WhatIf` 仍只预览。

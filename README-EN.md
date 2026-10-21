@@ -74,7 +74,7 @@ Want to see it first? Run `.\scripts\demo.ps1` from the source directory (tempor
 
 ```powershell
 $d = Join-Path $env:USERPROFILE 'Projects\toolkit-map'
-git clone --branch v1.1.0 --depth 1 https://github.com/haxsd/toolkit-map $d
+git clone --branch v1.1.1 --depth 1 https://github.com/haxsd/toolkit-map $d
 & powershell -NoProfile -ExecutionPolicy Bypass -File "$d\scripts\quickstart.ps1" -Project (Get-Location).Path -Mcp -WriteMcp
 ```
 
@@ -87,7 +87,7 @@ Open PowerShell in the project you want to wire up and run:
 ```powershell
 $project = (Get-Location).Path
 $installDir = Join-Path $env:USERPROFILE 'Projects\toolkit-map'
-git clone --branch v1.1.0 --depth 1 https://github.com/haxsd/toolkit-map $installDir
+git clone --branch v1.1.1 --depth 1 https://github.com/haxsd/toolkit-map $installDir
 if ($LASTEXITCODE -ne 0) { throw 'Download did not finish. If you already have an install, follow the upgrade guide instead of overwriting.' }
 $map = Join-Path $installDir 'scripts\map.ps1'
 $ps = (Get-Process -Id $PID).Path
