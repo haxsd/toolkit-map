@@ -5,6 +5,7 @@
 - `quickstart.ps1` 新增 `-WriteMcp`：写入项目级 Cursor `.cursor/mcp.json`（默认）或 Claude Code `.mcp.json`（`-McpClient claude` / `both`）；已有文件先备份、保留其他 `mcpServers`，非法 JSON 拒绝覆盖。`-WhatIf` 仍只预览。
 - 发布 workflow 增加发布门禁：先跑 MCP 测试与 `tests/release-gate.ps1`（文案、数据、契约、doctor、quickstart、发布包、地图、扫描、parity），全部通过后才构建运行时包并创建 Release；门禁失败不发布。
 - 新增 `tests/quickstart-write.ps1`（假 Node + 临时地图验证合并、备份与 `-WhatIf`）与 `tests/release-gate.ps1`（完整回归入口）。
+- Release 说明改从 `docs/releases/vX.Y.Z.md`（UTF-8）读取，避免 Windows PowerShell 5.1 在 workflow 内联中文字面量时按 ANSI 解码；发布门禁同时检查该文件存在。
 - 版本号提升到 1.1.0；JSON result v2、地图 v2 与 MCP 工具契约仍按 1.0.0 的冻结规则演进。
 
 ## v1.0.0 — MCP 接入、采用层与契约冻结
