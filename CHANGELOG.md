@@ -1,5 +1,20 @@
 # 更新记录
 
+## v1.0.0 — MCP 接入、采用层与契约冻结
+
+- 新增 `mcp/` 零依赖 Node 18+ stdio 适配器：`toolkit_find` / `toolkit_status` / `toolkit_doctor` 三个只读工具，内部调用现有 `map.ps1 -Json`；不暴露安装、登记、扫描与更新动作，不修改地图或 PATH。
+- 同时支持旧版 `initialize` 会话（2024-11-05 至 2025-11-25）与 2026-07-28 的 `server/discover` 每请求元数据模型；不支持的现代版本返回 `-32022` 并列出受支持版本。stdout 只输出 JSON-RPC，诊断走 stderr；stdin 关闭时等待在途调用结束后退出。
+- 新增 `--print-config`（Cursor / Claude Code 的 `mcpServers` JSON、Codex 的 TOML）、`--check`（脱离客户端验证地图）与 `--version`。配置使用 Node 与 `server.mjs` 的绝对路径，避免 PATH 上的旧 Node 启动失败。
+- 工具参数只接受 `tool` / `project` / `version` / `rulesFile`；子进程使用参数数组、不经过 shell，默认 120 秒超时；`ok:false` 映射为 `isError:true`，保留地图状态与诊断信息。
+- 新增 `docs/mcp.md`，README 中英双语增加 MCP 入口；agent 接入指南与参考手册同步；技能说明增加 MCP 优先、规则文件回退的边界。
+- 新增 `scripts/quickstart.ps1`：复用当前源码目录，执行 `setup` 并按需用地图找到 Node 18+，打印 `mcpServers` 配置；支持 `-WhatIf`，不覆盖客户端已有配置。新增 `scripts/demo.ps1` 与 `docs/demo.md`：用临时地图和两个假副本复现“PATH 是 16、项目要 22、地图返回 22”以及 `version_mismatch` 对照，不读写本机地图。
+- 测试：`mcp/test` 覆盖协议协商、工具参数、运行器超时/BOM/非零退出、stdio 无日志污染与配置生成；Windows 上用临时地图和假工具跑真实 `map.ps1` 集成测试，包含 MCP 端到端调用与优雅退出。CI 增加 Node 22 的 Windows / Ubuntu MCP job。
+- 新增 `docs/contract.md` 与 `schemas/`：冻结 JSON result v2、地图存储 v2、状态枚举（30 项）、MCP 工具名/参数/结果字段与退出码语义；写明 patch/minor/major 兼容策略、弃用窗口和消费方必须遵守的 `ok` 闸门。`schemas/result-v2.schema.json`、`schemas/map-v2.schema.json` 与 `schemas/statuses.json` 是机器可读来源。
+- 新增 `tests/check-contract.ps1`：静态检查脚本状态字面量、statuses.json、result schema 枚举与契约文档是否一致；新增 `mcp/test/contract.test.mjs`：在 Windows 上用临时地图校验 `help` / `add` / `find` / `status` / `doctor` / `setup -WhatIf` 与 map.json 是否符合 schema。CI 在 Windows PowerShell 5.1/7、Linux PowerShell 7 与 Node 22 上运行相应检查。
+- 新增 `doctor -Bundle`：在结果中附加宿主版本、地图摘要、检查项、映射告警与工具版本，**不包含**候选列表与 PATH 快照；用于收 issue 时减少来回追问。新增 `tests/doctor-bundle.ps1` 覆盖有无地图两种情况。
+- 发布流程：新增 `scripts/build-release.ps1`，从标签内容生成运行时 ZIP（剥离顶层 tests/ 与 CI）并计算 SHA256；推送 `vX.Y.Z` 触发 `.github/workflows/release.yml` 校验标签与 `VERSION`、重跑文档/契约检查并创建 Release，只上传这一个运行时包与校验文件。完整源码仍由 GitHub 自动生成的 `Source code (zip/tar.gz)` 提供。
+- 版本号提升到 1.0.0；地图 JSON 协议仍为 schemaVersion 2，扫描内核与 PowerShell 5.1/7 契约不变。
+
 ## v0.3.0 — 更安全、更快、两端一致的扫描
 
 - 收敛计划 C4 / C5（语义对齐与文档补充）：census.sh 的 STRAY 告警 tool 改为游离工具名（去重、排序后以 / 连接，与 census.ps1 一致），tests/fixtures/census-expected.tsv 去掉 STRAY 的通配符；census.sh 候选根目录改为逐行读取，含空格的路径（如 `/Applications/Android Studio.app/Contents/jbr`、带空格的 `$HOME`）不再被拆开；解析层默认命令与声明命令去重，同一命令不再出现两条；UNDECLARED 判定把当前目录的 .nvmrc / .node-version 也算项目声明；census.ps1 的 powershell / pwsh 版本探测修复（此前会多启动一次进程且版本恒为空，现在只用 `-Command $PSVersionTable` 探测一次）；census-text.tsv 去掉 ps1: / sh: 前缀：PATH_DIRT 文案统一，bootstrap 脚本名与刷新命令改由 census-data.tsv 的 bootstrap / bootstrap-refresh 行（os = win / unix）以占位符传入，check-text 拒绝前缀 key，check-data 要求两边都有这两种行；mise 纳管清单在 census.sh 仍读 `mise ls` 文本（不引入 jq），阶段键两边已一致；文档补充新增工具只改两张数据表、PowerShell 5.1 超时清理与 `-Throttle 1` 说明；smoke.sh 新增空格根目录、去重与 .nvmrc 回归用例。

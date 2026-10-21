@@ -9,6 +9,8 @@ description: "AI agent 的本机工具发现与选择层：调用工具前查询
 
 安装技能不会自动写入前端的全局规则。希望在各项目持续遵守本流程时，将简短调用规则接入前端支持的全局指令；仅单个项目使用时可运行 `setup -Project <目录>`。接入位置、可复制模板和生效验收见 [agent 接入指南](docs/agent-integration.md)。
 
+客户端支持 MCP 时，优先配置 `mcp/server.mjs`：它暴露 `toolkit_find` / `toolkit_status` / `toolkit_doctor` 三个只读工具，直接调用同一份 `map.ps1 -Json`，不依赖模型记住规则文件。配置与验收见 [MCP 接入](docs/mcp.md)；规则文件仍可作为回退，两者可以同时启用。
+
 ## 调用流程
 
 Windows 策略禁止直接执行脚本时，用当前 PowerShell 宿主以 `-NoProfile -ExecutionPolicy Bypass -File <地图脚本绝对路径> <动作与参数>` 单次调用；不修改全局执行策略，遵循组织组策略。

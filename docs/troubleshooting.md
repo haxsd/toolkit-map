@@ -2,6 +2,8 @@
 
 本页面向已经按 [agent 接入指南](agent-integration.md) 接入后出现问题的场景。命令契约与状态含义见 [参考手册](reference.md)。
 
+使用 MCP 接入时，客户端看不到工具、配置生成或协议版本问题先看 [MCP 接入](mcp.md#故障排查)；本页主要覆盖规则文件与地图命令。
+
 先定位你本机的脚本绝对路径，并在每个命令里显式带入当前项目。不要把 `./scripts/map.ps1` 当成当前项目下的文件：
 
 ```powershell
@@ -11,6 +13,16 @@ $ps = (Get-Process -Id $PID).Path
 ```
 
 失败时先读 `-Json` 输出里的 `ok`、`status`、`requirement`、`verification`，不要只看退出码。**退出码非零表示本动作未成功，不等于“安装坏了”**：`not_found`、`version_mismatch` 是对本次搜索范围的结论，`doctor` 返回 1 只表示有待处理检查项，都不授权自动安装或改全局环境。
+
+## 提交 issue 时附上 doctor -Bundle
+
+`doctor` 正常失败时先看 `checks`。需要别人帮忙时，用 `-Bundle` 生成一份可复制的摘要（宿主版本、地图是否存在/多旧、工具数量、告警与检查项），它**不包含**候选列表和 PATH 快照：
+
+```powershell
+& $ps -NoProfile -ExecutionPolicy Bypass -File $map doctor -Project $project -Bundle -Json
+```
+
+输出仍是单个 JSON 对象，`bundle` 字段是摘要。粘贴前检查并隐去用户名、项目路径等你不希望公开的信息。
 
 ## 脚本被策略拦下
 
@@ -86,7 +98,7 @@ $ps = (Get-Process -Id $PID).Path
 
 ## 浏览器下载的 ZIP 被拦截
 
-从 Release 下载源码 ZIP，用 `Get-FileHash -LiteralPath <ZIP绝对路径> -Algorithm SHA256` 计算 ZIP 的校验值，与 Release 说明里的 SHA256 比对。确认来源和校验一致后，在 ZIP 文件属性中解除锁定，再解压。若组织策略仍禁止执行，按组织要求处理，单次 Bypass 不能覆盖组策略。
+从 Release 下载 `toolkit-map-v<版本>-runtime.zip`，用 `Get-FileHash -LiteralPath <ZIP绝对路径> -Algorithm SHA256` 计算校验值，与同名 `.sha256` 文件比对。确认来源和校验一致后，在 ZIP 文件属性中解除锁定，再解压。若组织策略仍禁止执行，按组织要求处理，单次 Bypass 不能覆盖组策略。
 
 ## 验收
 

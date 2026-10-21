@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/haxsd/toolkit-map/schemas/result-v2.schema.json",
+  "title": "toolkit-map JSON result v2",
+  "description": "Frozen at toolkit-map 1.0.0. Every map action writes exactly one of these objects to stdout in -Json mode.",
+  "type": "object",
+  "required": ["schemaVersion", "action", "ok", "status"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "action": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+    "ok": { "type": "boolean" },
+    "status": { "$ref": "#/$defs/status" },
+    "tool": { "type": "string" },
+    "requestedTool": { "type": "string" },
+    "found": { "type": "boolean" },
+    "path": { "type": "string" },
+    "version": { "type": "string" },
+    "source": { "type": "string" },
+    "note": { "type": "string" },
+    "reason": { "type": "string" },
+    "verification": { "type": "string", "enum": ["verified", "unverified", "unavailable", "skipped", ""] },
+    "requirement": { "$ref": "#/$defs/requirement" },
+    "invocation": { "oneOf": [{ "$ref": "#/$defs/invocation" }, { "type": "null" }] },
+    "candidates": { "type": "array", "items": { "$ref": "#/$defs/resultCandidate" } },
+    "search": { "$ref": "#/$defs/search" },
+    "hint": { "type": "string" },
+    "message": { "type": "string" },
+    "mapFile": { "type": "string" },
+    "rulesFile": { "type": "string" },
+    "backup": { "type": "string" },
+    "preview": { "type": "string" },
+    "exists": { "type": "boolean" },
+    "stale": { "type": "boolean" },
+    "pathChanged": { "type": "boolean" },
+    "rulesChanged": { "type": "boolean" },
+    "agentVerified": { "type": "boolean" },
+    "scannedAt": { "type": ["string", "null"] },
+    "updatedAt": { "type": ["string", "null"] },
+    "ageHours": { "type": ["number", "null"] },
+    "deadCandidates": { "type": "integer" },
+    "tools": {
+      "oneOf": [
+        { "type": "integer" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
+    },
+    "checks": { "type": "array", "items": { "$ref": "#/$defs/check" } },
+    "bundle": { "type": "object" },
+    "warnings": { "type": "array" },
+    "probeStats": { "type": "object" },
+    "integrity": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "object" }
+      ]
+    },
+    "environmentHint": { "type": "string" },
+    "unverifiedCandidates": { "type": "integer" },
+    "via": { "type": "string" },
+    "packageId": { "type": "string" },
+    "destination": { "type": "string" },
+    "warehouse": { "type": "string" },
+    "recipe": { "type": "object" },
+    "url": { "type": "string" },
+    "networkRequired": { "type": "boolean" },
+    "preferredPath": { "type": "string" },
+    "actions": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "planned",
+        "already_available",
+        "unverified",
+        "not_found",
+        "no_usable_candidate",
+        "version_mismatch",
+        "requirement_unsupported",
+        "map_missing",
+        "map_corrupt",
+        "schema_unsupported",
+        "map_busy",
+        "attention_required",
+        "operation_failed",
+        "checksum_unavailable",
+        "checksum_conflict",
+        "version_unavailable",
+        "installed_not_discovered",
+        "installed_ambiguous",
+        "installer_missing",
+        "asset_missing",
+        "executable_missing",
+        "probe_failed",
+        "environment_internal",
+        "invalid_action",
+        "invalid_argument",
+        "invalid_path",
+        "invalid_project",
+        "rules_invalid",
+        "scan_failed"
+      ]
+    },
+    "requirement": {
+      "type": "object",
+      "properties": {
+        "version": { "type": "string" },
+        "source": { "type": "string" },
+        "scope": { "type": "string" }
+      },
+      "required": ["version", "source", "scope"],
+      "additionalProperties": true
+    },
+    "invocation": {
+      "type": "object",
+      "properties": {
+        "executable": { "type": "string" },
+        "arguments": { "type": "array", "items": { "type": "string" } },
+        "cwd": { "type": "string" }
+      },
+      "required": ["executable", "arguments", "cwd"],
+      "additionalProperties": true
+    },
+    "search": {
+      "type": "object",
+      "properties": {
+        "performed": { "type": "boolean" },
+        "complete": { "type": "boolean" },
+        "scope": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["performed", "complete", "scope"],
+      "additionalProperties": true
+    },
+    "check": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "ok": { "type": "boolean" },
+        "detail": { "type": "string" }
+      },
+      "required": ["name", "ok"],
+      "additionalProperties": true
+    },
+    "resultCandidate": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string" },
+        "version": { "type": "string" },
+        "source": { "type": "string" },
+        "verification": { "type": "string" },
+        "isShim": { "type": "boolean" },
+        "usable": { "type": ["boolean", "null"] },
+        "reachable": { "type": "boolean" },
+        "id": { "type": "string" },
+        "note": { "type": "string" },
+        "userNote": { "type": "string" },
+        "registered": { "type": "boolean" }
+      },
+      "required": ["path", "version", "source", "verification", "isShim"],
+      "additionalProperties": true
+    }
+  }
+}

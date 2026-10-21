@@ -50,6 +50,24 @@ jobs:
       - name: 扫描数据表检查（PowerShell 7）
         shell: pwsh
         run: .\tests\check-data.ps1
+      - name: 契约冻结（PowerShell 5.1）
+        shell: powershell
+        run: .\tests\check-contract.ps1
+      - name: 契约冻结（PowerShell 7）
+        shell: pwsh
+        run: .\tests\check-contract.ps1
+      - name: doctor 摘要（PowerShell 5.1）
+        shell: powershell
+        run: .\tests\doctor-bundle.ps1
+      - name: doctor 摘要（PowerShell 7）
+        shell: pwsh
+        run: .\tests\doctor-bundle.ps1
+      - name: 发布包构建（PowerShell 5.1）
+        shell: powershell
+        run: .\tests\release-package.ps1
+      - name: 发布包构建（PowerShell 7）
+        shell: pwsh
+        run: .\tests\release-package.ps1
       - name: 地图动作回归（失效路径与安装覆盖护栏）
         shell: powershell
         run: .\tests\map-smoke.ps1
@@ -146,6 +164,32 @@ jobs:
           }
           exit $code
 
+  mcp:
+    # MCP 适配器是零依赖 Node 18+ stdio 服务器；两个平台跑纯协议/运行器测试，
+    # Windows 再用临时地图跑真实 map.ps1 集成测试。地图本身仍由上面的 PowerShell job 覆盖。
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: MCP 语法检查
+        run: |
+          node --check mcp/server.mjs
+          node --check mcp/lib/protocol.mjs
+          node --check mcp/lib/runner.mjs
+          node --check mcp/lib/tools.mjs
+      - name: MCP 协议与运行器测试
+        run: node --test mcp/test/protocol.test.mjs mcp/test/runner.test.mjs mcp/test/server.test.mjs mcp/test/contract.test.mjs
+      - name: MCP 真实地图集成测试（Windows）
+        if: runner.os == 'Windows'
+        run: node --test mcp/test/integration.test.mjs
+
   windows-baseline:
     # 收敛计划 P1 起：首扫基线。真实 runner 上用临时地图跑 map.ps1 scan，
     # 把墙钟时间与进程启动次数打成 ::notice 注解和 step summary（只量不判，不设阈值）。
@@ -187,6 +231,9 @@ jobs:
       - name: 扫描数据表检查（Linux PowerShell 7）
         shell: pwsh
         run: ./tests/check-data.ps1
+      - name: 契约冻结（Linux PowerShell 7）
+        shell: pwsh
+        run: ./tests/check-contract.ps1
       - name: 统一探测执行器缓存（Linux PowerShell 7）
         shell: pwsh
         run: ./tests/probe-cache.ps1

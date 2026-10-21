@@ -1,10 +1,12 @@
 # toolkit-map agent 接入指南
 
 让 AI agent 在调用工具前先查 `map.ps1`：查绝对路径、项目要求、验证状态；只有明确需要才安装。
+客户端支持 MCP 时，优先用 [MCP 接入](mcp.md)：配置一次即可直接调用 `toolkit_find`，不依赖模型记住规则文件。下面的规则文件接入是通用回退方案，两者可以同时启用。
 首次试用建议先按 [README](../README.md#首次接入一个项目) 完成一个 Cursor/Codex 项目接入。下面用于选择其他前端、跨项目全局规则或可选技能安装。
 
 | 前端 | 跨项目使用 | 只在当前项目使用 |
 |---|---|---|
+| MCP 客户端（Cursor / Claude Code / Codex） | 配置一次 `mcpServers`，见 [MCP 接入](mcp.md) | 项目级 `.cursor/mcp.json` / `.mcp.json` |
 | Cursor | Customize → Rules → User Rules，手工粘贴 | 项目 AGENTS.md，或带 alwaysApply 的 MDC |
 | Codex | CODEX_HOME/AGENTS.md，默认 ~/.codex/AGENTS.md | 项目 AGENTS.md |
 | Claude Code | ~/.claude/CLAUDE.md | 项目 CLAUDE.md |
@@ -107,14 +109,14 @@ Git 克隆安装：先检查本地修改，工作区干净时更新到稳定标�
 $installDir = "$env:USERPROFILE\Projects\toolkit-map" # 按真实安装目录改
 git -C $installDir status --short
 # 确认上一步没有本地修改后执行；任一步失败就先处理，别继续。
-git -C $installDir fetch --depth 1 origin tag v0.3.0
+git -C $installDir fetch --depth 1 origin tag v1.0.0
 if ($LASTEXITCODE -ne 0) { throw '获取版本失败' }
-git -C $installDir switch --detach v0.3.0
+git -C $installDir switch --detach v1.0.0
 if ($LASTEXITCODE -ne 0) { throw '切换版本失败' }
 $map = Join-Path $installDir 'scripts\map.ps1'
 ```
 
-ZIP 安装：校验 Release 附件，解压到新目录，重新设置 `$map` 指向新位置。移动源码路径后也需刷新规则中的绝对路径。
+ZIP 安装：从 Release 下载 `toolkit-map-v<版本>-runtime.zip`，用同名 `.sha256` 校验后解压到新目录，重新设置 `$map` 指向新位置。运行时包不含顶层 `tests/` 与 CI；完整源码仍可从 Release 的 `Source code (zip)` 浏览。移动源码路径后也需刷新规则中的绝对路径。
 
 升级 toolkit-map 不会自动刷新已经粘贴的规则。每次升级后，文件接入重新执行 `setup` 更新标记块；Cursor 全局 UI 接入重新生成 `preview` 并替换旧区块。随后新开会话验收。
 
@@ -140,13 +142,13 @@ New-Item -ItemType Junction -Path (Join-Path $skillParent 'toolkit-map') -Target
 
 ## 没有 Git 时从 ZIP 接入
 
-从 [Release](https://github.com/haxsd/toolkit-map/releases/latest) 下载源码 ZIP（SHA256 见该 Release 说明）。按[故障排查](troubleshooting.md)比对校验值、解除 ZIP 下载标记后解压。源码根目录应直接包含 `SKILL.md` 和 `scripts`，不要指向它的上一级。
+从 [Release](https://github.com/haxsd/toolkit-map/releases/latest) 下载 `toolkit-map-v<版本>-runtime.zip`（含运行所需脚本、MCP、schema 与文档；不含顶层 tests/ 与 CI），用同名 `.sha256` 校验后解压。按[故障排查](troubleshooting.md)解除 ZIP 下载标记。源码根目录应直接包含 `SKILL.md` 和 `scripts`，不要指向它的上一级。
 
 在要接入的真实项目中打开 PowerShell，设置一次真实源码目录，然后运行：
 
 ```powershell
 $project = (Get-Location).Path
-$installDir = 'C:\your-install\toolkit-map-v0.3.0' # 替换为你解压后的源码根目录
+$installDir = 'C:\your-install\toolkit-map-v1.0.0' # 替换为你解压后的源码根目录
 $map = Join-Path $installDir 'scripts\map.ps1'
 $ps = (Get-Process -Id $PID).Path
 & $ps -NoProfile -ExecutionPolicy Bypass -File $map setup -Project $project -WhatIf -Json

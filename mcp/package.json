@@ -1,0 +1,19 @@
+{
+  "name": "toolkit-map-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MCP stdio adapter for toolkit-map: verified local tool paths for AI coding agents.",
+  "type": "module",
+  "bin": {
+    "toolkit-map-mcp": "./server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/protocol.test.mjs test/runner.test.mjs test/server.test.mjs test/integration.test.mjs test/contract.test.mjs",
+    "check": "node --check server.mjs && node --check lib/protocol.mjs && node --check lib/runner.mjs && node --check lib/tools.mjs"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="440" viewBox="0 0 1000 440" font-family="Segoe UI, Microsoft YaHei, sans-serif">
+<rect width="1000" height="440" fill="#ffffff"/>
+<rect x="0" y="0" width="1000" height="440" fill="none"/>
+<rect x="30" y="70" width="270" height="130" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="30" y="70" width="270" height="6" rx="3" fill="#4c78a8"/>
+<text x="165.0" y="104" font-size="17" font-weight="600" fill="#1f2937" text-anchor="middle">Project requirements</text>
+<text x="165.0" y="136" font-size="13" fill="#4b5563" text-anchor="middle">mise.toml · .tool-versions</text>
+<text x="165.0" y="162" font-size="13" fill="#4b5563" text-anchor="middle">.nvmrc · Node engines</text>
+<rect x="30" y="250" width="270" height="130" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="30" y="250" width="270" height="6" rx="3" fill="#4c78a8"/>
+<text x="165.0" y="284" font-size="17" font-weight="600" fill="#1f2937" text-anchor="middle">Installed copies</text>
+<text x="165.0" y="316" font-size="13" fill="#4b5563" text-anchor="middle">PATH · ~/toolchains</text>
+<text x="165.0" y="342" font-size="13" fill="#4b5563" text-anchor="middle">mise installs · manual entries</text>
+<rect x="380" y="110" width="260" height="210" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="380" y="110" width="260" height="6" rx="3" fill="#dc2626"/>
+<text x="510.0" y="144" font-size="17" font-weight="600" fill="#1f2937" text-anchor="middle">toolkit-map find</text>
+<text x="510.0" y="176" font-size="13" fill="#4b5563" text-anchor="middle">Read project requirements</text>
+<text x="510.0" y="202" font-size="13" fill="#4b5563" text-anchor="middle">Scan copies + verify versions</text>
+<text x="510.0" y="228" font-size="13" fill="#4b5563" text-anchor="middle">Return absolute path + status</text>
+<rect x="720" y="110" width="250" height="210" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="720" y="110" width="250" height="6" rx="3" fill="#16a34a"/>
+<text x="845.0" y="144" font-size="17" font-weight="600" fill="#1f2937" text-anchor="middle">AI coding agent</text>
+<text x="845.0" y="176" font-size="13" fill="#4b5563" text-anchor="middle">Gets path / version / verification</text>
+<text x="845.0" y="202" font-size="13" fill="#4b5563" text-anchor="middle">Calls the tool by absolute path</text>
+<text x="845.0" y="228" font-size="13" fill="#4b5563" text-anchor="middle">No guessing when no copy matches</text>
+<line x1="300" y1="135" x2="370" y2="180" stroke="#94a3b8" stroke-width="2"/>
+<polygon points="378,180 368,175 368,185" fill="#94a3b8"/>
+<line x1="300" y1="315" x2="370" y2="260" stroke="#94a3b8" stroke-width="2"/>
+<polygon points="378,260 368,255 368,265" fill="#94a3b8"/>
+<line x1="640" y1="215" x2="710" y2="215" stroke="#94a3b8" stroke-width="2"/>
+<polygon points="718,215 708,210 708,220" fill="#94a3b8"/>
+<text x="500.0" y="410" font-size="13" fill="#6b7280" text-anchor="middle">Read-only lookup: no installs, no PATH changes, no version guessing; install is always explicit</text>
+</svg>

@@ -619,12 +619,44 @@ function Invoke-Doctor {
     $rulesPath = Get-RulesPath
     $rules = if ([IO.File]::Exists($rulesPath)) { [IO.File]::ReadAllText($rulesPath) } else { '' }
     $checks.Add(@{ name = 'integration'; ok = ($rules -match '(?s)<!-- toolkit-map:begin -->.*?<!-- toolkit-map:end -->' -and $rules.Contains($script:MapScriptPath)); detail = $rulesPath })
+    $state = $null
     if ($map) {
         $state = Invoke-Status
         $checks.Add(@{ name = 'freshness'; ok = (-not $state.stale -and -not $state.pathChanged -and $state.deadCandidates -eq 0); detail = $state.hint })
         $blocked = @($map.tools.Values | ForEach-Object { $_.candidates } | Where-Object { $_.verification -ne 'verified' }).Count
     } else { $blocked = 0 }
     $ok = @($checks | Where-Object { -not $_.ok }).Count -eq 0
-    return (New-MapResult $(if ($ok) { 'ok' } else { 'attention_required' }) @{ checks = $checks.ToArray(); unverifiedCandidates = $blocked; agentVerified = $false;
-        hint = 'doctor 只检查本机配置；用一次真实的工具查询验证 agent 行为。' } $ok)
+    $fields = @{ checks = $checks.ToArray(); unverifiedCandidates = $blocked; agentVerified = $false; hint = 'doctor 只检查本机配置；用一次真实的工具查询验证 agent 行为。' }
+    if ($Bundle) {
+        $warnings = @()
+        if ($map -and $map.censusSummary) { $warnings = @($map.censusSummary.warnings) }
+        $fields.bundle = @{
+            formatVersion = 1
+            generatedAt = (Get-Date).ToString('o')
+            version = Get-ToolkitVersion
+            checks = $checks.ToArray()
+            host = @{
+                psVersion = $PSVersionTable.PSVersion.ToString()
+                psEdition = "$($PSVersionTable.PSEdition)"
+                os = [Environment]::OSVersion.VersionString
+                is64BitProcess = [Environment]::Is64BitProcess
+            }
+            rulesFile = $rulesPath
+            map = @{
+                exists = [bool]$map
+                file = Get-MapPath
+                tools = if ($map) { $map.tools.Count } else { 0 }
+                scannedAt = if ($map) { $map.scannedAt } else { $null }
+                updatedAt = if ($map) { $map.updatedAt } else { $null }
+                ageHours = if ($state) { $state.ageHours } else { $null }
+                stale = if ($state) { $state.stale } else { $null }
+                pathChanged = if ($state) { $state.pathChanged } else { $null }
+                deadCandidates = if ($state) { $state.deadCandidates } else { $null }
+                warnings = $warnings
+            }
+            unverifiedCandidates = $blocked
+            agentVerified = $false
+        }
+    }
+    return (New-MapResult $(if ($ok) { 'ok' } else { 'attention_required' }) $fields $ok)
 }

@@ -1,0 +1,56 @@
+name: Release
+
+# 只在版本标签上发布：标签必须与 VERSION 完全一致，先跑文档/契约检查，
+# 再由 scripts/build-release.ps1 从标签内容生成运行时包（剥离顶层 tests/ 与 CI），
+# Release 只上传这个 ZIP 与 SHA256；完整源码由 GitHub 自动提供。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 标签与 VERSION 一致
+        shell: powershell
+        run: |
+          $tag = "$env:GITHUB_REF_NAME".TrimStart('v')
+          $version = (Get-Content -LiteralPath VERSION -Raw -Encoding UTF8).Trim()
+          if ($tag -ne $version) { throw "标签 v$tag 与 VERSION $version 不一致" }
+
+      - name: 发布前静态检查
+        shell: powershell
+        run: |
+          .\tests\check-docs.ps1
+          .\tests\check-encodings.ps1
+          .\tests\check-contract.ps1
+
+      - name: 构建运行时包
+        shell: powershell
+        run: .\scripts\build-release.ps1 -OutputDir dist
+
+      - name: 创建 GitHub Release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content -LiteralPath VERSION -Raw -Encoding UTF8).Trim()
+          $zip = Join-Path (Join-Path $PWD 'dist') "toolkit-map-v$version-runtime.zip"
+          $sha = "$zip.sha256"
+          $notes = @"
+          toolkit-map v$version
+
+          下载 toolkit-map-v$version-runtime.zip 即可运行（含 scripts、MCP、schema 与文档；不含顶层 tests/ 与 CI）。
+          SHA256 见同名 .sha256 文件；需要浏览完整源码时使用本页下方的 Source code (zip)。
+          安装与接入见 README，兼容承诺见 docs/contract.md。
+          "@
+          gh release create "v$version" $zip $sha --title "v$version" --notes $notes --verify-tag

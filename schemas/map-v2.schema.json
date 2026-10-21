@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/haxsd/toolkit-map/schemas/map-v2.schema.json",
+  "title": "toolkit-map storage v2",
+  "description": "Frozen at toolkit-map 1.0.0. The map stores machine facts and path preferences; project selection is computed by find.",
+  "type": "object",
+  "required": ["schemaVersion", "tools"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "scannedAt": { "type": ["string", "null"] },
+    "updatedAt": { "type": ["string", "null"] },
+    "warehouse": { "type": "string" },
+    "pathSnapshot": { "type": "string" },
+    "censusSummary": { "type": "object" },
+    "tools": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9._+-]*$" },
+      "additionalProperties": { "$ref": "#/$defs/toolEntry" }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "toolEntry": {
+      "type": "object",
+      "required": ["candidates"],
+      "properties": {
+        "preferred": { "type": "string" },
+        "preferredPath": { "type": "string" },
+        "candidates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/candidate" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "candidate": {
+      "type": "object",
+      "required": ["path", "version", "source", "verification", "isShim", "usable", "reachable", "checkedAt", "size", "modifiedAt", "note"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^path-[0-9a-f]{64}$" },
+        "path": { "type": "string" },
+        "version": { "type": "string" },
+        "source": { "type": "string" },
+        "verification": { "type": "string", "enum": ["verified", "unverified", "unavailable", "skipped"] },
+        "usable": { "type": ["boolean", "null"] },
+        "reachable": { "type": "boolean" },
+        "isShim": { "type": "boolean" },
+        "checkedAt": { "type": "string" },
+        "size": { "type": "integer" },
+        "modifiedAt": { "type": "string" },
+        "note": { "type": "string" },
+        "userNote": { "type": "string" },
+        "registered": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

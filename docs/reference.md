@@ -2,6 +2,8 @@
 
 首次配置前端请先看 [agent 接入指南](agent-integration.md)：全局与项目规则是不同接入范围，`setup -RulesFile` 只维护本地文件，Cursor 账号内的 User Rules 需要手工粘贴。Cursor `.mdc` 文件应先具备有效 frontmatter，`setup` 不生成该头部。
 
+自 1.0.0 起，本页的 JSON result v2 与地图存储 v2 已冻结；兼容、弃用与状态枚举承诺见 [v1.0 契约冻结](contract.md)。
+
 ## 命令与结果
 
 `map.ps1 <动作> [工具] [参数]`。完整地图动作支持 Windows PowerShell 5.1 和 PowerShell 7。
@@ -9,7 +11,7 @@
 | 动作 | 参数 | 行为 |
 |---|---|---|
 | `setup` | `-Project <目录>`、`-RulesFile <文件>`、`-WhatIf` | 地图不存在时首次扫描；生成接入规则；保留已有文件内容、修改前备份；重复执行幂等 |
-| `doctor` | `-Project`、`-RulesFile` | 只读检查宿主、地图、新鲜度与接入文件 |
+| `doctor` | `-Project`、`-RulesFile`、`-Bundle` | 只读检查宿主、地图、新鲜度与接入文件；`-Bundle` 附带可提交 issue 的宿主/地图摘要 |
 | `scan` | `-Throttle`（默认 min(8, CPU 数)） | 调用 census，合并仍存在的已有登记，再完整重扫；各候选的版本探测先并行跑完再按原顺序建图，`-Throttle 1` 为串行，结果相同；结果附带计量字段 probeStats（见“扫描内核”） |
 | `status` | `-MaxAgeHours`（默认 24） | 完整扫描年龄、最近更新、失效文件数、PATH 变化 |
 | `find` | `<工具>`、`-Project`、`-Version`、`-SkipScan` | 按当前或指定项目声明动态选择；不匹配不降级；没有合适候选时可做限定范围现场搜索 |
@@ -67,6 +69,8 @@
 
 `found` 表示选到了符合当前策略的候选。检查 `ok`、`verification` 和 `requirement` 后再执行。`search.complete:false` 明确表示不是穷尽全盘搜索。
 
+完整状态枚举（含安装与输入错误）与兼容承诺见 [v1.0 契约冻结](contract.md) 和 [`schemas/statuses.json`](../schemas/statuses.json)。
+
 ## 声明与选择
 
 优先级：`-Version` > 最近项目声明 > 父目录声明 > 全局声明。同一目录依次读取 mise.toml、.mise.toml、.tool-versions、.nvmrc、.node-version、.python-version、package.json engines。
@@ -80,6 +84,20 @@
 例如 `[tools.node]`、`[[tools.node]]` 与内联工具表都返回 `requirement_unsupported`，不会忽略项目要求后退回全局版本。可改为支持的 `[tools]` 字符串声明，或明确提供 `-Version`。
 
 选取步骤：排除 shim、不可用文件、默认不允许的未验证/IDE/conda-env 副本 → 筛选项目要求 → 显式路径偏好 → 已验证 → 仓库 → PATH 可达 → 来源 → 版本 → 路径确定性排序。用户偏好不能绕过版本要求和护栏。
+
+## MCP 适配器
+
+`mcp/server.mjs` 是零依赖的 Node 18+ stdio 适配器，只暴露三个只读工具，内部调用本页的 `map.ps1 -Json`：
+
+| 工具 | 对应动作 | 说明 |
+|---|---|---|
+| `toolkit_find` | `find` | `tool` 必填；`project`、`version` 可选 |
+| `toolkit_status` | `status` | 无参数 |
+| `toolkit_doctor` | `doctor` | `project`、`rulesFile` 可选 |
+
+返回的 `structuredContent` 是地图结果对象本身；`ok:false` 时 MCP 工具结果同时带 `isError:true`，不降级、不安装。`install` / `add` / `scan` / `update` 不通过 MCP 暴露。
+
+协议同时支持旧会话 `initialize`（2024-11-05 至 2025-11-25）与新会话 `2026-07-28` 的 `server/discover`；stdio 每行一个 JSON-RPC 消息，stdout 不输出日志。配置位置、环境变量与排查见 [MCP 接入](mcp.md)。
 
 ## 地图存储 v2
 

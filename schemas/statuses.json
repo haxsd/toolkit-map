@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 2,
+  "statuses": {
+    "ok": {
+      "kind": "success",
+      "summary": "动作成功；find 返回符合策略的已验证候选。"
+    },
+    "planned": {
+      "kind": "plan",
+      "summary": "WhatIf 计划；未执行变更，也未联网。"
+    },
+    "already_available": {
+      "kind": "success",
+      "summary": "已有合适的已验证副本，复用而不重复安装。"
+    },
+    "unverified": {
+      "kind": "selection",
+      "summary": "用户显式允许未验证候选；不能报告为已验证。"
+    },
+    "not_found": {
+      "kind": "selection",
+      "summary": "本次搜索范围未发现副本，不代表全盘不存在。"
+    },
+    "no_usable_candidate": {
+      "kind": "selection",
+      "summary": "存在副本，但没有符合选择策略的可用候选。"
+    },
+    "version_mismatch": {
+      "kind": "selection",
+      "summary": "没有满足要求的已验证副本，或下载版本不符。"
+    },
+    "requirement_unsupported": {
+      "kind": "selection",
+      "summary": "声明或版本表达式无法判定，需要显式版本或管理器处理。"
+    },
+    "map_missing": {
+      "kind": "map",
+      "summary": "地图不存在；需要 setup 或 scan。"
+    },
+    "map_corrupt": {
+      "kind": "map",
+      "summary": "地图无法解析；不会覆盖损坏文件。"
+    },
+    "schema_unsupported": {
+      "kind": "map",
+      "summary": "地图格式版本不受支持；不会覆盖原文件。"
+    },
+    "map_busy": {
+      "kind": "map",
+      "summary": "其他进程持有地图更新锁；可重试。"
+    },
+    "attention_required": {
+      "kind": "diagnostic",
+      "summary": "doctor 有检查项未通过。"
+    },
+    "operation_failed": {
+      "kind": "failure",
+      "summary": "未分类异常；message 保留原因。"
+    },
+    "checksum_unavailable": {
+      "kind": "install",
+      "summary": "取不到官方 SHA256；未下载。"
+    },
+    "checksum_conflict": {
+      "kind": "install",
+      "summary": "给定 SHA256 与官方值冲突；未下载。"
+    },
+    "version_unavailable": {
+      "kind": "install",
+      "summary": "固定版本配方不提供所请求的版本。"
+    },
+    "installed_not_discovered": {
+      "kind": "install",
+      "summary": "安装完成但未发现可执行文件；不能报告为完整成功。"
+    },
+    "installed_ambiguous": {
+      "kind": "install",
+      "summary": "安装后发现多个新文件；不猜测，需 add 登记。"
+    },
+    "installer_missing": {
+      "kind": "install",
+      "summary": "找不到可直接调用的安装器。"
+    },
+    "asset_missing": {
+      "kind": "install",
+      "summary": "发布中缺少所需资产。"
+    },
+    "executable_missing": {
+      "kind": "install",
+      "summary": "归档中缺少可执行文件。"
+    },
+    "probe_failed": {
+      "kind": "install",
+      "summary": "版本探测失败；安装或验证未完成。"
+    },
+    "environment_internal": {
+      "kind": "input",
+      "summary": "依赖特定环境的路径不进入地图。"
+    },
+    "invalid_action": {
+      "kind": "input",
+      "summary": "未知动作。"
+    },
+    "invalid_argument": {
+      "kind": "input",
+      "summary": "参数缺失、格式错误或名称不合法。"
+    },
+    "invalid_path": {
+      "kind": "input",
+      "summary": "路径不存在、越界或不能用于该动作。"
+    },
+    "invalid_project": {
+      "kind": "input",
+      "summary": "项目目录不存在。"
+    },
+    "rules_invalid": {
+      "kind": "input",
+      "summary": "接入规则标记不完整；setup 不会覆盖。"
+    },
+    "scan_failed": {
+      "kind": "failure",
+      "summary": "扫描内核失败或未返回有效 JSON。"
+    }
+  }
+}

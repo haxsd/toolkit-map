@@ -39,7 +39,8 @@ param(
 
     [switch]$Json,                           # 机器可读输出（agent 用这个）
     [switch]$SkipScan,                       # find 用：地图里没有时不去现场搜
-    [switch]$WhatIf                          # install 用：只打印要做什么
+    [switch]$WhatIf,                         # install 用：只打印要做什么
+    [switch]$Bundle                          # doctor 用：附带可提交 issue 的脱敏摘要
 )
 
 $ErrorActionPreference = 'Stop'
@@ -552,7 +553,7 @@ try {
         'install' { Invoke-Install }
         'setup'   { Invoke-Setup }
         'doctor'  { Invoke-Doctor }
-        'help'    { New-MapResult 'ok' @{ version = (Get-ToolkitVersion); actions = @('setup', 'doctor', 'scan', 'status', 'find', 'add', 'update', 'install'); hint = 'find <工具> [-Project <目录>] [-Version <版本>] -Json；setup [-Project <目录>] [-WhatIf]' } }
+        'help'    { New-MapResult 'ok' @{ version = (Get-ToolkitVersion); actions = @('setup', 'doctor', 'scan', 'status', 'find', 'add', 'update', 'install'); hint = 'find <工具> [-Project <目录>] [-Version <版本>] -Json；setup [-Project <目录>] [-WhatIf]；doctor [-Project <目录>] [-Bundle]' } }
         default   { Throw-MapError 'invalid_action' "未知动作：$Action；执行 help 查看用法。" }
     }
     if ($null -eq $result) { $result = New-MapResult 'ok' @{ mapFile = Get-MapPath } }
