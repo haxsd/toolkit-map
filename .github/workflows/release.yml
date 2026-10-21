@@ -53,4 +53,6 @@ jobs:
           SHA256 见同名 .sha256 文件；需要浏览完整源码时使用本页下方的 Source code (zip)。
           安装与接入见 README，兼容承诺见 docs/contract.md。
           "@
-          gh release create "v$version" $zip $sha --title "v$version" --notes $notes --verify-tag
+          $notesPath = Join-Path $PWD 'release-notes.md'
+          [IO.File]::WriteAllText($notesPath, $notes, (New-Object Text.UTF8Encoding($false)))
+          gh release create "v$version" $zip $sha --title "v$version" --notes-file $notesPath --verify-tag
