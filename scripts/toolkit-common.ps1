@@ -158,6 +158,7 @@ $script:ToolkitProbeWorker = {
         $psi.RedirectStandardError = $true
         $psi.UseShellExecute = $false
         $psi.CreateNoWindow = $true
+        $psi.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
         # 探测不该触发 mise 的自动安装 / 自动更新，结果也才可复现
         $psi.EnvironmentVariables['MISE_AUTO_INSTALL'] = '0'
         $psi.EnvironmentVariables['MISE_NOT_FOUND_AUTO_INSTALL'] = '0'
@@ -182,6 +183,7 @@ $script:ToolkitProbeWorker = {
                     $tk.Arguments = '/PID ' + $p.Id + ' /T /F'
                     $tk.UseShellExecute = $false
                     $tk.CreateNoWindow = $true
+                    $tk.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
                     $tkp = [Diagnostics.Process]::Start($tk)
                     $killed = $tkp.WaitForExit(5000)
                     $tkp.Dispose()

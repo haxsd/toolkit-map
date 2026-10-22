@@ -1,5 +1,11 @@
 # 更新记录
 
+## v1.1.2 — 隐藏后台子进程窗口
+
+- MCP 运行器启动 PowerShell 时增加 `-WindowStyle Hidden`，并显式使用 `windowsHide: true`、`shell: false`；taskkill 同样隐藏。
+- 版本探测的 `ProcessStartInfo` 与超时清理的 taskkill 增加 `WindowStyle = Hidden`；`quickstart`、`demo`、`build-release` 的子 PowerShell 也使用隐藏窗口。
+- 不改变扫描、选择、安装或 MCP 契约；只修复后台调用时可能一闪而过的控制台窗口。
+
 ## v1.1.1 — 发布流程与社区文件收尾
 
 - 纯补丁版本，无运行时行为变更：让最新标签同时包含发布说明、贡献入口、安全策略、行为准则与 PR 模板。

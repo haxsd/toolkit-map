@@ -50,7 +50,7 @@ try {
     # 从打包结果本身跑一次 help，确认脚本与 VERSION 等依赖没有漏装。
     if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
         $hostPath = (Get-Process -Id $PID).Path
-        $helpOutput = & $hostPath -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $extract 'scripts\map.ps1') help -Json
+        $helpOutput = & $hostPath -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File (Join-Path $extract 'scripts\map.ps1') help -Json
         $help = $helpOutput | Out-String | ConvertFrom-Json
         if ($LASTEXITCODE -ne 0 -or -not $help.ok) { throw '打包后的 map.ps1 help 失败' }
     }

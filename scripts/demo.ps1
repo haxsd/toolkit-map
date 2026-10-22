@@ -16,7 +16,7 @@ $powerShell = (Get-Process -Id $PID).Path
 
 function Invoke-DemoMap {
     param([string[]]$Arguments, [switch]$AllowFailure)
-    $output = & $powerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $mapPath @Arguments -MapFile $mapFile -Json
+    $output = & $powerShell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File $mapPath @Arguments -MapFile $mapFile -Json
     $parsed = $output | Out-String | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -and -not $AllowFailure) { throw "地图动作失败：$($Arguments -join ' ')" }
     return $parsed

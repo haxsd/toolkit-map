@@ -40,7 +40,7 @@ export function buildInvocation(action, options = {}, config = {}) {
   const script = config.script || env.TOOLKIT_MAP_SCRIPT || defaultMapScript();
   const host = config.powershell || defaultPowerShell(platform, env);
   const mapFile = config.mapFile ?? env.TOOLKIT_MAP_FILE ?? '';
-  const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script];
+  const args = ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', script];
 
   switch (action) {
     case 'find':
@@ -77,6 +77,7 @@ function killTree(child, platform) {
     if (platform === 'win32' && child.pid) {
       const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
         windowsHide: true,
+        shell: false,
         stdio: 'ignore'
       });
       killer.on('error', () => {});
@@ -155,6 +156,7 @@ export function runMap(action, options = {}, config = {}) {
     try {
       child = spawnImpl(invocation.command, invocation.args, {
         windowsHide: true,
+        shell: false,
         stdio: ['ignore', 'pipe', 'pipe']
       });
     } catch (error) {
