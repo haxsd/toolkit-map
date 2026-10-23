@@ -6,7 +6,9 @@
 <!-- toolkit-map:begin -->
 ## 本机工具发现
 
-调用本机工具前，先查询工具地图。地图脚本绝对路径：C:/Users/YOUR_USER/Projects/toolkit-map/scripts/map.ps1。
+**优先使用 MCP**：如果当前客户端已经提供 `toolkit_find` / `toolkit_status` / `toolkit_doctor` 工具，直接调用这些工具，不要为同样的查询再启动 PowerShell 执行 `map.ps1`。下面的脚本命令只在 MCP 不可用时作为回退；这样也能避免每次查询都经过宿主终端。
+
+调用本机工具前，先查询工具地图。MCP 不可用时，地图脚本绝对路径：C:/Users/YOUR_USER/Projects/toolkit-map/scripts/map.ps1。
 
 在 PowerShell 中执行（每次将项目参数替换成当前项目目录）：
 

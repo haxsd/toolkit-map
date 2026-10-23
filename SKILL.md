@@ -11,6 +11,8 @@ description: "AI agent 的本机工具发现与选择层：调用工具前查询
 
 客户端支持 MCP 时，优先配置 `mcp/server.mjs`：它暴露 `toolkit_find` / `toolkit_status` / `toolkit_doctor` 三个只读工具，直接调用同一份 `map.ps1 -Json`，不依赖模型记住规则文件。配置与验收见 [MCP 接入](docs/mcp.md)；规则文件仍可作为回退，两者可以同时启用。
 
+**有 MCP 工具时，不要再用 shell 执行 `map.ps1` 做同样的查询**；直接用 MCP 工具。只有 MCP 不可用时，才按下面的脚本流程回退。这样既少一层参数拼接，也避免每次查询都经过宿主终端。
+
 ## 调用流程
 
 Windows 策略禁止直接执行脚本时，用当前 PowerShell 宿主以 `-NoProfile -ExecutionPolicy Bypass -File <地图脚本绝对路径> <动作与参数>` 单次调用；不修改全局执行策略，遵循组织组策略。
