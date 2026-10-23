@@ -27,7 +27,7 @@ $Project = [IO.Path]::GetFullPath($Project)
 
 function Invoke-Map {
     param([string[]]$Arguments)
-    $output = & $powerShell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File $mapPath @Arguments -Json
+    $output = & $powerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $mapPath @Arguments -Json
     $parsed = $output | Out-String | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or -not $parsed.ok) {
         $detail = if ($parsed.message) { $parsed.message } else { $parsed.status }
@@ -116,7 +116,7 @@ Write-Host "  源码：$repoRoot" -ForegroundColor DarkGray
 Write-Host ''
 Write-Host '  [1/2] 项目规则与地图' -ForegroundColor Cyan
 if ($WhatIf) {
-    $preview = & $powerShell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File $mapPath setup -Project $Project -WhatIf -Json
+    $preview = & $powerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $mapPath setup -Project $Project -WhatIf -Json
     $parsedPreview = $preview | Out-String | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or -not $parsedPreview.ok) { throw "预览失败：$($parsedPreview.message)" }
     Write-Host "  将写入：$($parsedPreview.rulesFile)" -ForegroundColor Yellow

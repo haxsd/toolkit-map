@@ -40,7 +40,7 @@ export function buildInvocation(action, options = {}, config = {}) {
   const script = config.script || env.TOOLKIT_MAP_SCRIPT || defaultMapScript();
   const host = config.powershell || defaultPowerShell(platform, env);
   const mapFile = config.mapFile ?? env.TOOLKIT_MAP_FILE ?? '';
-  const args = ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', script];
+  const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script];
 
   switch (action) {
     case 'find':
@@ -76,7 +76,7 @@ function killTree(child, platform) {
   try {
     if (platform === 'win32' && child.pid) {
       const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-        windowsHide: true,
+        windowsHide: false,
         shell: false,
         stdio: 'ignore'
       });
@@ -155,7 +155,8 @@ export function runMap(action, options = {}, config = {}) {
     let child;
     try {
       child = spawnImpl(invocation.command, invocation.args, {
-        windowsHide: true,
+        // 继承 MCP server 已有的隐藏控制台，不创建新的 conhost。
+        windowsHide: false,
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe']
       });

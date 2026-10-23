@@ -1,5 +1,12 @@
 # 更新记录
 
+## v1.1.3 — 避免为每次 MCP 调用创建新控制台
+
+- MCP 子 PowerShell 改为继承 MCP server 已有的隐藏控制台：`windowsHide: false`，不再为每次 `toolkit_find` / `toolkit_status` 新建 `conhost.exe`；移除 `-WindowStyle Hidden`，避免隐藏共享控制台。
+- 版本探测与超时清理的 `ProcessStartInfo` 改为 `CreateNoWindow = false`，继承当前 PowerShell 的控制台；不再为每次探测创建新的隐藏控制台。
+- `quickstart`、`demo`、`build-release` 的子 PowerShell 不再强制隐藏窗口，沿用调用者已有的控制台。
+- 不改变扫描、选择、安装或 MCP 契约；修复的是后台调用时控制台窗口一闪而过的来源。
+
 ## v1.1.2 — 隐藏后台子进程窗口
 
 - MCP 运行器启动 PowerShell 时增加 `-WindowStyle Hidden`，并显式使用 `windowsHide: true`、`shell: false`；taskkill 同样隐藏。

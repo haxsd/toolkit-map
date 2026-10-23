@@ -59,7 +59,7 @@ test('buildInvocation uses an argument array and the map contract order', () => 
 
   assert.equal(invocation.command, 'powershell.exe');
   assert.deepEqual(invocation.args, [
-    '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-File', 'C:\\repo\\scripts\\map.ps1',
     'find', 'node',
     '-Project', 'C:\\work\\app',
@@ -75,7 +75,7 @@ test('buildInvocation omits empty optional values', () => {
     powershell: 'pwsh'
   });
   assert.deepEqual(invocation.args, [
-    '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-File', '/repo/scripts/map.ps1',
     'status',
     '-Json'
@@ -108,7 +108,7 @@ test('runMap parses one JSON object and strips a UTF-8 BOM', async (t) => {
   assert.deepEqual(result, payload);
   assert.equal(calls[0].command, 'fake-powershell');
   assert.equal(calls[0].options.shell, false);
-  assert.equal(calls[0].options.windowsHide, true);
+  assert.equal(calls[0].options.windowsHide, false);
   assert.deepEqual(calls[0].options.stdio, ['ignore', 'pipe', 'pipe']);
 });
 

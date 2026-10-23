@@ -157,8 +157,8 @@ $script:ToolkitProbeWorker = {
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
         $psi.UseShellExecute = $false
-        $psi.CreateNoWindow = $true
-        $psi.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+        # 继承当前 PowerShell 已有的控制台，避免为每次探测新建 conhost。
+        $psi.CreateNoWindow = $false
         # 探测不该触发 mise 的自动安装 / 自动更新，结果也才可复现
         $psi.EnvironmentVariables['MISE_AUTO_INSTALL'] = '0'
         $psi.EnvironmentVariables['MISE_NOT_FOUND_AUTO_INSTALL'] = '0'
@@ -182,8 +182,7 @@ $script:ToolkitProbeWorker = {
                     $tk.FileName = 'taskkill.exe'
                     $tk.Arguments = '/PID ' + $p.Id + ' /T /F'
                     $tk.UseShellExecute = $false
-                    $tk.CreateNoWindow = $true
-                    $tk.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+                    $tk.CreateNoWindow = $false
                     $tkp = [Diagnostics.Process]::Start($tk)
                     $killed = $tkp.WaitForExit(5000)
                     $tkp.Dispose()
