@@ -370,7 +370,7 @@ function Select-Preferred {
     $list = @($Candidates | Where-Object {
         -not $_.isShim -and -not (Test-IsShimPath $_.path) -and -not (Test-IsEnvInternal $_.path) -and $_.source -ne 'conda-env' -and
         ($_.source -ne 'ide-host' -or $AllowIdeHost) -and $_.verification -ne 'unavailable' -and
-        ($_.verification -eq 'verified' -or ($AllowUnverified -and $_.verification -eq 'unverified')) -and
+        ($_.verification -eq 'verified') -and
         (Test-CandidateRequirement $_ $wanted $Name)
     })
     if ($list.Count -eq 0) { return '' }

@@ -202,6 +202,19 @@ jobs:
         if: runner.os == 'Windows'
         run: node --test mcp/test/integration.test.mjs mcp/test/maintenance-integration.test.mjs
 
+  mcp-minimum-node:
+    # package.json 声明 engines >=18，这里用声明的最低版本跑一遍单元测试，
+    # 避免“声明支持 18、CI 只验证 22”。真实地图集成测试仍只在 Windows + Node 22 跑。
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: MCP 单元测试（声明的最低 Node）
+        run: node --test mcp/test/protocol.test.mjs mcp/test/runner.test.mjs mcp/test/server.test.mjs mcp/test/maintenance.test.mjs mcp/test/contract.test.mjs
+
   windows-baseline:
     # 收敛计划 P1 起：首扫基线。真实 runner 上用临时地图跑 map.ps1 scan，
     # 把墙钟时间与进程启动次数打成 ::notice 注解和 step summary（只量不判，不设阈值）。
