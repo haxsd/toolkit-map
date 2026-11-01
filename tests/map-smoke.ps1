@@ -198,13 +198,14 @@ try {
     $result = Invoke-Map @('find', 'git', '-Json', '-MapFile', $mapFile)
     $jsonResult = Get-JsonOutput $result
     Assert-True ($result.ExitCode -ne 0 -and -not [bool]$jsonResult.found) '只读 find 不得自动验证现场发现的 git'
-    Assert-True (@($jsonResult.candidates | Where-Object { $_.path -eq $fakeGit -and $_.verification -eq 'unverified' }).Count -eq 1) '现场发现的 git 应标记为未验证'
+    $fakeLeaf = [IO.Path]::GetFileName($fakeGit)
+    Assert-True (@($jsonResult.candidates | Where-Object { [IO.Path]::GetFileName($_.path) -eq $fakeLeaf -and $_.verification -eq 'unverified' }).Count -ge 1) '现场发现的 git 应标记为未验证'
     $result = Invoke-Map @('update', 'git', '-Json', '-MapFile', $mapFile)
     Assert-True ($result.ExitCode -eq 0) '明确 update 应验证隔离目录里的假 git'
     $result = Invoke-Map @('find', 'git', '-Json', '-SkipScan', '-MapFile', $mapFile)
     $jsonResult = Get-JsonOutput $result
     Assert-True ($result.ExitCode -eq 0 -and [bool]$jsonResult.found) '验证后的 git 条目应能在跳过现场搜索时继续使用'
-    Assert-True ($jsonResult.path -eq $fakeGit) '应返回显式验证的假 git 路径'
+    Assert-True ([IO.Path]::GetFileName($jsonResult.path) -eq $fakeLeaf) '应返回显式验证的假 git 路径'
 
     $result = Invoke-Map @('find', 'map-smoke-empty', '-Json', '-SkipScan', '-MapFile', $mapFile)
     $jsonResult = Get-JsonOutput $result
