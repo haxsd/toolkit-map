@@ -89,9 +89,6 @@ jobs:
       - name: 项目选择与接入契约（PowerShell 5.1）
         shell: powershell
         run: .\tests\map-contract.ps1
-      - name: 项目选择与接入契约（PowerShell 7）
-        shell: pwsh
-        run: .\tests\map-contract.ps1
       - name: 版本比较与排序（PowerShell 5.1）
         shell: powershell
         run: .\tests\version-contract.ps1
@@ -146,6 +143,15 @@ jobs:
           }
           exit $code
 
+  windows-ps7:
+    # 从 windows job 拆出来并行跑的两个最慢的 PowerShell 7 步骤（各约 2-3 分钟），覆盖不变，只缩短总耗时。
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: 项目选择与接入契约（PowerShell 7）
+        shell: pwsh
+        run: .\tests\map-contract.ps1
       # 同一份测试再用 PowerShell 7 跑：parity.ps1 用当前宿主启动 census.ps1，
       # 这一步覆盖 census.ps1 在 PS7 下的行为（地图动作在 PS7 下调用的就是它）。
       - name: 一致性测试（PowerShell 7 宿主）
