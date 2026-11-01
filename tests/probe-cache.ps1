@@ -40,11 +40,7 @@ try {
 
     $n0 = Get-Launches
     $r1 = Invoke-ToolkitProbe $tool @('--version')
-    $probeDetail = "ok=$($r1.ok) exit=$($r1.exitCode) out=$($r1.stdout) reason=$($r1.reason) launches=$((Get-Launches) - $n0)"
-    if (-not $onWindows -and -not $r1.ok) {
-        $probeDetail += " fileResolved=$([bool](Resolve-ToolkitProbePath $tool)) shellResolved=$([bool](Resolve-ToolkitProbePath '/bin/sh')) shellSafe=$(Test-ToolkitProbeSafe '/bin/sh')"
-    }
-    Check '首次探测启动一次进程并拿到输出' ($r1.ok -and $r1.exitCode -eq 0 -and $r1.stdout -match 'faketool 1\.0\.0' -and -not $r1.cached -and (Get-Launches) -eq $n0 + 1) $probeDetail
+    Check '首次探测启动一次进程并拿到输出' ($r1.ok -and $r1.exitCode -eq 0 -and $r1.stdout -match 'faketool 1\.0\.0' -and -not $r1.cached -and (Get-Launches) -eq $n0 + 1) "ok=$($r1.ok) exit=$($r1.exitCode) out=$($r1.stdout) reason=$($r1.reason) launches=$((Get-Launches) - $n0)"
 
     $n1 = Get-Launches
     $r2 = Invoke-ToolkitProbe $tool @('--version')

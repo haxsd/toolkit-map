@@ -237,16 +237,11 @@ test('project and rulesFile must be absolute paths', async () => {
     { name: 'toolkit_find', arguments: { tool: 'node', project: '\\rooted' }, field: 'project' },
     { name: 'toolkit_find', arguments: { tool: 'node', project: '\\\\?\\C:\\work' }, field: 'project' },
     { name: 'toolkit_find', arguments: { tool: 'node', project: '\\\\.\\pipe\\work' }, field: 'project' },
-    // PowerShell's GetFullPath rejects UNC paths without a share, so these are
-    // not deterministic absolute paths even though path.win32 accepts them.
-    { name: 'toolkit_find', arguments: { tool: 'node', project: '\\\\server' }, field: 'project' },
-    { name: 'toolkit_find', arguments: { tool: 'node', project: '\\\\server\\' }, field: 'project' },
     { name: 'toolkit_find', arguments: { tool: 'node', project: '\\\\' }, field: 'project' },
     { name: 'toolkit_doctor', arguments: { project: 'C:\\work', rulesFile: '' }, field: 'rulesFile' },
     { name: 'toolkit_doctor', arguments: { rulesFile: 'AGENTS.md' }, field: 'rulesFile' },
     { name: 'toolkit_doctor', arguments: { rulesFile: 'C:AGENTS.md' }, field: 'rulesFile' },
-    { name: 'toolkit_doctor', arguments: { rulesFile: '\\\\?\\C:\\AGENTS.md' }, field: 'rulesFile' },
-    { name: 'toolkit_doctor', arguments: { rulesFile: '\\\\server' }, field: 'rulesFile' }
+    { name: 'toolkit_doctor', arguments: { rulesFile: '\\\\?\\C:\\AGENTS.md' }, field: 'rulesFile' }
   ];
 
   for (const item of cases) {

@@ -1,11 +1,9 @@
-import { isDeterministicAbsolutePath, MapRunError, normalizeAddExecutablePath, resolveMapTarget } from './runner.mjs';
 import {
   INSTRUCTIONS,
   LEGACY_PROTOCOL_VERSIONS,
   MODERN_PROTOCOL_VERSION,
   SERVER_NAME,
   SERVER_TITLE,
-  STATUS_VALUES,
   TOOLS,
   findTool
 } from './tools.mjs';
@@ -16,7 +14,6 @@ const MAX_VERSION_LENGTH = 128;
 const MAX_NOTE_LENGTH = 4000;
 const TOOL_NAME_PATTERN = /^[a-z0-9][a-z0-9._+-]*$/;
 const ACTION_PATTERN = /^[a-z][a-z0-9_-]*$/;
-const STATUS_PATTERN = /^[a-z][a-z0-9_-]*$/;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 const BOOLEAN_ARGUMENTS = new Set(['confirm', 'prefer']);
 const TOOL_ARGUMENT_TOOLS = new Set(['toolkit_find', 'toolkit_update', 'toolkit_add']);
@@ -80,7 +77,10 @@ function assertString(value, name, maxLength) {
   return value;
 }
 
-function validateArguments(tool, rawArguments, platform = process.platform) {
+// 相对路径会按 server 的工作目录解析，所以 project/rulesFile 只接受绝对路径。
+const ABSOLUTE_PATH = /^(?:[A-Za-z]:[\\/]|\\\\[^\\?.]|\/)/;
+
+function validateArguments(tool, rawArguments) {
   const raw = rawArguments === undefined || rawArguments === null ? {} : rawArguments;
   if (typeof raw !== 'object' || Array.isArray(raw)) {
     throw new RpcError(-32602, 'arguments must be an object');
@@ -117,7 +117,7 @@ function validateArguments(tool, rawArguments, platform = process.platform) {
     throw new RpcError(-32602, `${tool.name} requires a tool name`);
   }
   if (tool.name === 'toolkit_add' && !args.path) {
-    throw new RpcError(-32602, 'toolkit_add requires an absolute path');
+    throw new RpcError(-32602, 'toolkit_add requires a path');
   }
 
   if (TOOL_ARGUMENT_TOOLS.has(tool.name) && args.tool !== undefined) {
@@ -128,19 +128,11 @@ function validateArguments(tool, rawArguments, platform = process.platform) {
     args.tool = name;
   }
 
-  if (tool.name === 'toolkit_add') {
-    const normalized = normalizeAddExecutablePath(args.path, platform);
-    if (!normalized) throw new RpcError(-32602, 'path must be an absolute path with an unambiguous target');
-    args.path = normalized;
-  }
-
-  if ((tool.name === 'toolkit_find' || tool.name === 'toolkit_doctor')
-      && args.project !== undefined && !isDeterministicAbsolutePath(args.project)) {
-    throw new RpcError(-32602, 'project must be an absolute path');
-  }
-  if (tool.name === 'toolkit_doctor'
-      && args.rulesFile !== undefined && !isDeterministicAbsolutePath(args.rulesFile)) {
-    throw new RpcError(-32602, 'rulesFile must be an absolute path');
+  for (const field of ['project', 'rulesFile']) {
+    if ((tool.name === 'toolkit_find' || tool.name === 'toolkit_doctor')
+        && args[field] !== undefined && !ABSOLUTE_PATH.test(args[field])) {
+      throw new RpcError(-32602, `${field} must be an absolute path`);
+    }
   }
 
   return args;
@@ -185,13 +177,11 @@ function toolError(error, modern, action = 'unknown') {
 
 export function createProtocolHandler({
   runMap,
-  runMapConfig,
   serverInfo = {},
   defaultProject = process.env.TOOLKIT_MAP_PROJECT || process.env.CLAUDE_PROJECT_DIR || process.cwd()
 } = {}) {
   if (typeof runMap !== 'function') throw new TypeError('runMap is required');
 
-  const runnerConfig = runMapConfig || {};
   const info = {
     name: SERVER_NAME,
     title: SERVER_TITLE,
@@ -212,25 +202,20 @@ export function createProtocolHandler({
     return project ? String(project) : process.cwd();
   }
 
+  function describeMaintenance(action, args) {
+    const parts = ['map.ps1', action];
+    if (args.tool) parts.push(args.tool);
+    if (action === 'add') {
+      parts.push('-Path', JSON.stringify(args.path));
+      if (args.version) parts.push('-Version', JSON.stringify(args.version));
+      if (args.note) parts.push('-Note', JSON.stringify(args.note));
+      if (args.prefer === true) parts.push('-Prefer');
+    }
+    return parts.join(' ');
+  }
+
+  // confirm 不是 true 时只描述将要执行的动作，不启动 map.ps1。
   function maintenancePreview(action, args) {
-    const quote = (value) => `"${String(value).replace(/"/g, '\\"')}"`;
-    const target = action === 'update' && args.tool
-      ? ` ${args.tool}`
-      : action === 'add'
-        ? ` ${args.tool} -Path ${quote(args.path)}`
-          + (args.version ? ` -Version ${quote(args.version)}` : '')
-          + (args.note ? ` -Note ${quote(args.note)}` : '')
-          + (args.prefer === true ? ' -Prefer' : '')
-        : '';
-    // Resolved with Get-MapPath's precedence, without touching the disk and
-    // without running PowerShell. Unknown values stay explicitly unknown.
-    const mapTarget = resolveMapTarget(runnerConfig);
-    // Confirmation pins this exact resolved target as -MapFile, regardless of
-    // whether it originally came from server config, TOOLKIT_MAP or the home.
-    const mapArgument = mapTarget.known ? ` -MapFile "${mapTarget.path}"` : '';
-    const resolution = mapTarget.known
-      ? ` with the resolved ${mapTarget.source} map file (argument array, no shell)`
-      : ' against a map file the server cannot determine without running map.ps1; set TOOLKIT_MAP_FILE to an absolute path';
     const result = {
       schemaVersion: 2,
       action,
@@ -238,67 +223,12 @@ export function createProtocolHandler({
       status: 'planned',
       executed: false,
       confirmRequired: true,
-      preview: `would run map.ps1 ${action}${target}${mapArgument} -Json${resolution}`,
-      mapFileKnown: mapTarget.known,
-      mapFileSource: mapTarget.source,
-      hint: [
-        mapTarget.known
-          ? 'No map action was run. Call again with confirm:true to execute.'
-          : 'No map action was run. Configure an exact map target before execution; confirm:true cannot override an unknown target.',
-        'confirm is a workflow guard, not a permission or security boundary.',
-        'Candidate version probing may execute programs found on this machine, so obtain explicit human authorization first.'
-      ].join(' ')
+      preview: describeMaintenance(action, args),
+      hint: 'No map action was run. Call again with confirm:true to execute; version probing may run programs found on this machine, so get explicit human authorization first.'
     };
-    if (mapTarget.known) result.mapFile = mapTarget.path;
-    else result.mapFileHint = mapTarget.hint;
-    if (args.tool) result.tool = args.tool;
-    if (args.path) result.path = args.path;
-    if (args.note) result.note = args.note;
-    if (args.version) result.version = args.version;
+    for (const key of ['tool', 'path', 'note', 'version']) if (args[key]) result[key] = args[key];
     if (action === 'add') result.prefer = args.prefer === true;
     return result;
-  }
-
-  function contractProblem(result, expectedAction) {
-    if (!result || typeof result !== 'object' || Array.isArray(result)) {
-      return { code: 'invalid_output', message: 'map.ps1 returned a non-object result' };
-    }
-    if (result.schemaVersion !== 2) {
-      return { code: 'invalid_output', message: 'map.ps1 result is missing schemaVersion 2' };
-    }
-    if (typeof result.action !== 'string' || !ACTION_PATTERN.test(result.action)) {
-      return { code: 'invalid_output', message: 'map.ps1 result has an invalid action' };
-    }
-    if (result.action !== expectedAction) {
-      return {
-        code: 'invalid_output',
-        message: `map.ps1 result action "${result.action}" does not match "${expectedAction}"`
-      };
-    }
-    if (typeof result.ok !== 'boolean') {
-      return { code: 'invalid_output', message: 'map.ps1 result is missing a boolean ok' };
-    }
-    if (typeof result.status !== 'string' || !STATUS_PATTERN.test(result.status)) {
-      return { code: 'invalid_output', message: `map.ps1 result has an invalid status: ${String(result.status)}` };
-    }
-    if (!STATUS_VALUES.includes(result.status)) {
-      // Compatibility policy: consumers must treat unknown statuses as failures.
-      // A future minor may add a status, so a failure result must pass through;
-      // an unknown status paired with ok:true is never accepted as success.
-      if (result.ok === true) {
-        return {
-          code: 'unknown_status',
-          message: `map.ps1 reported success with an unknown status: ${result.status}`
-        };
-      }
-    }
-    return null;
-  }
-
-  function maintenanceRunnerConfig() {
-    const target = resolveMapTarget(runnerConfig);
-    if (!target.known) throw new MapRunError('map_target_unknown', target.hint);
-    return { ...runnerConfig, mapFile: target.path };
   }
 
   async function invokeTool(name, args) {
@@ -307,24 +237,24 @@ export function createProtocolHandler({
         tool: args.tool,
         project: projectFrom(args),
         version: args.version || ''
-      }, runnerConfig);
+      });
     }
     if (name === 'toolkit_status') {
-      return runMap('status', {}, runnerConfig);
+      return runMap('status', {});
     }
     if (name === 'toolkit_doctor') {
       return runMap('doctor', {
         project: projectFrom(args),
         rulesFile: args.rulesFile || ''
-      }, runnerConfig);
+      });
     }
     if (name === 'toolkit_scan') {
       if (args.confirm !== true) return maintenancePreview('scan', args);
-      return runMap('scan', {}, maintenanceRunnerConfig());
+      return runMap('scan', {});
     }
     if (name === 'toolkit_update') {
       if (args.confirm !== true) return maintenancePreview('update', args);
-      return runMap('update', { tool: args.tool || '' }, maintenanceRunnerConfig());
+      return runMap('update', { tool: args.tool || '' });
     }
     if (name === 'toolkit_add') {
       if (args.confirm !== true) return maintenancePreview('add', args);
@@ -334,7 +264,7 @@ export function createProtocolHandler({
         note: args.note || '',
         version: args.version || '',
         prefer: args.prefer === true
-      }, maintenanceRunnerConfig());
+      });
     }
     throw new RpcError(-32602, `Unknown tool: ${name}`);
   }
@@ -411,7 +341,7 @@ export function createProtocolHandler({
           }
           const tool = findTool(name);
           if (!tool) throw new RpcError(-32602, `Unknown tool: ${name}`);
-          const args = validateArguments(tool, params?.arguments, runnerConfig.platform || process.platform);
+          const args = validateArguments(tool, params?.arguments);
           const action = ACTION_BY_TOOL[name];
 
           let result;
@@ -422,13 +352,8 @@ export function createProtocolHandler({
             return resultResponse(id, toolError(error, modern, action), false);
           }
 
-          const problem = contractProblem(result, action);
-          if (problem) {
-            return resultResponse(
-              id,
-              toolError(new MapRunError(problem.code, problem.message), modern, action),
-              false
-            );
+          if (!result || typeof result !== 'object' || Array.isArray(result)) {
+            return resultResponse(id, toolError(new Error('map.ps1 returned a non-object result'), modern, action), false);
           }
 
           return resultResponse(id, {

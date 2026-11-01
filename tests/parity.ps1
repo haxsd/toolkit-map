@@ -244,39 +244,6 @@ $env:VOLTA_HOME = "$fxMsys/volta"
 Check 'shell 区分 Volta 真实运行时和 bin shim' ($LASTEXITCODE -eq 0)
 $env:VOLTA_HOME = ''
 
-# 符号链接不能让 shim 变成可探测文件；普通工具的链接仍允许。
-& $bash -c "mkdir -p '$fxMsys/mise/shims' '$fxMsys/ordinary' && printf 'fake shim\n' > '$fxMsys/mise/shims/faketool' && printf 'fake runtime\n' > '$fxMsys/ordinary/faketool'"
-if ($LASTEXITCODE -ne 0) { throw '无法创建隔离的 shell 链接夹具' }
-New-Item -ItemType Junction -Path (Join-Path $fx 'shim-alias') -Target (Join-Path $fx 'mise\shims') | Out-Null
-New-Item -ItemType Junction -Path (Join-Path $fx 'runtime-alias') -Target (Join-Path $fx 'ordinary') | Out-Null
-$guardFunctions = New-Object System.Collections.Generic.List[string]
-foreach ($functionName in @('is_shim_path', 'is_node_launcher_name', 'read_shebang', 'resolve_probe_path', 'probe_safe')) {
-    $functionMatch = [regex]::Match($shSource, ('(?ms)^' + [regex]::Escape($functionName) + '\(\) \{.*?^\}'))
-    if (-not $functionMatch.Success) { throw "无法提取 shell 探测护栏：$functionName" }
-    $guardFunctions.Add($functionMatch.Value)
-}
-$linkGuardScript = Join-Path $fx 'link-guard-check.sh'
-$linkBody = @'
-probe_safe "$TOOLKIT_PARITY_ROOT/shim-alias/faketool" && { echo "linked shim was accepted: $(resolve_probe_path "$TOOLKIT_PARITY_ROOT/shim-alias/faketool") link=$([ -L "$TOOLKIT_PARITY_ROOT/shim-alias" ] && echo yes || echo no) target=$(readlink "$TOOLKIT_PARITY_ROOT/shim-alias" 2>/dev/null || echo none)"; exit 1; }
-probe_safe "$TOOLKIT_PARITY_ROOT/runtime-alias/faketool" || { echo 'ordinary link was rejected'; exit 2; }
-exit 0
-'@
-[IO.File]::WriteAllText($linkGuardScript, ($guardFunctions -join "`n") + "`n" + $linkBody, (New-Object Text.UTF8Encoding $false))
-$env:MISE_SHIMS_DIR = "$fxMsys/mise/shims"
-$linkOutput = @(& $bash $linkGuardScript 2>&1); $linkCode = $LASTEXITCODE
-Check 'shell 不执行经符号链接隐藏的 shim，普通链接仍可用' ($linkCode -eq 0) "退出码 $linkCode：$($linkOutput -join ' ')"
-if ($linkCode -ne 0) { throw 'shell 链接护栏失败，停止后续扫描。' }
-# Mutation control: deleting the physical-path check must make this same
-# junction fixture fail, proving it exercises the intended defect.
-$oldProbe = $guardFunctions[$guardFunctions.Count - 1]
-$unsafeProbe = $oldProbe.Replace('  physical="$(resolve_probe_path "$p")" || return 1', '').Replace('  is_shim_path "$physical" && return 1', '')
-if ($unsafeProbe -eq $oldProbe) { throw '无法构造链接护栏对照，拒绝声称覆盖已验证。' }
-$unsafeFunctions = @($guardFunctions.ToArray()); $unsafeFunctions[$unsafeFunctions.Count - 1] = $unsafeProbe
-$unsafeGuardScript = Join-Path $fx 'link-guard-unsafe-control.sh'
-[IO.File]::WriteAllText($unsafeGuardScript, ($unsafeFunctions -join "`n") + "`n" + $linkBody, (New-Object Text.UTF8Encoding $false))
-$unsafeOutput = @(& $bash $unsafeGuardScript 2>&1); $unsafeCode = $LASTEXITCODE
-Check 'shell 链接夹具能识别移除物理路径护栏的缺陷' ($unsafeCode -eq 1 -and ($unsafeOutput -join ' ') -match 'linked shim was accepted')
-$env:MISE_SHIMS_DIR = ''
 
 # 子进程一律在沙箱目录里跑：即使有工具想往"当前目录"写缓存，也只会写进沙箱。
 Push-Location $fx

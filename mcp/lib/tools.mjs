@@ -12,45 +12,9 @@ export const INSTRUCTIONS = [
   'resolution instead of guessing. Install nothing unless the user explicitly asks for it.',
   'toolkit_scan, toolkit_update and toolkit_add are maintenance tools. They update the map',
   'file configured by the server and may update its generated Markdown summary; they never install',
-  'tools and never change PATH. A changed or unrelated summary is preserved, with a warning. They return a',
-  'planned preview unless the caller passes confirm:true; get explicit human authorization first.',
-  'The preview reports the resolved map file, or marks it unknown; execution is refused while the target is unknown.',
-  'Never retry with a client-chosen map file.'
+  'tools and never change PATH. A user-edited summary is preserved, with a warning. They return a',
+  'planned preview unless the caller passes confirm:true; get explicit human authorization first.'
 ].join(' ');
-
-// Keep this list in sync with schemas/statuses.json. The MCP tests compare both.
-export const STATUS_VALUES = [
-  'ok',
-  'planned',
-  'already_available',
-  'unverified',
-  'not_found',
-  'no_usable_candidate',
-  'version_mismatch',
-  'requirement_unsupported',
-  'map_missing',
-  'map_corrupt',
-  'schema_unsupported',
-  'map_busy',
-  'attention_required',
-  'operation_failed',
-  'checksum_unavailable',
-  'checksum_conflict',
-  'version_unavailable',
-  'installed_not_discovered',
-  'installed_ambiguous',
-  'installer_missing',
-  'asset_missing',
-  'executable_missing',
-  'probe_failed',
-  'environment_internal',
-  'invalid_action',
-  'invalid_argument',
-  'invalid_path',
-  'invalid_project',
-  'rules_invalid',
-  'scan_failed'
-];
 
 const RESULT_SCHEMA = {
   type: 'object',
@@ -59,8 +23,7 @@ const RESULT_SCHEMA = {
     action: { type: 'string', pattern: '^[a-z][a-z0-9_-]*$' },
     ok: { type: 'boolean' },
     // No enum: a future minor may add a status, and a strict client must still
-    // be able to render the result. Unknown statuses are classified in
-    // protocol.mjs against STATUS_VALUES, never by the schema.
+    // be able to render the result.
     status: { type: 'string', pattern: '^[a-z][a-z0-9_-]*$' },
     tool: { type: 'string' },
     requestedTool: { type: 'string' },
@@ -83,14 +46,11 @@ const RESULT_SCHEMA = {
     hint: { type: 'string' },
     message: { type: 'string' },
     mapFile: { type: 'string' },
-    mapFileKnown: { type: 'boolean' },
-    mapFileSource: { type: 'string' },
-    mapFileHint: { type: 'string' },
     summaryWarning: { type: 'string' },
-    preview: { type: 'string' },
     prefer: { type: 'boolean' },
     executed: { type: 'boolean' },
-    confirmRequired: { type: 'boolean' }
+    confirmRequired: { type: 'boolean' },
+    preview: { type: 'string' }
   },
   required: ['schemaVersion', 'action', 'ok', 'status'],
   additionalProperties: true
@@ -118,15 +78,14 @@ const CONFIRM_PROPERTY = {
   default: false,
   description: [
     'Defaults to false, which returns only a structured planned preview and does not run the map action.',
-    'Pass true to execute only when the preview identifies the map target; an unknown target is rejected.',
-    'This flag is a workflow guard, not a permission or security boundary; candidate',
+    'Pass true to execute. This flag is a workflow guard, not a permission or security boundary; candidate',
     'version probing may execute programs found on this machine, so obtain explicit human authorization first.'
   ].join(' ')
 };
 
 const PROJECT_PROPERTY = {
   type: 'string',
-  description: 'Absolute path to the project whose declaration files should be read. Relative paths and Windows device or drive-relative paths are rejected. Defaults to TOOLKIT_MAP_PROJECT or the server working directory.'
+  description: 'Absolute path to the project whose declaration files should be read. Defaults to TOOLKIT_MAP_PROJECT or the server working directory.'
 };
 
 export const TOOLS = [
@@ -190,7 +149,7 @@ export const TOOLS = [
         project: PROJECT_PROPERTY,
         rulesFile: {
           type: 'string',
-          description: 'Optional absolute path to the rule file to inspect instead of <project>/AGENTS.md. Relative paths and Windows device or drive-relative paths are rejected.'
+          description: 'Optional absolute path to the rule file to inspect instead of <project>/AGENTS.md.'
         }
       },
       additionalProperties: false
@@ -205,9 +164,8 @@ export const TOOLS = [
       'Maintenance action that scans this machine and refreshes the server-configured tool map. It never installs',
       'tools and never changes PATH. By default it returns only a structured planned preview and runs nothing;',
       'pass confirm:true to execute the scan. Scanning probes candidate versions and may execute programs found',
-      'on this machine, so obtain explicit human authorization first. The preview reports the resolved absolute',
-      'map path, or marks it unknown when the server cannot determine it without running map.ps1. confirm is a',
-      'workflow guard, not a permission or security boundary. Client arguments cannot select a different map file.'
+      'on this machine, so obtain explicit human authorization first. confirm is a workflow guard, not a',
+      'permission or security boundary.'
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -226,10 +184,8 @@ export const TOOLS = [
       'Maintenance action that re-probes one registered tool, or every registered tool when tool is omitted, and',
       'updates the server-configured map. It never installs tools and never changes PATH. By default it returns',
       'only a structured planned preview and runs nothing; pass confirm:true to execute. Candidate version probing',
-      'may execute programs found on this machine, so obtain explicit human authorization first. The preview reports',
-      'the resolved absolute map path, or marks it unknown when the server cannot determine it without running',
-      'map.ps1. confirm is a workflow guard, not a permission or security boundary. Client arguments cannot select',
-      'a different map file.'
+      'may execute programs found on this machine, so obtain explicit human authorization first. confirm is a',
+      'workflow guard, not a permission or security boundary.'
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -253,9 +209,8 @@ export const TOOLS = [
       'installing it. It never changes PATH. By default it returns only a structured planned preview and runs',
       'nothing; pass confirm:true to execute. The path must be absolute. version is a probe hint: toolkit-map',
       'still probes the executable and only falls back to the hint when probing cannot report a version, so',
-      'probing may execute the program. Obtain explicit human authorization first. The preview reports the',
-      'resolved map file when the server can determine it without running map.ps1. confirm is a workflow guard,',
-      'not a permission or security boundary. Client arguments cannot select a different map file.'
+      'probing may execute the program. Obtain explicit human authorization first. confirm is a workflow guard,',
+      'not a permission or security boundary.'
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -266,7 +221,7 @@ export const TOOLS = [
         },
         path: {
           type: 'string',
-          description: 'Absolute path to the existing executable (Windows drive/UNC or POSIX). Relative paths are rejected.'
+          description: 'Absolute path to the existing executable. map.ps1 resolves it.'
         },
         note: {
           type: 'string',

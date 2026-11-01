@@ -157,15 +157,15 @@ MCP 还提供三个显式维护工具，让客户端在用户授权下维护地�
 |---|---|---|
 | `toolkit_scan` | `confirm`（默认 `false`） | 预览扫描动作；`confirm:true` 才执行 `map.ps1 scan -Json` |
 | `toolkit_update` | `tool`（可选）、`confirm`（默认 `false`） | 预览重探范围；`confirm:true` 才执行 `map.ps1 update [工具] -Json` |
-| `toolkit_add` | `tool`、`path`（必填绝对路径）、`version`、`note`、`prefer`、`confirm`（默认 `false`） | 预览登记；`confirm:true` 才执行 `map.ps1 add ... -Json` |
+| `toolkit_add` | `tool`、`path`（必填）、`version`、`note`、`prefer`、`confirm`（默认 `false`） | 预览登记；`confirm:true` 才执行 `map.ps1 add ... -Json` |
 
 共同契约：
 
-- **默认只预览**：未传 `confirm:true` 时不得写地图、不得探测新候选；返回 `status:planned`、目标地图和将要执行的参数，包括登记备注、版本提示及首选标记。确认执行时将预览的绝对路径显式传给 `-MapFile`；无法确定或安全解析目标（包括有歧义的 Windows 路径和 `.md` 地图目标）时返回 `mapFileKnown:false`，即使请求 `confirm:true` 也会拒绝执行；
+- **默认只预览**：未传 `confirm:true` 时不得写地图、不得探测新候选；返回 `status:planned` 和将要执行的参数，包括登记备注、版本提示及首选标记。地图目标与 CLI 相同（服务端 `TOOLKIT_MAP_FILE`、`TOOLKIT_MAP`、用户目录默认地图），由 map.ps1 解析；`.md` 地图目标由 map.ps1 拒绝；
 - **执行可能运行候选程序**：`scan` / `update` / `add` 为取版本会探测本机候选程序，因此执行前必须取得用户明确授权；查询工具不会这样做；
 - **`confirm:true` 不是授权证明**：它只表示请求执行。参数本身无法证明操作者是人、是账号持有人或已获用户同意；客户端必须展示变更并向用户取得明确授权；服务端不提供绕过确认的后门；
 - **不自动安装、不改 PATH**：维护工具只做 `scan` / `update` / `add`，不调用 `install`，不写 shell 配置或系统环境变量；
-- **参数校验**：`toolkit_add` 的 `path` 必须是绝对路径，实际登记时还必须是已存在的文件；工具名不能是路径。预览不探测文件，失败时不写地图；
+- **参数校验**：`toolkit_add` 的 `path` 原样交给 map.ps1，实际登记时必须是已存在的文件；工具名不能是路径。预览不探测文件，失败时不写地图；
 - **结果可审计**：返回结果包含动作、目标、是否执行、地图路径与状态；未执行时明确 `planned`。已有 Markdown 摘要不符合安全覆盖条件时，JSON 地图仍可更新，结果返回 `summaryWarning`。
 
 这三个维护工具的新增属于 minor 级别的接口扩展；本次严格只读 `find` 与旧参数行为的变化另有兼容性影响。客户端需要重新加载服务器配置才能看到新工具；旧版适配器可能只提供三个查询工具。
@@ -183,7 +183,7 @@ MCP 还提供三个显式维护工具，让客户端在用户授权下维护地�
 - 子进程使用参数数组启动，不经过 shell，不接受 `.ps1` 片段或任意命令；
 - 单次调用默认 120 秒超时，可用 `TOOLKIT_MAP_TIMEOUT_MS` 调整；
 - 不读取凭据、不写项目文件、不改 PATH、不安装工具；
-- 地图目标按服务端配置 `TOOLKIT_MAP_FILE`、继承的 `TOOLKIT_MAP`、用户目录下默认地图的顺序确定；维护预览会显示可确定的目标；
+- 地图目标按服务端配置 `TOOLKIT_MAP_FILE`、继承的 `TOOLKIT_MAP`、用户目录下默认地图的顺序确定；
 - `confirm:true` 只是执行请求，不是真人授权证明；维护工具必须在客户端确认后才执行。
 
 MCP 只降低“模型忘记查地图”的概率，不能强制模型遵守。项目里仍建议保留一条简短规则：**运行版本敏感命令前先调用 `toolkit_find`**。规则与 MCP 可以同时存在。
@@ -196,7 +196,6 @@ MCP 只降低“模型忘记查地图”的概率，不能强制模型遵守。�
 | `quickstart -Mcp -WriteMcp` 退出 2 | 项目规则已接入，MCP 未写成。读输出里的原因；补 Node 18+、修配置或地图后重跑。不要当成功 |
 | 启动时报 Node 版本错误 | MCP 需要 Node 18+；用 `map.ps1 find node -Version '>=18' -Json` 的 `path` 作为 `command`。`find` 只读，先确保地图已建 |
 | `errorCode: unsupported_platform` | 完整地图目前只支持 Windows；Unix 只有 `census.sh` 扫描内核 |
-| `errorCode: map_target_unknown` | 服务端无法可靠确定维护目标；设置 `TOOLKIT_MAP_FILE` 为确切绝对路径，重启服务并重新预览，获用户授权后再执行 |
 | `errorCode: map_script_missing` | `args` 里的 `mcp/server.mjs` 路径不对，或源码目录被移动 |
 | `status: map_missing` | 先执行 `map.ps1 setup -Project <目录>` 或 `scan` |
 | `status: not_found`，但机器上确实有 | `find` 不执行新候选、不写地图；只用 `scan` / `update` 验证候选，已有副本用 `add` 登记后再查 |

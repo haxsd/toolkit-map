@@ -18,22 +18,13 @@ function Test-IsShimPath { param([string]$P) return (Test-ToolkitShimPath $P) }
 function Test-IsStoreAlias { param([string]$P) return ($P -match '(?i)[\\/]WindowsApps[\\/]') }
 function Test-IsEnvInternal {
     param([string]$P)
-    $paths = @($P)
-    $physical = Resolve-ToolkitProbePath $P
-    if ($physical -and $physical -ne $P) { $paths += $physical }
-    foreach ($candidatePath in $paths) {
-        if ($candidatePath -match '(?i)[\\/](site-packages|node_modules|\.venv|venv)[\\/]' -or
-            ($candidatePath -match '(?i)[\\/]envs[\\/][^\\/]+[\\/]' -and [IO.Path]::GetFileNameWithoutExtension($candidatePath) -notin @('python', 'python3', 'java', 'node'))) { return $true }
-        # Python venvs may be named anything. Check their normal root and
-        # Scripts/bin layout without walking every ancestor on each query.
-        try { $parent = Split-Path ([IO.Path]::GetFullPath($candidatePath)) -Parent } catch { continue }
-        if ($parent -and [IO.File]::Exists((Join-Path $parent 'pyvenv.cfg'))) { return $true }
-        if ($parent -and (Split-Path $parent -Leaf) -in @('Scripts', 'bin')) {
-            $envRoot = Split-Path $parent -Parent
-            if ($envRoot -and [IO.File]::Exists((Join-Path $envRoot 'pyvenv.cfg'))) { return $true }
-        }
-    }
-    return $false
+    if ($P -match '(?i)[\\/](site-packages|node_modules|\.venv|venv)[\\/]' -or
+        ($P -match '(?i)[\\/]envs[\\/][^\\/]+[\\/]' -and [IO.Path]::GetFileNameWithoutExtension($P) -notin @('python', 'python3', 'java', 'node'))) { return $true }
+    # Python venvs may be named anything: check pyvenv.cfg next to the exe or one level up (Scripts/bin).
+    try { $parent = Split-Path ([IO.Path]::GetFullPath($P)) -Parent } catch { return $false }
+    if ($parent -and [IO.File]::Exists((Join-Path $parent 'pyvenv.cfg'))) { return $true }
+    $envRoot = if ($parent -and (Split-Path $parent -Leaf) -in @('Scripts', 'bin')) { Split-Path $parent -Parent } else { '' }
+    return [bool]($envRoot -and [IO.File]::Exists((Join-Path $envRoot 'pyvenv.cfg')))
 }
 function Write-MapMessage {
     param([string]$Message, [string]$ForegroundColor = '')
@@ -411,8 +402,7 @@ function Save-Map {
     Assert-MapWritePath
     $mapPath = Get-MapPath
     $summaryPath = [IO.Path]::ChangeExtension($mapPath, '.md')
-    # Retain the old map to recognize its unedited generated summary. The
-    # summary is checked and updated under an exclusive file handle below.
+    # 保留旧地图，用来识别未被手工修改的生成摘要。
     $previous = Read-Map
     # 摘要的默认候选不能受某次查询的放宽策略影响。
     $AllowUnverified = $false
@@ -431,32 +421,17 @@ function Save-Map {
     }
 }
 function Write-MapSummarySafe {
+    # 只在摘要不存在或仍是上一次生成的内容时覆盖；用户改过的 .md 保留并告警。
     param([string]$Path, $Map, $Previous)
-    $stream = $null
     try {
         if ([IO.File]::Exists($Path)) {
-            # FileShare.None closes the check/write race with cooperating Windows
-            # processes: user edits cannot arrive between verification and write.
-            $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-            if (-not $Previous -or $stream.Length -gt 16MB) { return $false }
-            $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8, $true, 1024, $true)
-            try { $existing = $reader.ReadToEnd() } finally { $reader.Dispose() }
+            if (-not $Previous) { return $false }
+            $existing = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8)
             if (-not [string]::Equals($existing, (Get-MapMarkdownContent $Previous), [StringComparison]::Ordinal)) { return $false }
-            $stream.Position = 0
-        } else {
-            # CreateNew never replaces a file created between the check and open.
-            $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
         }
-        $encoding = New-Object Text.UTF8Encoding $true
-        $prefix = $encoding.GetPreamble()
-        $content = $encoding.GetBytes((Get-MapMarkdownContent $Map))
-        $stream.Write($prefix, 0, $prefix.Length)
-        $stream.Write($content, 0, $content.Length)
-        $stream.SetLength($stream.Position)
-        $stream.Flush()
+        Write-AtomicUtf8 -Path $Path -Content (Get-MapMarkdownContent $Map)
         return $true
     } catch { return $false }
-    finally { if ($stream) { $stream.Dispose() } }
 }
 function Format-MapSummaryTimestamp {
     param($Value)
@@ -572,25 +547,6 @@ function Invoke-Scan {
     $censusWallMs = [int64]$censusSw.Elapsed.TotalMilliseconds
     if ($LASTEXITCODE -ne 0) { Throw-MapError 'scan_failed' "census 退出码：$LASTEXITCODE" }
     try { $census = ($output | Out-String) | ConvertFrom-Json } catch { Throw-MapError 'scan_failed' 'census 未返回有效 JSON。' }
-    # A syntactically valid but partial report must not become a fresh map.
-    # probeStats is optional for older census versions; the inventory arrays
-    # and each runtime's identity are required for a complete scan.
-    if ($null -eq $census -or $census -is [array] -or $census -isnot [pscustomobject] -or $census.schemaVersion -ne 1 -or
-        $census.runtimes -isnot [array] -or $census.declarations -isnot [array] -or $census.warnings -isnot [array]) {
-        Throw-MapError 'scan_failed' 'census 报告缺少完整扫描所需字段；未写入地图。'
-    }
-    foreach ($runtime in $census.runtimes) {
-        if ($runtime -isnot [pscustomobject] -or $runtime.tool -isnot [string] -or -not $runtime.tool -or
-            $runtime.path -isnot [string] -or -not $runtime.path) {
-            Throw-MapError 'scan_failed' 'census 运行时记录缺少工具名或路径；未写入地图。'
-        }
-    }
-    foreach ($declaration in $census.declarations) {
-        if ($null -eq $declaration -or $declaration -is [array] -or $declaration -isnot [pscustomobject] -or
-            $null -eq $declaration.tools -or $declaration.tools -is [array] -or $declaration.tools -isnot [pscustomobject]) {
-            Throw-MapError 'scan_failed' 'census 声明记录不完整；未写入地图。'
-        }
-    }
     $index = @{}
     foreach ($runtime in @($census.runtimes)) { $index[$runtime.path] = $runtime }
     $names = New-Object System.Collections.Generic.HashSet[string]
