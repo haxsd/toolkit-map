@@ -133,6 +133,52 @@ test('toolkit_scan previews without calling runMap', async () => {
   assertSchema(findTool('toolkit_scan').outputSchema, result, 'toolkit_scan preview');
 });
 
+test('maintenance preview names the map file the confirmed action will use', async () => {
+  const savedFile = process.env.TOOLKIT_MAP_FILE;
+  const savedMap = process.env.TOOLKIT_MAP;
+  try {
+    process.env.TOOLKIT_MAP_FILE = 'D:\\maps\\explicit.json';
+    delete process.env.TOOLKIT_MAP;
+    let result = (await createHarness().handler.handle(callTool(1, 'toolkit_scan'))).result.structuredContent;
+    assert.equal(result.preview.includes('-MapFile "D:\\\\maps\\\\explicit.json"'), true, result.preview);
+
+    delete process.env.TOOLKIT_MAP_FILE;
+    process.env.TOOLKIT_MAP = 'maps\\custom.json';
+    result = (await createHarness().handler.handle(callTool(1, 'toolkit_scan'))).result.structuredContent;
+    assert.equal(result.preview.includes('TOOLKIT_MAP="maps\\\\custom.json"'), true, result.preview);
+    assert.match(result.preview, /resolved by map\.ps1/);
+  } finally {
+    if (savedFile === undefined) delete process.env.TOOLKIT_MAP_FILE;
+    else process.env.TOOLKIT_MAP_FILE = savedFile;
+    if (savedMap === undefined) delete process.env.TOOLKIT_MAP;
+    else process.env.TOOLKIT_MAP = savedMap;
+  }
+});
+
+test('a map result without the frozen envelope is not reported as success', async () => {
+  const invalid = [
+    { schemaVersion: 2, action: 'find', ok: false, status: 'not_found' },
+    { schemaVersion: 2, action: 'scan', ok: true, status: 'future_success' },
+    { schemaVersion: 2, action: 'scan', ok: 'yes', status: 'ok' }
+  ];
+  for (const result of invalid) {
+    const response = await createHarness(result).handler.handle(callTool(1, 'toolkit_scan', { confirm: true }));
+    assert.equal(response.result.isError, true, JSON.stringify(result));
+    assert.equal(response.result.structuredContent.errorCode, 'invalid_output', JSON.stringify(result));
+  }
+
+  // Unknown failure statuses still pass through with their explanation.
+  const response = await createHarness({
+    schemaVersion: 2,
+    action: 'scan',
+    ok: false,
+    status: 'future_failure'
+  }).handler.handle(callTool(1, 'toolkit_scan', { confirm: true }));
+  assert.equal(response.result.isError, true);
+  assert.equal(response.result.structuredContent.status, 'future_failure');
+  assert.equal(response.result.structuredContent.errorCode, undefined);
+});
+
 test('maintenance annotations keep the conservative destructive and open-world defaults', () => {
   for (const name of MAINTENANCE_TOOLS) {
     const annotations = findTool(name).annotations;

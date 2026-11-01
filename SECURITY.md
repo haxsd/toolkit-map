@@ -20,6 +20,7 @@
 ## 边界
 
 - `status` / `find` / `doctor` 与对应 MCP 查询工具只读；`find` 不执行候选程序或写地图；
+- shim 判定基于路径与已知 shim 根（包括 `VOLTA_HOME` 的 `bin`），不执行 shim；不承诺识别“人为把 shim 目录通过 junction/symlink 挂到普通路径”的伪装，这类配置不应使用；
 - `scan` / `update` / `add` 是明确的地图维护动作，会写地图并可能执行候选程序进行版本验证；MCP 对应工具默认只预览，执行前必须获得用户明确同意，`confirm:true` 不是身份或授权证明；
 - `install` 是显式动作，安装位置与校验边界见 [`docs/reference.md`](docs/reference.md)；
 - 本机地图、工具、缓存和凭据不进入发布包；

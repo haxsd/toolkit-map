@@ -1,3 +1,4 @@
+import { MapRunError } from './runner.mjs';
 import {
   INSTRUCTIONS,
   LEGACY_PROTOCOL_VERSIONS,
@@ -25,6 +26,10 @@ const ACTION_BY_TOOL = {
   toolkit_update: 'update',
   toolkit_add: 'add'
 };
+// Current success statuses (schemas/statuses.json kinds success). A future
+// success status must not be trusted without updating consumers; failures pass
+// through unchanged so a newer map.ps1 can still report why it failed.
+const SUCCESS_STATUSES = new Set(['ok', 'already_available']);
 
 class RpcError extends Error {
   constructor(code, message, data) {
@@ -143,6 +148,27 @@ function truncate(value, maxLength = 2000) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
 }
 
+// A map result must keep the frozen envelope. Unknown failure statuses pass
+// through (a newer map.ps1 may explain the failure); an unknown status paired
+// with ok:true is never accepted as success.
+function contractProblem(result, expectedAction) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return 'map.ps1 returned a non-object result';
+  }
+  if (result.schemaVersion !== 2) return 'map.ps1 result is missing schemaVersion 2';
+  if (result.action !== expectedAction) {
+    return `map.ps1 result action "${String(result.action)}" does not match "${expectedAction}"`;
+  }
+  if (typeof result.ok !== 'boolean') return 'map.ps1 result is missing a boolean ok';
+  if (typeof result.status !== 'string' || !ACTION_PATTERN.test(result.status)) {
+    return 'map.ps1 result has an invalid status';
+  }
+  if (result.ok === true && !SUCCESS_STATUSES.has(result.status)) {
+    return `map.ps1 reported success with an unknown status: ${result.status}`;
+  }
+  return null;
+}
+
 function toolError(error, modern, action = 'unknown') {
   const isMapRunError = error?.name === 'MapRunError';
   const safeAction = typeof action === 'string' && ACTION_PATTERN.test(action) ? action : 'unknown';
@@ -214,6 +240,22 @@ export function createProtocolHandler({
     return parts.join(' ');
   }
 
+  // Show which map file the confirmed action will write, using the same
+  // environment map.ps1 inherits. No path resolution: map.ps1 stays the single
+  // authority, and an unresolved value is reported as such instead of guessed.
+  function describeMapTarget() {
+    const mapFile = String(process.env.TOOLKIT_MAP_FILE || '');
+    if (mapFile) return `map: -MapFile ${JSON.stringify(mapFile)}`;
+    const mapValue = String(process.env.TOOLKIT_MAP || '');
+    if (mapValue) return `map: TOOLKIT_MAP=${JSON.stringify(mapValue)} (resolved by map.ps1)`;
+    const home = process.platform === 'win32' ? process.env.USERPROFILE : process.env.HOME;
+    if (home) {
+      const separator = process.platform === 'win32' ? '\\' : '/';
+      return `map: ${String(home).replace(/[\\/]+$/, '')}${separator}.toolkit${separator}map.json`;
+    }
+    return 'map: unresolved; set TOOLKIT_MAP_FILE to an absolute path';
+  }
+
   // confirm 不是 true 时只描述将要执行的动作，不启动 map.ps1。
   function maintenancePreview(action, args) {
     const result = {
@@ -223,7 +265,7 @@ export function createProtocolHandler({
       status: 'planned',
       executed: false,
       confirmRequired: true,
-      preview: describeMaintenance(action, args),
+      preview: `${describeMaintenance(action, args)}; ${describeMapTarget()}`,
       hint: 'No map action was run. Call again with confirm:true to execute; version probing may run programs found on this machine, so get explicit human authorization first.'
     };
     for (const key of ['tool', 'path', 'note', 'version']) if (args[key]) result[key] = args[key];
@@ -354,6 +396,11 @@ export function createProtocolHandler({
 
           if (!result || typeof result !== 'object' || Array.isArray(result)) {
             return resultResponse(id, toolError(new Error('map.ps1 returned a non-object result'), modern, action), false);
+          }
+          // Previews are produced here, not by map.ps1, and use status planned.
+          const problem = result.executed === false ? null : contractProblem(result, action);
+          if (problem) {
+            return resultResponse(id, toolError(new MapRunError('invalid_output', problem), modern, action), false);
           }
 
           return resultResponse(id, {
