@@ -18,22 +18,13 @@ function Test-IsShimPath { param([string]$P) return (Test-ToolkitShimPath $P) }
 function Test-IsStoreAlias { param([string]$P) return ($P -match '(?i)[\\/]WindowsApps[\\/]') }
 function Test-IsEnvInternal {
     param([string]$P)
-    $paths = @($P)
-    $physical = Resolve-ToolkitProbePath $P
-    if ($physical -and $physical -ne $P) { $paths += $physical }
-    foreach ($candidatePath in $paths) {
-        if ($candidatePath -match '(?i)[\\/](site-packages|node_modules|\.venv|venv)[\\/]' -or
-            ($candidatePath -match '(?i)[\\/]envs[\\/][^\\/]+[\\/]' -and [IO.Path]::GetFileNameWithoutExtension($candidatePath) -notin @('python', 'python3', 'java', 'node'))) { return $true }
-        # Python venvs may be named anything. Check their normal root and
-        # Scripts/bin layout without walking every ancestor on each query.
-        try { $parent = Split-Path ([IO.Path]::GetFullPath($candidatePath)) -Parent } catch { continue }
-        if ($parent -and [IO.File]::Exists((Join-Path $parent 'pyvenv.cfg'))) { return $true }
-        if ($parent -and (Split-Path $parent -Leaf) -in @('Scripts', 'bin')) {
-            $envRoot = Split-Path $parent -Parent
-            if ($envRoot -and [IO.File]::Exists((Join-Path $envRoot 'pyvenv.cfg'))) { return $true }
-        }
-    }
-    return $false
+    if ($P -match '(?i)[\\/](site-packages|node_modules|\.venv|venv)[\\/]' -or
+        ($P -match '(?i)[\\/]envs[\\/][^\\/]+[\\/]' -and [IO.Path]::GetFileNameWithoutExtension($P) -notin @('python', 'python3', 'java', 'node'))) { return $true }
+    # Python venvs may be named anything: check pyvenv.cfg next to the exe or one level up (Scripts/bin).
+    try { $parent = Split-Path ([IO.Path]::GetFullPath($P)) -Parent } catch { return $false }
+    if ($parent -and [IO.File]::Exists((Join-Path $parent 'pyvenv.cfg'))) { return $true }
+    $envRoot = if ($parent -and (Split-Path $parent -Leaf) -in @('Scripts', 'bin')) { Split-Path $parent -Parent } else { '' }
+    return [bool]($envRoot -and [IO.File]::Exists((Join-Path $envRoot 'pyvenv.cfg')))
 }
 function Write-MapMessage {
     param([string]$Message, [string]$ForegroundColor = '')
@@ -411,8 +402,7 @@ function Save-Map {
     Assert-MapWritePath
     $mapPath = Get-MapPath
     $summaryPath = [IO.Path]::ChangeExtension($mapPath, '.md')
-    # Retain the old map to recognize its unedited generated summary. The
-    # summary is checked and updated under an exclusive file handle below.
+    # 保留旧地图，用来识别未被手工修改的生成摘要。
     $previous = Read-Map
     # 摘要的默认候选不能受某次查询的放宽策略影响。
     $AllowUnverified = $false
@@ -431,32 +421,17 @@ function Save-Map {
     }
 }
 function Write-MapSummarySafe {
+    # 只在摘要不存在或仍是上一次生成的内容时覆盖；用户改过的 .md 保留并告警。
     param([string]$Path, $Map, $Previous)
-    $stream = $null
     try {
         if ([IO.File]::Exists($Path)) {
-            # FileShare.None closes the check/write race with cooperating Windows
-            # processes: user edits cannot arrive between verification and write.
-            $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-            if (-not $Previous -or $stream.Length -gt 16MB) { return $false }
-            $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8, $true, 1024, $true)
-            try { $existing = $reader.ReadToEnd() } finally { $reader.Dispose() }
+            if (-not $Previous) { return $false }
+            $existing = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8)
             if (-not [string]::Equals($existing, (Get-MapMarkdownContent $Previous), [StringComparison]::Ordinal)) { return $false }
-            $stream.Position = 0
-        } else {
-            # CreateNew never replaces a file created between the check and open.
-            $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
         }
-        $encoding = New-Object Text.UTF8Encoding $true
-        $prefix = $encoding.GetPreamble()
-        $content = $encoding.GetBytes((Get-MapMarkdownContent $Map))
-        $stream.Write($prefix, 0, $prefix.Length)
-        $stream.Write($content, 0, $content.Length)
-        $stream.SetLength($stream.Position)
-        $stream.Flush()
+        Write-AtomicUtf8 -Path $Path -Content (Get-MapMarkdownContent $Map)
         return $true
     } catch { return $false }
-    finally { if ($stream) { $stream.Dispose() } }
 }
 function Format-MapSummaryTimestamp {
     param($Value)

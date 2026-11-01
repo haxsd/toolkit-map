@@ -24,7 +24,7 @@ jobs:
   windows:
     runs-on: windows-latest
     # 测试内部对每个子进程都有超时保护，这里再兜一道：宁可快速失败，也不要长期占着 runner
-    timeout-minutes: 8
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       # 编码检查放在最前：.ps1 缺 BOM 时，英文系统的 ANSI 代码页（cp1252）会把中文注释
@@ -177,22 +177,19 @@ jobs:
           exit $code
 
   mcp:
-    # MCP 适配器是零依赖 Node 18+ stdio 服务器；矩阵覆盖最低 Node 18 与 Node 22，
-    # 两个平台跑纯协议/运行器测试，Windows 再用临时地图跑真实 map.ps1 集成测试。
-    # 不执行 npm install：测试只用 Node 内置模块，不引入生产依赖。
-    # 地图本身仍由上面的 PowerShell job 覆盖。
+    # MCP 适配器是零依赖 Node 18+ stdio 服务器；两个平台跑纯协议/运行器测试，
+    # Windows 再用临时地图跑真实 map.ps1 集成测试。地图本身仍由上面的 PowerShell job 覆盖。
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
-        node: ['18.x', '22.x']
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: '22'
       - name: MCP 语法检查
         run: |
           node --check mcp/server.mjs

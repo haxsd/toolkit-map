@@ -226,45 +226,15 @@ read_shebang() {
   head -c 256 "$1" 2>/dev/null | tr -d '\000' | head -n1 | tr -d '\r' | sed -n 's/^#!//p'
 }
 
-# Resolve each directory and file link without executing the candidate. A
-# dangling/cyclic link or inaccessible component is indeterminate and skipped.
-# Component-wise readlink also works on Git Bash when cd -P preserves a junction.
-resolve_probe_path() {
-  local pending="$1" current="" component candidate target depth=0
-  case "$pending" in /*) pending="${pending#/}" ;; *) pending="${PWD%/}/$pending"; pending="${pending#/}" ;; esac
-  while [ -n "$pending" ]; do
-    component="${pending%%/*}"
-    if [ "$component" = "$pending" ]; then pending=""; else pending="${pending#*/}"; fi
-    case "$component" in
-      ''|.) continue ;;
-      ..) current="${current%/*}"; continue ;;
-    esac
-    candidate="$current/$component"
-    if [ -L "$candidate" ]; then
-      depth=$((depth + 1)); [ "$depth" -le 40 ] || return 1
-      target="$(readlink "$candidate" 2>/dev/null)" || return 1
-      [ -n "$target" ] || return 1
-      case "$target" in /*) current=""; target="${target#/}" ;; esac
-      pending="$target${pending:+/$pending}"
-    else
-      [ -e "$candidate" ] || return 1
-      current="$candidate"
-    fi
-  done
-  printf '%s\n' "${current:-/}"
-}
-
 # 执行这个文件做版本探测是否安全：它自己不是 shim，它的解释器（#! 行，env 按 PATH 解析）
 # 也不是 shim；node 启动器实际会用的 node 也必须安全。解析不出解释器时宁可不执行。
 # 与 toolkit-common.ps1 的 Test-ToolkitProbeSafe 保持同一套规则。
 probe_safe() {
-  local p="$1" depth="${2:-0}" sb interp node w is_script="" physical
+  local p="$1" depth="${2:-0}" sb interp node w is_script=""
   local -a words
   [ -n "$p" ] || return 1
   [ "$depth" -le 3 ] || return 1
   is_shim_path "$p" && return 1
-  physical="$(resolve_probe_path "$p")" || return 1
-  is_shim_path "$physical" && return 1
   sb="$(read_shebang "$p")"
   if [ -n "$sb" ]; then
     is_script=1

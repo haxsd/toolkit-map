@@ -112,34 +112,6 @@ test('stdio server serves initialize, tools/list and ping without stdout noise',
   assert.equal(client.messages.length, 3, 'stdout must contain only JSON-RPC messages');
 });
 
-test('maintenance previews describe the map target captured at server startup', async () => {
-  const mapFile = path.join(REPO_ROOT, 'captured', 'from-startup.json');
-  const client = startServer({
-    TOOLKIT_MAP: mapFile,
-    TOOLKIT_MAP_FILE: ''
-  });
-
-  client.send({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'tools/call',
-    params: { name: 'toolkit_scan', arguments: {} }
-  });
-
-  const response = await client.waitFor((message) => message.id === 1);
-  const result = response.result.structuredContent;
-
-  assert.equal(result.action, 'scan');
-  assert.equal(result.status, 'planned');
-  assert.equal(result.executed, false);
-  assert.equal(result.mapFile, mapFile);
-  assert.equal(result.mapFileKnown, true);
-  assert.equal(result.mapFileSource, 'environment');
-
-  const exitCode = await client.close();
-  assert.equal(exitCode, 0);
-});
-
 test('stdio server reports parse errors as JSON-RPC errors', async () => {
   const client = startServer();
   client.child.stdin.write('this is not json\n');

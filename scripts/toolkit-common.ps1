@@ -15,55 +15,7 @@ function Test-ToolkitUnderRoot {
     } catch { return $false }
 }
 
-# Resolve reparse points one component at a time without executing the file.
-# An inaccessible, unsupported, dangling or cyclic link returns an empty path:
-# callers must treat that as unverified rather than guessing that probing is safe.
-function Resolve-ToolkitProbePath {
-    param([string]$Value)
-    if (-not $Value) { return '' }
-    try { $path = [IO.Path]::GetFullPath($Value) } catch { return '' }
-    if ([IO.Path]::DirectorySeparatorChar -ne '\') {
-        # Unix keeps /bin -> /usr/bin as ordinary symlinks; resolving the final
-        # target directly identifies shim directories there.
-        try {
-            if ([IO.File]::Exists($path) -or [IO.Directory]::Exists($path)) {
-                $target = (New-Object IO.FileInfo $path).ResolveLinkTarget($true)
-                if ($target -and $target.FullName) { return $target.FullName }
-                return $path
-            }
-        } catch { }
-        return ''
-    }
-    $seen = @{}
-    :resolve while ($true) {
-        $key = Get-ToolkitNormalizedPath $path
-        if ($seen.ContainsKey($key) -or $seen.Count -ge 40) { return '' }
-        $seen[$key] = $true
-        $root = [IO.Path]::GetPathRoot($path)
-        if (-not $root) { return '' }
-        $parts = @($path.Substring($root.Length) -split '[\\/]' | Where-Object { $_ })
-        $current = $root
-        for ($i = 0; $i -lt $parts.Count; $i++) {
-            try {
-                $current = Join-Path $current $parts[$i]
-                $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
-            } catch { return '' }
-            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) { continue }
-            $targets = @($item.Target | Where-Object { $_ })
-            if ($targets.Count -ne 1) { return '' }
-            $target = [string]$targets[0]
-            try {
-                if (-not [IO.Path]::IsPathRooted($target)) { $target = Join-Path (Split-Path $current -Parent) $target }
-                for ($j = $i + 1; $j -lt $parts.Count; $j++) { $target = Join-Path $target $parts[$j] }
-                $path = [IO.Path]::GetFullPath($target)
-            } catch { return '' }
-            continue resolve
-        }
-        return $path
-    }
-}
-
-function Test-ToolkitShimPathLexical {
+function Test-ToolkitShimPath {
     param([string]$Value)
     $p = $Value -replace '\\', '/'
     # shims 是间接层；目录名判断也覆盖非默认的 mise/asdf/pyenv 数据目录。
@@ -75,25 +27,6 @@ function Test-ToolkitShimPathLexical {
     if ($env:VOLTA_HOME -and (Test-ToolkitUnderRoot $Value (Join-Path $env:VOLTA_HOME 'bin'))) { return $true }
     if ($env:LOCALAPPDATA -and (Test-ToolkitUnderRoot $Value (Join-Path $env:LOCALAPPDATA 'Volta\bin'))) { return $true }
     if ($env:USERPROFILE -and (Test-ToolkitUnderRoot $Value (Join-Path $env:USERPROFILE '.volta\bin'))) { return $true }
-    return $false
-}
-
-function Test-ToolkitShimPath {
-    param([string]$Value)
-    if (Test-ToolkitShimPathLexical $Value) { return $true }
-    $physical = Resolve-ToolkitProbePath $Value
-    if (-not $physical) { return $false }
-    if (Test-ToolkitShimPathLexical $physical) { return $true }
-    # A custom shim root can itself be a junction. Compare both physical paths.
-    $roots = @($env:MISE_SHIMS_DIR)
-    if ($env:VOLTA_HOME) { $roots += Join-Path $env:VOLTA_HOME 'bin' }
-    if ($env:LOCALAPPDATA) { $roots += Join-Path $env:LOCALAPPDATA 'Volta\bin' }
-    if ($env:USERPROFILE) { $roots += Join-Path $env:USERPROFILE '.volta\bin' }
-    foreach ($root in $roots) {
-        if (-not $root) { continue }
-        $physicalRoot = Resolve-ToolkitProbePath $root
-        if ($physicalRoot -and (Test-ToolkitUnderRoot $physical $physicalRoot)) { return $true }
-    }
     return $false
 }
 
@@ -141,7 +74,6 @@ function Test-ToolkitProbeSafe {
     # node 启动器实际会用的 node 也必须安全。解析不出解释器时宁可不执行。
     param([string]$Path, [int]$Depth = 0)
     if (-not $Path -or $Depth -gt 3 -or (Test-ToolkitShimPath $Path)) { return $false }
-    if (-not (Resolve-ToolkitProbePath $Path)) { return $false }
     $shebang = Get-ToolkitShebang $Path
     $isScript = [bool]$shebang -or ([IO.Path]::GetExtension($Path).ToLowerInvariant() -in @('.cmd', '.bat', '.ps1', '.sh'))
     if ($shebang) {

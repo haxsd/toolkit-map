@@ -98,7 +98,7 @@
 
 - `structuredContent` 是结果对象本身；`ok:false` 时同时返回 `isError:true`；
 - 当前查询工具只读，不暴露 `install`；`add` / `scan` / `update` 只通过下列维护工具提供；
-- 维护工具（`toolkit_scan` / `toolkit_update` / `toolkit_add`）默认返回 `planned` 预览，只有 `confirm:true` 且地图目标可确定才请求执行；目标未知时拒绝执行。`confirm:true` 不代表真人授权，客户端必须向用户确认；执行会探测本机候选程序，必须取得明确人工授权；服务端不自动安装或改 PATH；
+- 维护工具（`toolkit_scan` / `toolkit_update` / `toolkit_add`）默认返回 `planned` 预览，只有 `confirm:true` 才请求执行。`confirm:true` 不代表真人授权，客户端必须向用户确认；执行会探测本机候选程序，必须取得明确人工授权；服务端不自动安装或改 PATH；
 - 支持旧会话 `initialize`（2024-11-05 至 2025-11-25）与 2026-07-28 的 `server/discover`；新增协议版本属于 minor，移除属于 major；
 - stdout 只输出 JSON-RPC；新增工具属于 minor，删除或改参数属于 major。
 
@@ -108,7 +108,7 @@
 |---|---|---|
 | `toolkit_scan` | `confirm`（默认 `false`） | 未确认时 `planned`；确认后地图 `scan` 结果对象 |
 | `toolkit_update` | `tool`（可选）、`confirm`（默认 `false`） | 未确认时 `planned`；确认后地图 `update` 结果对象 |
-| `toolkit_add` | `tool`、`path`（绝对路径）、`version`、`note`、`prefer`、`confirm`（默认 `false`） | 未确认时 `planned`；确认后地图 `add` 结果对象 |
+| `toolkit_add` | `tool`、`path`、`version`、`note`、`prefer`、`confirm`（默认 `false`） | 未确认时 `planned`；确认后地图 `add` 结果对象 |
 
 维护工具不得绕过 `confirm` 直接写地图，不得调用 `install`，不得修改 PATH。`path` 必须是已存在的绝对文件；失败时不写地图。
 
