@@ -17,8 +17,12 @@ const POWERSHELL = process.env.TOOLKIT_MAP_POWERSHELL || 'C:\\WINDOWS\\System32\
 const windowsOnly = { skip: process.platform !== 'win32' };
 
 function sameFilePath(a, b) {
-  try { return fs.realpathSync(a).toLowerCase() === fs.realpathSync(b).toLowerCase(); }
-  catch { return path.win32.resolve(a).toLowerCase() === path.win32.resolve(b).toLowerCase(); }
+  // Windows temp directories have short (RUNNER~1) and long (runneradmin)
+  // spellings for the same directory; compare the file name plus its
+  // randomly named temporary parent instead of the absolute spelling.
+  if (!a || !b) return false;
+  return path.basename(a).toLowerCase() === path.basename(b).toLowerCase()
+    && path.basename(path.dirname(a)).toLowerCase() === path.basename(path.dirname(b)).toLowerCase();
 }
 
 function tempDir(t, prefix) {
