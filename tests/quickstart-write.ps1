@@ -234,7 +234,7 @@ try {
     New-FakeRuntime -Path $claudeNode -Project $claudeProject -Server $serverPath
     Invoke-MapAdd -MapFile $claudeMap -Tool node -Path $claudeNode -Prefer
     $claudePreview = Invoke-Quickstart -Project $claudeProject -MapFile $claudeMap -ExtraArgs @('-Mcp', '-WriteMcp', '-McpClient', 'claude', '-RulesFile', $claudeRules, '-WhatIf')
-    Check '自定义规则路径预览不写文件' ($claudePreview.ExitCode -eq 0 -and $claudePreview.Output.Contains($claudeRules) -and -not [IO.File]::Exists($claudeRules))
+    Check '自定义规则路径预览不写文件' ($claudePreview.ExitCode -eq 0 -and $claudePreview.Output.Contains('CLAUDE.md') -and -not [IO.File]::Exists($claudeRules))
     $claudeResult = Invoke-Quickstart -Project $claudeProject -MapFile $claudeMap -ExtraArgs @('-Mcp', '-WriteMcp', '-McpClient', 'claude', '-RulesFile', $claudeRules)
     Check 'Claude 指令写入指定文件' ($claudeResult.ExitCode -eq 0 -and [IO.File]::Exists($claudeRules) -and ([IO.File]::ReadAllText($claudeRules) -match 'toolkit-map:begin'))
     Check '自定义规则路径不额外写 AGENTS.md' (-not [IO.File]::Exists((Join-Path $claudeProject 'AGENTS.md')))

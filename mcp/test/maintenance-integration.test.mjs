@@ -360,7 +360,7 @@ test('confirmed toolkit_add writes only the configured temporary map', windowsOn
   assert.equal(map.schemaVersion, 2);
   const entry = map.tools.node;
   assert.ok(entry, 'node entry must be registered');
-  const candidate = entry.candidates.find((item) => item.path.toLowerCase() === runtime.toLowerCase());
+  const candidate = entry.candidates.find((item) => path.normalize(item.path).toLowerCase() === path.normalize(runtime).toLowerCase());
   assert.ok(candidate, JSON.stringify(entry.candidates));
   assert.equal(candidate.userNote, 'manual registration');
   assert.equal(entry.preferredPath.toLowerCase(), runtime.toLowerCase());

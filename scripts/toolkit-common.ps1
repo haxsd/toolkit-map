@@ -22,6 +22,18 @@ function Resolve-ToolkitProbePath {
     param([string]$Value)
     if (-not $Value) { return '' }
     try { $path = [IO.Path]::GetFullPath($Value) } catch { return '' }
+    if ([IO.Path]::DirectorySeparatorChar -ne '\') {
+        # Unix keeps /bin -> /usr/bin as ordinary symlinks; resolving the final
+        # target directly identifies shim directories there.
+        try {
+            if ([IO.File]::Exists($path) -or [IO.Directory]::Exists($path)) {
+                $target = (New-Object IO.FileInfo $path).ResolveLinkTarget($true)
+                if ($target -and $target.FullName) { return $target.FullName }
+                return $path
+            }
+        } catch { }
+        return ''
+    }
     $seen = @{}
     :resolve while ($true) {
         $key = Get-ToolkitNormalizedPath $path
