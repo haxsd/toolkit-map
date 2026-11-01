@@ -15,7 +15,7 @@
 | scripts/quickstart.ps1 | 项目接入：执行 setup，按需查找 Node 18+；`-Mcp` 打印配置，`-WriteMcp` 写入项目级 Cursor/Claude 配置（备份并保留其他服务器）；`-WhatIf` 只预览 |
 | scripts/build-release.ps1 | 从 HEAD 构建运行时 ZIP（剥离测试/CI）并生成 SHA256；发布 workflow 复用同一脚本 |
 | scripts/demo.ps1 | 临时地图上的 2 分钟演示，不读写本机地图 |
-| mcp/ | 零依赖 Node 18+ MCP stdio 适配器（三个只读工具）与测试 |
+| mcp/ | 零依赖 Node 18+ MCP stdio 适配器（查询与维护工具）与测试 |
 | schemas/ | v1.0 契约的 JSON Schema（result v2、map v2）与状态枚举 |
 | tests/ | 隔离回归测试 |
 | AGENTS.md / SKILL.md | 发现契约与 agent 使用协议 |
@@ -30,7 +30,7 @@ census-text.tsv 与 census-data.tsv 是两个扫描内核的唯一数据来源�
 |---|---|
 | tests/check-encodings.ps1 | .ps1 的 UTF-8 BOM、英文系统解析；.sh 无 BOM |
 | tests/check-docs.ps1 | 中文单语文档、相对链接与 VERSION 版本号一致 |
-| tests/check-text.ps1 | census-text.tsv 格式、每个 key 中英齐全、脚本引用可解析、拒绝 ps1: / sh: 前缀键、-Lang en 输出与缺失文案表时失败 |
+| tests/check-text.ps1 | 文案格式、双语与脚本引用检查；运行临时副本时隔离扫描根、禁用候选探测，并检查 `-Lang en` 输出与缺表失败 |
 | tests/check-data.ps1 | census-data.tsv 列数、kind 与 os 取值、无重复、两边必需的 kind 齐全（含 bootstrap / bootstrap-refresh 的 win 与 unix 行）、值的形状与占位符、缺表时失败（CI 中 Windows PowerShell 5.1 / 7 与 Linux PowerShell 7） |
 | tests/map-smoke.ps1 | 失效路径修复、版本 stderr、安装失败和拒绝覆盖 |
 | tests/map-contract.ps1 | 动态项目选择、验证状态、重扫保留、查询缓存、并发、并行扫描与串行结果一致、接入和 JSON |
@@ -39,21 +39,21 @@ census-text.tsv 与 census-data.tsv 是两个扫描内核的唯一数据来源�
 | tests/version-contract.ps1 | 版本要求比较、预发布、超长数字段与候选排序（表驱动，CI 中 Windows PowerShell 5.1 / 7 与 Linux PowerShell 7 独立步骤） |
 | tests/scan-guards.ps1 | 扫描解析层和底层执行器（含 Invoke-ToolkitProbe）都跳过 shim |
 | tests/probe-cache.ps1 | 统一探测执行器的进程内缓存：未变文件不重复启动，修改时间/大小/参数变化即失效，shim 不启动；并行批次去重、挂住的工具按超时结束（CI 中 Windows PowerShell 5.1 / 7 与 Linux PowerShell 7） |
-| tests/parity.ps1 | 两个扫描内核在同一沙箱识别相同问题 |
+| tests/parity.ps1 | 在受控临时副本中限制探测范围，用假工具比较两个扫描内核的诊断 |
 | tests/verify-shell.ps1 | .sh 语法 |
 | tests/smoke.sh | Unix 扫描、JSON、语言、自定义 shim 与脚本启动器护栏、probeStats 与 `--timing` 阶段键 |
 | tests/check-sh-vars.sh | .sh 里 `$VAR` 后不能紧跟非 ASCII 字符（bash 3.2 兼容） |
 | tests/scan-baseline.ps1 | 用临时地图在真实机器上跑 scan，打印首扫墙钟时间与进程启动次数；每个宿主冷启动两轮只计第二轮（CI 的 windows-baseline job，先 PS7 后 PS5.1，只量不判） |
-| mcp/test | MCP 协议协商、工具参数、运行器超时/BOM、stdio 无日志污染与配置生成；Windows 用临时地图跑真实 `map.ps1` 与端到端调用（CI Node 22，Windows / Ubuntu） |
+| mcp/test | MCP 协议协商、工具参数、维护操作的预览与授权边界、运行器超时/BOM、stdio 无日志污染与配置生成；Windows 用临时地图跑真实 `map.ps1` 与端到端调用（CI Node 18/22，Windows / Ubuntu） |
 | tests/check-contract.ps1 | 状态枚举、脚本字面量、schema 与 `docs/contract.md` 的一致性；VERSION 与 package 版本同步（跨平台） |
 | tests/records-guard.ps1 | 检查公开树是否混入内部计划、交接、审查或真实环境资料；当前树必须干净（跨平台） |
 | tests/doctor-bundle.ps1 | `doctor -Bundle` 的摘要字段、无地图/有地图两种情况，并断言不包含候选与 PATH 快照 |
 | tests/quickstart-write.ps1 | 用假 Node 与临时地图跑 `quickstart -Mcp -WriteMcp`，检查 Cursor/Claude 配置写入、已有服务器保留、备份与 `-WhatIf` 不写 |
 | tests/release-package.ps1 | 调用 `build-release.ps1` 构建临时运行时包，检查 ZIP/SHA256、必需文件、VERSION 与排除项 |
-| tests/release-gate.ps1 | 发布前完整回归入口：文案/数据/契约/doctor/quickstart/发布包/地图/扫描/parity 一次跑完 |
+| tests/release-gate.ps1 | 发布前完整回归入口：MCP 维护测试与文案/数据/契约/doctor/quickstart/发布包/地图/扫描/parity 一次跑完；本地可用 `TOOLKIT_MAP_NODE` 指定 Node 18+ 绝对路径 |
 | mcp/test/contract.test.mjs | Windows 上用临时地图校验 `help` / `add` / `find` / `status` / `doctor` / `setup -WhatIf` 与 map.json 是否符合冻结 schema |
 
-按改动范围检查；发布前跑全套。map-contract 同时用 PowerShell 5.1 和 7 执行；真实扫描另用临时 -MapFile 验证，不污染本机地图。测试使用假工具、临时目录与独立地图，不安装工具。
+按改动范围检查；发布前跑全套。`map-contract.ps1` 用临时地图和假工具验证；`check-text.ps1`、`parity.ps1` 的运行时检查会限制候选探测范围。**仅指定临时 `-MapFile` 并不能隔离真实扫描**：`scan-baseline.ps1` 与原生 Unix 的 `smoke.sh` 可能访问或探测本机程序，必须在获得明确授权的受控环境中运行。
 
 新增探测适配器时在 tools.json 定义 probe 参数数组；命令名和安装名不同时定义 aliases/warehouseNames。locations 可使用 Windows 环境变量提示常见安装位置。仅在成功退出并能提取版本时标为 verified。
 
@@ -72,7 +72,7 @@ census-text.tsv 与 census-data.tsv 是两个扫描内核的唯一数据来源�
 
 ## 发布
 
-1. 修改根目录 `VERSION`（help 自动读取），再按 tests/check-docs.ps1 的提示同步 CHANGELOG 与文档中的稳定标签；新增 `docs/releases/vX.Y.Z.md` 作为 Release 说明（UTF-8，workflow 直接用它，不在 PowerShell 里拼中文）。
+1. 开发时修改根目录 `VERSION`（help 自动读取），并在 CHANGELOG 对应版本标明“未发布”；文档稳定标签继续指向最近已发布版本。准备发布时移除“未发布”标记，更新稳定标签和开发版提示，并审定 `docs/releases/vX.Y.Z.md`（UTF-8，workflow 直接用它）。
 2. 全套检查与两个宿主的契约测试通过。
 3. 推送分支，PR CI 通过后合并 main。
 4. 从合并提交创建并推送版本标签 `vX.Y.Z`；`.github/workflows/release.yml` 会校验标签与 `VERSION` 一致、跑 MCP 测试与 `tests/release-gate.ps1` 完整回归，再用 `scripts/build-release.ps1` 生成运行时 ZIP 与 SHA256 并创建 GitHub Release。门禁失败时不发布。
@@ -85,6 +85,6 @@ census-text.tsv 与 census-data.tsv 是两个扫描内核的唯一数据来源�
 .\scripts\build-release.ps1 -OutputDir dist
 ```
 
-输出 `dist/toolkit-map-v<版本>-runtime.zip` 与同名 `.sha256`；`tests/release-package.ps1` 会在临时目录复用同一脚本并检查包内容。
+输出 `dist/toolkit-map-v<版本>-runtime.zip` 与同名 `.sha256`；`tests/release-package.ps1` 会在临时目录复用同一脚本并检查包内容。提交前可用 `TOOLKIT_MAP_NODE=<已验证 Node 绝对路径>` 运行 `tests/release-package.ps1 -WorktreePreflight`，检查当前工作树的临时运行时布局；它不是正式打包，不能替代提交后对 HEAD 的发布包验证。
 
 仍待扩展：Unix 地图动作、更多管理器/平台适配器、复杂声明委托。bootstrap 的可选环境配置与 setup 的规则接入保持分开。

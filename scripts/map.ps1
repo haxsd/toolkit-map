@@ -55,7 +55,7 @@ $ProgressPreference = 'SilentlyContinue'
 # 注意它不进 PATH —— PATH 只应该有一个间接层，多版本塞进 PATH 只会互相遮蔽。
 
 
-# 版本号唯一来源是仓库根目录的 VERSION；文档里的稳定标签由 tests/check-docs.ps1 校验一致。
+# 运行时代码读取 VERSION；稳定标签由 tests/check-docs.ps1 与已发布记录校验。
 function Get-ToolkitVersion {
     $file = Join-Path (Split-Path $PSScriptRoot -Parent) 'VERSION'
     if (-not [IO.File]::Exists($file)) { return '' }
@@ -542,8 +542,12 @@ function Invoke-Install {
 
 # 入口在整个 read-modify-write 周期持锁；JSON stdout 恰好一个对象。
 $mapMutex = $null
+$script:MapSummaryWarning = ''
 try {
-    if ($Action.ToLowerInvariant() -in @('scan', 'find', 'add', 'update', 'install', 'setup')) { $mapMutex = Enter-MapLock }
+    if ($Action.ToLowerInvariant() -in @('scan', 'add', 'update', 'install', 'setup')) {
+        Assert-MapWritePath
+        $mapMutex = Enter-MapLock
+    }
     $result = switch ($Action.ToLowerInvariant()) {
         'scan'    { Invoke-Scan }
         'status'  { Invoke-Status }
@@ -557,6 +561,7 @@ try {
         default   { Throw-MapError 'invalid_action' "未知动作：$Action；执行 help 查看用法。" }
     }
     if ($null -eq $result) { $result = New-MapResult 'ok' @{ mapFile = Get-MapPath } }
+    if ($script:MapSummaryWarning) { $result.summaryWarning = $script:MapSummaryWarning }
     if ($Json) { $result | ConvertTo-Json -Depth 20 -Compress }
     elseif ($Action.ToLowerInvariant() -eq 'find' -and $result.found) {
         Write-Host ("{0} → {1}`n版本 {2}；验证 {3}；依据 {4}" -f $result.tool, $result.path, $result.version, $result.verification, $result.reason)

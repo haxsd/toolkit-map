@@ -57,10 +57,10 @@ test('status enum and schemas are frozen consistently', () => {
   assert.match(MAP_SCHEMA.$id, /map-v2\.schema\.json$/);
 });
 
-test('VERSION and mcp package stay in sync at 1.x', () => {
+test('VERSION and mcp package stay in sync at 2.x', () => {
   const version = fs.readFileSync(path.join(REPO_ROOT, 'VERSION'), 'utf8').trim();
   const pkg = readJson('mcp/package.json');
-  assert.match(version, /^1\.\d+\.\d+$/);
+  assert.match(version, /^2\.\d+\.\d+$/);
   assert.equal(pkg.version, version);
 });
 

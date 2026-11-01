@@ -43,6 +43,10 @@ trap {
 $repoRoot  = Split-Path $PSScriptRoot -Parent
 $censusPs1 = Join-Path $repoRoot 'scripts\census.ps1'
 $censusSh  = Join-Path $repoRoot 'scripts\census.sh'
+$originalEnvironment = @{}
+foreach ($name in @('PATH', 'USERPROFILE', 'HOME', 'APPDATA', 'LOCALAPPDATA', 'TOOLCHAIN_ROOT', 'MISE_DATA_DIR', 'MISE_SHIMS_DIR', 'MISE_CONFIG_FILE', 'MISE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'VOLTA_HOME', 'FNM_DIR', 'SCOOP', 'ASDF_DATA_DIR', 'TOOLKIT_PARITY_ROOT', 'TOOLKIT_PARITY_ROOT_ALT', 'TOOLKIT_PARITY_ROOT_WIN')) {
+    $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
 
 # Git Bash：PATH 上的 bash 可能是 WSL 的转发壳，所以显式找 Git 自带的那一个
 $bash = @(
@@ -73,6 +77,14 @@ node = ["22"]
 census-absent-tool = ["1.0"]
 '@ | Set-Content -LiteralPath "$fx\home\.config\mise\config.toml" -Encoding ASCII
 
+# 项目只有 Python 的版本声明时，不能抑制 package.json 的 Node 接入提醒。
+'{"engines":{"node":">=22"}}' | Set-Content -LiteralPath "$fx\package.json" -Encoding ASCII
+"[tools]`npython = `"3.12`"`nrg = `"14`"" | Set-Content -LiteralPath "$fx\mise.toml" -Encoding ASCII
+# 声明的 rg 只在统一仓库，不放到 PATH。两个脚本各使用自己的假执行文件。
+$rgBin = Join-Path $fx 'toolchains\ripgrep\14.1.0\bin'
+[void][IO.Directory]::CreateDirectory($rgBin)
+[IO.File]::WriteAllText((Join-Path $rgBin 'rg.cmd'), "@echo off`r`necho ripgrep 14.1.0`r`n", [Text.Encoding]::ASCII)
+
 # 会遮蔽 mise 的 node（给 census.ps1 走 Windows 解析），以及一个只存在于文件名里的约定。
 # 约定 shim 特意用 bash 创建并 chmod +x：MSYS 的"可执行"是按 Unix 语义判断的，
 # 而 census.sh 的约定层要求 [ -x ]——PowerShell 写出来的文件默认没有执行位。
@@ -94,7 +106,57 @@ function ConvertTo-MsysPath {
 # 关键一步：MSYS 按 Unix 语义判断"可执行"，PowerShell 写出来的文件默认没有执行位，
 # 而 census.sh 的约定层要求 [ -x ]。所以让两个实现看到同一份权限，并由 bash 造出约定 shim。
 $fxMsys = ConvertTo-MsysPath $fx
-& $bash -c "printf '#!/bin/sh\necho v22.23.2\n' > '$fxMsys/bin/node22' && chmod +x '$fxMsys/bin/node22' '$fxMsys/rt1/bin/node.exe' '$fxMsys/rt2/bin/node.exe'"
+
+# 在临时副本中限制候选探测范围；保留真实产品的其他逻辑。
+# Windows 的静态系统目录和 IDE 枚举、Git Bash 的系统工具目录都不能成为测试候选。
+$isolatedScripts = Join-Path $fx 'product\scripts'
+$isolatedTemplates = Join-Path $fx 'product\templates'
+New-Item -ItemType Directory -Force -Path $isolatedScripts, $isolatedTemplates | Out-Null
+foreach ($name in @('toolkit-common.ps1', 'census-data.tsv', 'census-text.tsv')) {
+    Copy-Item -LiteralPath (Join-Path (Join-Path $repoRoot 'scripts') $name) -Destination $isolatedScripts
+}
+$commonPath = Join-Path $isolatedScripts 'toolkit-common.ps1'
+$commonSource = [IO.File]::ReadAllText($commonPath, [Text.Encoding]::UTF8)
+$probeGuardMarker = '    # 最底层护栏：所有调用方都不能绕过。同时拦住经由 #! 或 npm.cmd 再去执行 PATH 上 node shim 的启动器。'
+if ($commonSource.IndexOf($probeGuardMarker, [StringComparison]::Ordinal) -lt 0 -or
+    $commonSource.IndexOf($probeGuardMarker, [StringComparison]::Ordinal) -ne $commonSource.LastIndexOf($probeGuardMarker, [StringComparison]::Ordinal)) {
+    throw '无法设置 PowerShell 探测护栏；拒绝在真实机器上运行一致性测试。'
+}
+$probeGuard = '    if ($Exe -and -not (Test-ToolkitUnderRoot $Exe $env:TOOLKIT_PARITY_ROOT_WIN)) { throw "测试拒绝执行沙箱外候选：$Exe" }' + "`r`n"
+[IO.File]::WriteAllText($commonPath, $commonSource.Replace($probeGuardMarker, ($probeGuard + $probeGuardMarker)), (New-Object Text.UTF8Encoding $true))
+Copy-Item -LiteralPath (Join-Path $repoRoot 'templates\mise-config.toml') -Destination $isolatedTemplates
+$psSource = [IO.File]::ReadAllText($censusPs1, [Text.Encoding]::UTF8)
+$rootsLine = '$roots        = Measure-Phase ''4a. 候选根目录''          { Get-CandidateRoots }'
+$rootsFixture = '$roots        = Measure-Phase ''4a. 候选根目录''          { @((Join-Path $env:TOOLKIT_PARITY_ROOT_WIN ''rt1''), (Join-Path $env:TOOLKIT_PARITY_ROOT_WIN ''rt2'')) }'
+if ($psSource.IndexOf($rootsLine, [StringComparison]::Ordinal) -lt 0 -or
+    $psSource.IndexOf($rootsLine, [StringComparison]::Ordinal) -ne $psSource.LastIndexOf($rootsLine, [StringComparison]::Ordinal)) {
+    throw '无法限制 PowerShell 扫描根；拒绝在真实机器上运行一致性测试。'
+}
+$censusPs1 = Join-Path $isolatedScripts 'census.ps1'
+[IO.File]::WriteAllText($censusPs1, $psSource.Replace($rootsLine, $rootsFixture), (New-Object Text.UTF8Encoding $true))
+$shSource = [IO.File]::ReadAllText($censusSh, [Text.Encoding]::UTF8)
+$shGuards = @(
+    @{ old = 'set -uo pipefail'; new = "set -uo pipefail`nPATH=`"`$TOOLKIT_PARITY_ROOT_ALT/bin:`$PATH`"" },
+    @{ old = 'probe_safe() {'; new = "probe_safe() {`n  if [ `"`${2:-0}`" -eq 0 ]; then case `"`$1`" in `"`$TOOLKIT_PARITY_ROOT`"/*|`"`$TOOLKIT_PARITY_ROOT_ALT`"/*) ;; *) return 1 ;; esac; fi" },
+    @{ old = '  local p="$1" tool ver src'; new = "  local p=`"`$1`" tool ver src`n  case `"`$p`" in `"`$TOOLKIT_PARITY_ROOT`"/*|`"`$TOOLKIT_PARITY_ROOT_ALT`"/*) ;; *) return 0 ;; esac" },
+    @{ old = '  local root="$1" rel'; new = "  local root=`"`$1`" rel`n  case `"`$root`" in `"`$TOOLKIT_PARITY_ROOT`"|`"`$TOOLKIT_PARITY_ROOT`"/*|`"`$TOOLKIT_PARITY_ROOT_ALT`"|`"`$TOOLKIT_PARITY_ROOT_ALT`"/*) ;; *) return 0 ;; esac" }
+)
+foreach ($guard in $shGuards) {
+    if ($shSource.IndexOf($guard.old, [StringComparison]::Ordinal) -lt 0 -or
+        $shSource.IndexOf($guard.old, [StringComparison]::Ordinal) -ne $shSource.LastIndexOf($guard.old, [StringComparison]::Ordinal)) {
+        throw '无法限制 shell 扫描根；拒绝在真实机器上运行一致性测试。'
+    }
+    $shSource = $shSource.Replace($guard.old, $guard.new)
+}
+$censusSh = Join-Path $isolatedScripts 'census.sh'
+[IO.File]::WriteAllText($censusSh, $shSource, (New-Object Text.UTF8Encoding $false))
+$env:TOOLKIT_PARITY_ROOT = $fxMsys; $env:TOOLKIT_PARITY_ROOT_WIN = $fx
+# Git Bash 可能把同一 Windows 临时目录映射到 /tmp；仅在两者确为同一目录时允许别名。
+$env:TOOLKIT_PARITY_ROOT_ALT = "/tmp/$leaf"
+& $bash -c '[ "$TOOLKIT_PARITY_ROOT" -ef "$TOOLKIT_PARITY_ROOT_ALT" ]'
+if ($LASTEXITCODE -ne 0) { $env:TOOLKIT_PARITY_ROOT_ALT = $fxMsys }
+& $bash -c "printf '#!/bin/sh\necho v22.23.2\n' > '$fxMsys/bin/node22' && printf '#!/bin/sh\necho ripgrep 14.1.0\n' > '$fxMsys/toolchains/ripgrep/14.1.0/bin/rg' && chmod +x '$fxMsys/bin/node22' '$fxMsys/rt1/bin/node.exe' '$fxMsys/rt2/bin/node.exe' '$fxMsys/toolchains/ripgrep/14.1.0/bin/rg'"
+if ($LASTEXITCODE -ne 0) { throw '无法创建隔离的假运行时与 rg' }
 
 # ---------- 受控环境 ----------
 # PATH 只留沙箱需要的东西，而且【刻意不含 mise】：两个实现必须看同一个世界，
@@ -115,6 +177,10 @@ $env:XDG_CONFIG_HOME  = ''                         # 两边都不用 XDG，避�
 New-Item -ItemType Directory -Force -Path "$fx\AppData\Local", "$fx\AppData\Roaming" | Out-Null
 $env:LOCALAPPDATA = "$fx\AppData\Local"
 $env:APPDATA      = "$fx\AppData\Roaming"
+$env:TOOLCHAIN_ROOT = "$fx\toolchains"
+$env:MISE_DATA_DIR = "$fx\mise"
+$env:MISE_SHIMS_DIR = ''; $env:MISE_CONFIG_FILE = ''; $env:MISE_CONFIG_DIR = ''; $env:XDG_DATA_HOME = ''
+$env:VOLTA_HOME = ''; $env:FNM_DIR = ''; $env:SCOOP = ''; $env:ASDF_DATA_DIR = ''
 
 # 用当前宿主的可执行文件跑子进程：沙箱 PATH 里刻意不含 System32
 $psExe = if ($PSVersionTable.PSEdition -eq 'Core') { Join-Path $PSHOME 'pwsh.exe' } else { Join-Path $PSHOME 'powershell.exe' }
@@ -147,8 +213,14 @@ function Invoke-Bounded {
     param([string]$Exe, [string[]]$Arguments, [int]$TimeoutSec = 300, [string]$Tag = 'cmd')
     $outFile = Join-Path $fx "$Tag.out.txt"
     $errFile = Join-Path $fx "$Tag.err.txt"
-    $p = Start-Process -FilePath $Exe -ArgumentList $Arguments -WindowStyle Hidden -PassThru `
-                       -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+    $savedPath = $env:PATH; $savedWarehouse = $env:TOOLCHAIN_ROOT
+    try {
+        # PowerShell 不需要 Git 自带的 Unix 工具；避免解析并探测沙箱外命令。
+        if ($Exe -eq $psExe) { $env:PATH = "$fx\bin;$fx\bin" }
+        else { $env:TOOLCHAIN_ROOT = "$fxMsys/toolchains" }
+        $p = Start-Process -FilePath $Exe -ArgumentList $Arguments -WindowStyle Hidden -PassThru `
+                           -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+    } finally { $env:PATH = $savedPath; $env:TOOLCHAIN_ROOT = $savedWarehouse }
     if (-not $p.WaitForExit($TimeoutSec * 1000)) {
         try { $p.Kill() } catch { }
         Write-Host "  [注意] 子进程超过 $TimeoutSec 秒仍未返回，已终止：$Exe" -ForegroundColor Yellow
@@ -156,6 +228,55 @@ function Invoke-Bounded {
     }
     return (Get-Content -LiteralPath $outFile -Raw -ErrorAction SilentlyContinue)
 }
+
+# Volta 的 image 是真实运行时目录，不应因 VOLTA_HOME 整棵树被当成 shim。
+$shimMatch = [regex]::Match($shSource, '(?ms)^is_shim_path\(\) \{.*?^\}')
+if (-not $shimMatch.Success) { throw '无法提取 shell shim 护栏进行隔离测试' }
+$voltaCheckScript = Join-Path $fx 'volta-check.sh'
+$voltaBody = @'
+is_shim_path "$VOLTA_HOME/tools/image/node/22.1.0/node" && exit 1
+is_shim_path "$VOLTA_HOME/bin/node" || exit 2
+exit 0
+'@
+[IO.File]::WriteAllText($voltaCheckScript, $shimMatch.Value + "`n" + $voltaBody, (New-Object Text.UTF8Encoding $false))
+$env:VOLTA_HOME = "$fxMsys/volta"
+& $bash $voltaCheckScript
+Check 'shell 区分 Volta 真实运行时和 bin shim' ($LASTEXITCODE -eq 0)
+$env:VOLTA_HOME = ''
+
+# 符号链接不能让 shim 变成可探测文件；普通工具的链接仍允许。
+& $bash -c "mkdir -p '$fxMsys/mise/shims' '$fxMsys/ordinary' && printf 'fake shim\n' > '$fxMsys/mise/shims/faketool' && printf 'fake runtime\n' > '$fxMsys/ordinary/faketool'"
+if ($LASTEXITCODE -ne 0) { throw '无法创建隔离的 shell 链接夹具' }
+New-Item -ItemType Junction -Path (Join-Path $fx 'shim-alias') -Target (Join-Path $fx 'mise\shims') | Out-Null
+New-Item -ItemType Junction -Path (Join-Path $fx 'runtime-alias') -Target (Join-Path $fx 'ordinary') | Out-Null
+$guardFunctions = New-Object System.Collections.Generic.List[string]
+foreach ($functionName in @('is_shim_path', 'is_node_launcher_name', 'read_shebang', 'resolve_probe_path', 'probe_safe')) {
+    $functionMatch = [regex]::Match($shSource, ('(?ms)^' + [regex]::Escape($functionName) + '\(\) \{.*?^\}'))
+    if (-not $functionMatch.Success) { throw "无法提取 shell 探测护栏：$functionName" }
+    $guardFunctions.Add($functionMatch.Value)
+}
+$linkGuardScript = Join-Path $fx 'link-guard-check.sh'
+$linkBody = @'
+probe_safe "$TOOLKIT_PARITY_ROOT/shim-alias/faketool" && { echo "linked shim was accepted: $(resolve_probe_path "$TOOLKIT_PARITY_ROOT/shim-alias/faketool") link=$([ -L "$TOOLKIT_PARITY_ROOT/shim-alias" ] && echo yes || echo no) target=$(readlink "$TOOLKIT_PARITY_ROOT/shim-alias" 2>/dev/null || echo none)"; exit 1; }
+probe_safe "$TOOLKIT_PARITY_ROOT/runtime-alias/faketool" || { echo 'ordinary link was rejected'; exit 2; }
+exit 0
+'@
+[IO.File]::WriteAllText($linkGuardScript, ($guardFunctions -join "`n") + "`n" + $linkBody, (New-Object Text.UTF8Encoding $false))
+$env:MISE_SHIMS_DIR = "$fxMsys/mise/shims"
+$linkOutput = @(& $bash $linkGuardScript 2>&1); $linkCode = $LASTEXITCODE
+Check 'shell 不执行经符号链接隐藏的 shim，普通链接仍可用' ($linkCode -eq 0) "退出码 $linkCode：$($linkOutput -join ' ')"
+if ($linkCode -ne 0) { throw 'shell 链接护栏失败，停止后续扫描。' }
+# Mutation control: deleting the physical-path check must make this same
+# junction fixture fail, proving it exercises the intended defect.
+$oldProbe = $guardFunctions[$guardFunctions.Count - 1]
+$unsafeProbe = $oldProbe.Replace('  physical="$(resolve_probe_path "$p")" || return 1', '').Replace('  is_shim_path "$physical" && return 1', '')
+if ($unsafeProbe -eq $oldProbe) { throw '无法构造链接护栏对照，拒绝声称覆盖已验证。' }
+$unsafeFunctions = @($guardFunctions.ToArray()); $unsafeFunctions[$unsafeFunctions.Count - 1] = $unsafeProbe
+$unsafeGuardScript = Join-Path $fx 'link-guard-unsafe-control.sh'
+[IO.File]::WriteAllText($unsafeGuardScript, ($unsafeFunctions -join "`n") + "`n" + $linkBody, (New-Object Text.UTF8Encoding $false))
+$unsafeOutput = @(& $bash $unsafeGuardScript 2>&1); $unsafeCode = $LASTEXITCODE
+Check 'shell 链接夹具能识别移除物理路径护栏的缺陷' ($unsafeCode -eq 1 -and ($unsafeOutput -join ' ') -match 'linked shim was accepted')
+$env:MISE_SHIMS_DIR = ''
 
 # 子进程一律在沙箱目录里跑：即使有工具想往"当前目录"写缓存，也只会写进沙箱。
 Push-Location $fx
@@ -168,6 +289,12 @@ try {
     try { $sh  = $shJson  | ConvertFrom-Json } catch { $sh  = $null }
     Check 'census.ps1 输出了可解析的 JSON' ($null -ne $ps1)
     Check 'census.sh 输出了可解析的 JSON'  ($null -ne $sh)
+    if ($null -ne $ps1 -and $null -ne $sh) {
+        $outsidePs = @($ps1.runtimes | Where-Object { $_.path -and -not "$($_.path)".StartsWith($fx + '\', [StringComparison]::OrdinalIgnoreCase) })
+        $outsideSh = @($sh.runtimes | Where-Object { $_.path -and -not "$($_.path)".StartsWith($fxMsys + '/', [StringComparison]::OrdinalIgnoreCase) -and -not "$($_.path)".StartsWith($env:TOOLKIT_PARITY_ROOT_ALT + '/', [StringComparison]::OrdinalIgnoreCase) })
+        Check '两个扫描器的候选运行时均在临时目录内' ($outsidePs.Count -eq 0 -and $outsideSh.Count -eq 0)
+        Check 'shell 扫描器可发现两个受控运行时' (@($sh.runtimes).Count -ge 2) "实际：$((@($sh.runtimes) | ForEach-Object { $_.path }) -join ' | ')"
+    }
     if ($null -eq $ps1 -or $null -eq $sh) {
         Write-Host "`n census.ps1 原始输出片段: $($ps1Json.Substring(0, [Math]::Min(200, $ps1Json.Length)))" -ForegroundColor DarkGray
         Write-Host " census.sh  原始输出片段: $($shJson.Substring(0, [Math]::Min(200, $shJson.Length)))" -ForegroundColor DarkGray
@@ -202,6 +329,10 @@ foreach ($impl in @(@{ Name = 'census.ps1'; Data = $ps1 }, @{ Name = 'census.sh'
     $name = $impl.Name
     $d = $impl.Data
     Write-Host ("  --- $name 告警: " + ((@($d.warnings) | ForEach-Object { $_.kind } | Sort-Object -Unique) -join ', ')) -ForegroundColor DarkGray
+    Check "$name 不因无关 Python 声明忽略 Node 声明提醒" (@($d.warnings | Where-Object { $_.kind -eq 'UNDECLARED' -and $_.tool -eq 'node' }).Count -eq 1)
+    Check "$name 读取了 rg 项目声明" (@($d.declarations | Where-Object { $_.scope -eq 'project' -and $_.tools.rg -eq '14' }).Count -eq 1)
+    Check "$name 的 PATH 不含 rg" (@($d.resolution | Where-Object { $_.command -eq 'rg' }).Count -eq 0)
+    Check "$name 不误报仓库中的已验证 rg 缺失" (@($d.warnings | Where-Object { $_.kind -eq 'MISSING' -and $_.tool -eq 'rg' }).Count -eq 0)
 
     foreach ($row in $expected) {
         $hit = @(@($d.warnings) | Where-Object {
@@ -212,6 +343,76 @@ foreach ($impl in @(@{ Name = 'census.ps1'; Data = $ps1 }, @{ Name = 'census.sh'
         Check "$name 报出 $($row.kind)（tool=$($row.tool)，含 $($row.needle)）" ($hit.Count -gt 0) '期望来自 tests/fixtures/census-expected.tsv'
     }
 }
+
+    # 新的仓库工具探测必须走超时保护；假 timeout 立即返回 124，不等待真实时间。
+    & $bash -c "printf '#!/bin/sh\necho invoked > `"%s`"\nexit 124\n' '$fxMsys/timeout-invoked' > '$fxMsys/bin/timeout' && chmod +x '$fxMsys/bin/timeout'"
+    if ($LASTEXITCODE -ne 0) { throw '无法创建超时夹具' }
+    $timedSh = (Invoke-Bounded -Exe $bash -Arguments @($censusSh, '--json') -Tag 'sh-rg-timeout') | ConvertFrom-Json
+    $timeoutInvoked = [IO.File]::Exists((Join-Path $fx 'timeout-invoked'))
+    $timedMissing = @($timedSh.warnings | Where-Object { $_.kind -eq 'MISSING' -and $_.tool -eq 'rg' }).Count
+    Check 'shell 仓库版本探测受超时保护且超时不能冒充成功' ($timeoutInvoked -and $timedMissing -eq 1) "timeout=$timeoutInvoked missing=$timedMissing resolution=$(@($timedSh.resolution | Where-Object { $_.command -eq 'rg' } | ForEach-Object { $_.resolvesTo }) -join ',')"
+    # 临时移除保护做对照，确认该测试能抓到直接运行候选的回归。
+    [IO.File]::Delete((Join-Path $fx 'timeout-invoked'))
+    $boundedProbe = 'output="$(run_with_timeout 20 "$candidate" --version | head -n 4)"; rc=$?'
+    $unboundedProbe = 'output="$("$candidate" --version 2>&1)"; rc=$?'
+    if (-not $shSource.Contains($boundedProbe)) { throw '无法构造超时护栏对照测试' }
+    $unboundedSh = Join-Path $isolatedScripts 'census-unbounded.sh'
+    [IO.File]::WriteAllText($unboundedSh, $shSource.Replace($boundedProbe, $unboundedProbe), (New-Object Text.UTF8Encoding $false))
+    $unboundedResult = (Invoke-Bounded -Exe $bash -Arguments @($unboundedSh, '--json') -Tag 'sh-rg-unbounded') | ConvertFrom-Json
+    Check '超时测试能识别直接执行候选的缺陷' (-not [IO.File]::Exists((Join-Path $fx 'timeout-invoked')) -and @($unboundedResult.warnings | Where-Object { $_.kind -eq 'MISSING' -and $_.tool -eq 'rg' }).Count -eq 0)
+    [IO.File]::Delete((Join-Path $fx 'bin\timeout'))
+
+    # timeout 自身若是 shim，不能执行；回退路径使用受限超时和同一假 rg。
+    [void][IO.Directory]::CreateDirectory((Join-Path $fx 'shims'))
+    & $bash -c "printf '#!/bin/sh\necho invoked > `"%s`"\nexit 124\n' '$fxMsys/shim-timeout-invoked' > '$fxMsys/shims/timeout' && chmod +x '$fxMsys/shims/timeout'"
+    if ($LASTEXITCODE -ne 0) { throw '无法创建 timeout shim 夹具' }
+    $normalPathLine = 'PATH="$TOOLKIT_PARITY_ROOT_ALT/bin:$PATH"'
+    $shimPathLine = 'PATH="$TOOLKIT_PARITY_ROOT_ALT/shims:$TOOLKIT_PARITY_ROOT_ALT/bin:$PATH"'
+    if (-not $shSource.Contains($normalPathLine) -or -not $shSource.Contains('run_with_timeout 20 "$candidate" --version')) { throw '无法构造 shim 超时护栏测试' }
+    $shimTimeoutSource = $shSource.Replace($normalPathLine, $shimPathLine).Replace('run_with_timeout 20 "$candidate" --version', 'run_with_timeout 1 "$candidate" --version')
+    $shimTimeoutSh = Join-Path $isolatedScripts 'census-shim-timeout.sh'
+    [IO.File]::WriteAllText($shimTimeoutSh, $shimTimeoutSource, (New-Object Text.UTF8Encoding $false))
+    $shimTimeoutResult = (Invoke-Bounded -Exe $bash -Arguments @($shimTimeoutSh, '--json') -Tag 'sh-shim-timeout') | ConvertFrom-Json
+    Check '超时工具是 shim 时不执行 shim，仍能探测假候选' (-not [IO.File]::Exists((Join-Path $fx 'shim-timeout-invoked')) -and @($shimTimeoutResult.warnings | Where-Object { $_.kind -eq 'MISSING' -and $_.tool -eq 'rg' }).Count -eq 0)
+
+    # 错误输出含数字也不能冒充已验证版本；替换的均是临时假文件。
+    [IO.File]::WriteAllText((Join-Path $rgBin 'rg.cmd'), "@echo off`r`necho error: unsupported 14.1.0`r`n", [Text.Encoding]::ASCII)
+    & $bash -c "printf '#!/bin/sh\necho error: unsupported 14.1.0\n' > '$fxMsys/toolchains/ripgrep/14.1.0/bin/rg' && chmod +x '$fxMsys/toolchains/ripgrep/14.1.0/bin/rg'"
+    if ($LASTEXITCODE -ne 0) { throw '无法创建不可用的 rg 夹具' }
+    $brokenPs = (Invoke-Bounded -Exe $psExe -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $censusPs1, '-Json') -Tag 'ps1-rg-broken') | ConvertFrom-Json
+    $brokenSh = (Invoke-Bounded -Exe $bash -Arguments @($censusSh, '--json') -Tag 'sh-rg-broken') | ConvertFrom-Json
+    Check '两端不会把仓库中的错误版本输出当成可用 rg' (@($brokenPs.warnings | Where-Object { $_.kind -eq 'MISSING' -and $_.tool -eq 'rg' }).Count -eq 1 -and @($brokenSh.warnings | Where-Object { $_.kind -eq 'MISSING' -and $_.tool -eq 'rg' }).Count -eq 1)
+
+    # 节点本身已声明时不能反过来误报；两边仍只读取相同的临时夹具。
+    [IO.File]::WriteAllText((Join-Path $fx 'mise.toml'), "[tools]`nnode = `"22`"`npython = `"3.12`"`njava = `"8`"`n", [Text.Encoding]::ASCII)
+    $declaredPs = Invoke-Bounded -Exe $psExe -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $censusPs1, '-Json') -Tag 'ps1-declared'
+    $declaredSh = Invoke-Bounded -Exe $bash -Arguments @($censusSh, '--json') -Tag 'sh-declared'
+    $declaredPsJson = $declaredPs | ConvertFrom-Json; $declaredShJson = $declaredSh | ConvertFrom-Json
+    Check '两端识别项目 Node 声明后不再提示未声明' (@($declaredPsJson.warnings | Where-Object { $_.kind -eq 'UNDECLARED' -and $_.tool -eq 'node' }).Count -eq 0 -and @($declaredShJson.warnings | Where-Object { $_.kind -eq 'UNDECLARED' -and $_.tool -eq 'node' }).Count -eq 0)
+
+    # Node 与 npm 的版本体系不同；在沙箱中构造 shell 假管理器和假工具。
+    # PowerShell 侧同一行为由 version-contract.ps1 使用替身记录覆盖。
+    $javaFixture = @'
+#!/bin/sh
+echo 'java version "1.8.0_504"' >&2
+'@
+    [IO.File]::WriteAllText((Join-Path $fx 'bin\java'), $javaFixture, (New-Object Text.UTF8Encoding $false))
+    & $bash -c "printf '#!/bin/sh\necho v22.0.0\n' > '$fxMsys/bin/node' && printf '#!/bin/sh\necho 10.9.0\n' > '$fxMsys/bin/npm' && printf '#!/bin/sh\necho node 22.0.0 fixture 22\necho java 8.0.0 fixture 8\necho java 1.8.0_504 fixture 1.8\necho java 11.0.0 fixture 11\n' > '$fxMsys/bin/mise' && chmod +x '$fxMsys/bin/node' '$fxMsys/bin/npm' '$fxMsys/bin/mise' '$fxMsys/bin/java'"
+    if ($LASTEXITCODE -ne 0) { throw '无法创建隔离的 shell 测试工具' }
+    $packageSh = (Invoke-Bounded -Exe $bash -Arguments @($censusSh, '--json') -Tag 'sh-package') | ConvertFrom-Json
+    $npm = @($packageSh.resolution | Where-Object { $_.command -eq 'npm' })
+    Check 'census.sh 隔离夹具确实发现管理器中的 Node 22' ($packageSh.mise.available -and @($packageSh.mise.tools | Where-Object { $_.tool -eq 'node' -and $_.version -eq '22.0.0' }).Count -eq 1)
+    Check 'census.sh 隔离夹具确实解析到 npm 10' ($npm.Count -eq 1 -and $npm[0].version -match '^10\.')
+    Check 'census.sh 不把 npm 版本当成 Node 的 PATH_ORDER' (@($packageSh.warnings | Where-Object { $_.kind -eq 'PATH_ORDER' -and $_.tool -eq 'npm' }).Count -eq 0)
+    $java = @($packageSh.resolution | Where-Object { $_.command -eq 'java' })
+    Check 'census.sh 读取 Java 8 的旧版版本号' ($java.Count -eq 1 -and $java[0].version -eq '1.8.0_504')
+    Check 'Java 1.8 应满足 Java 8 声明' (@($packageSh.warnings | Where-Object { $_.kind -eq 'PATH_ORDER' -and $_.tool -eq 'java' }).Count -eq 0)
+    [IO.File]::WriteAllText((Join-Path $fx 'mise.toml'), "[tools]`njava = `"1.8`"`n", [Text.Encoding]::ASCII)
+    $javaLegacy = (Invoke-Bounded -Exe $bash -Arguments @($censusSh, '--json') -Tag 'sh-java-legacy') | ConvertFrom-Json
+    Check 'Java 1.8 也满足显式 1.8 声明' (@($javaLegacy.mise.tools | Where-Object { $_.tool -eq 'java' -and $_.version -eq '1.8.0_504' }).Count -eq 1 -and @($javaLegacy.warnings | Where-Object { $_.kind -eq 'PATH_ORDER' -and $_.tool -eq 'java' }).Count -eq 0)
+    [IO.File]::WriteAllText((Join-Path $fx 'mise.toml'), "[tools]`njava = `"11`"`n", [Text.Encoding]::ASCII)
+    $javaMismatch = (Invoke-Bounded -Exe $bash -Arguments @($censusSh, '--json') -Tag 'sh-java-mismatch') | ConvertFrom-Json
+    Check 'Java 8 不满足 Java 11 声明时提示 PATH 顺序' (@($javaMismatch.mise.tools | Where-Object { $_.tool -eq 'java' -and $_.version -eq '11.0.0' }).Count -eq 1 -and @($javaMismatch.warnings | Where-Object { $_.kind -eq 'PATH_ORDER' -and $_.tool -eq 'java' }).Count -eq 1)
 
     # ---------- 双语与 JSON 契约 ----------
     # 断言只用 ASCII 匹配：CI runner 多是英文系统，子进程重定向到文件时按 OEM
@@ -263,8 +464,9 @@ foreach ($impl in @(@{ Name = 'census.ps1'; Data = $ps1 }, @{ Name = 'census.sh'
         Check "$($impl.name) 的机器可读字段是纯 ASCII" ($bad.Count -eq 0) ((@($bad | Select-Object -Unique) | Select-Object -First 5) -join '; ')
     }
 } finally {
-    # 先回到原目录再删沙箱：Windows 上不能删除"当前所在"的目录
+    # 先回到原目录再删沙箱：Windows 上不能删除"当前所在"的目录。
     Pop-Location
+    foreach ($name in $originalEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], 'Process') }
 }
 
 # ---------- 收尾 ----------

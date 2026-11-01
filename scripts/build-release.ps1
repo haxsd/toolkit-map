@@ -38,10 +38,14 @@ try {
 
     $required = @(
         'README.md', 'README-EN.md', 'SKILL.md', 'AGENTS.md', 'LICENSE', 'VERSION',
-        'scripts\map.ps1', 'scripts\census.ps1', 'scripts\tools.json',
-        'mcp\server.mjs', 'mcp\lib\protocol.mjs',
+        'scripts\map.ps1', 'scripts\map-core.ps1', 'scripts\toolkit-common.ps1',
+        'scripts\census.ps1', 'scripts\census-data.tsv', 'scripts\census-text.tsv', 'scripts\tools.json', 'scripts\quickstart.ps1',
+        # server.mjs 直接或间接导入这三个模块；缺一个 MCP 服务器就起不来。
+        'mcp\server.mjs', 'mcp\lib\protocol.mjs', 'mcp\lib\runner.mjs', 'mcp\lib\tools.mjs',
         'schemas\result-v2.schema.json', 'schemas\map-v2.schema.json',
-        'docs\contract.md', 'docs\mcp.md', 'templates\agent-tool-rules.md'
+        'docs\contract.md', 'docs\mcp.md',
+        # setup 从 agent-tool-rules.md 提取规则块；cursor 模板是给用户的同一份接入规则的 Cursor 版。
+        'templates\agent-tool-rules.md', 'templates\cursor-toolkit-map.mdc', 'templates\mise-config.toml'
     )
     foreach ($relative in $required) {
         if (-not (Test-Path -LiteralPath (Join-Path $extract $relative))) { throw "运行时包缺少：$relative" }

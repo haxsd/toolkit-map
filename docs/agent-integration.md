@@ -4,6 +4,8 @@
 客户端支持 MCP 时，优先用 [MCP 接入](mcp.md)：配置一次即可直接调用 `toolkit_find`，不依赖模型记住规则文件。下面的规则文件接入是通用回退方案，两者可以同时启用。
 首次试用建议先按 [README](../README.md#首次接入一个项目) 完成一个 Cursor/Codex 项目接入。下面用于选择其他前端、跨项目全局规则或可选技能安装。
 
+`find` 是只读查询：不执行新候选、不写地图；只读发现的新候选保持未验证。地图缺失、过期或候选变化时，先用 `scan` / `update` / `add` 显式维护，再 `find`。
+
 | 前端 | 跨项目使用 | 只在当前项目使用 |
 |---|---|---|
 | MCP 客户端（Cursor / Claude Code / Codex） | 配置一次 `mcpServers`，见 [MCP 接入](mcp.md) | 项目级 `.cursor/mcp.json` / `.mcp.json` |
@@ -16,27 +18,53 @@
 - 通用模板（复制进任意规则文件）：[`templates/agent-tool-rules.md`](../templates/agent-tool-rules.md)
 - Cursor 项目规则（含 frontmatter）：[`templates/cursor-toolkit-map.mdc`](../templates/cursor-toolkit-map.mdc)
 
+**团队共享仓库**：`setup` 生成的规则块和 MCP 配置都包含本机绝对路径（`map.ps1`、Node 可执行文件）。这些路径只对生成它们的机器有效。不要提交到共享仓库；团队成员各自执行 `setup` / `quickstart`，或把 MCP 配置放在用户级、项目内未跟踪的本地文件。项目里只提交不带本机路径的通用模板。
+
 ## 先替换占位路径（必须）
 
-模板里的 `C:/Users/YOUR_USER/Projects/toolkit-map/scripts/map.ps1` 是占位符，**必须换成你本机真实
-绝对路径**。从你的 toolkit-map 安装目录定位 `scripts/map.ps1`；安装为技能时按 `SKILL.md` 的实际位置定位，不要假设它在当前项目下。
+模板里的 `C:/Users/YOUR_USER/Projects/toolkit-map/scripts/map.ps1` 与 `C:/Users/YOUR_USER/.toolkit/map.json` 是占位符，**必须分别换成本机真实的脚本和地图绝对路径**。`setup` 生成规则时会固定本次接入所用地图；MCP 不可用而回退 CLI 时，查询和经授权的维护动作都使用同一个 `-MapFile`。从你的 toolkit-map 安装目录定位 `scripts/map.ps1`；安装为技能时按 `SKILL.md` 的实际位置定位，不要假设它在当前项目下。
 
 ```powershell
 $map="$env:USERPROFILE\Projects\toolkit-map\scripts\map.ps1"   # 按实际情况改
 $project = 'D:\your-project'  # 替换成真实存在的当前项目目录
 ```
 
-Windows 默认策略可能禁止直接执行 `.ps1`。检查源码后，可在当前终端运行 `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`，或单次使用 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File $map <动作与参数>`；无需修改全局策略。agent 新建终端或子进程时应重新采用单次宿主调用；组织组策略的限制需遵循组织要求。
+Windows 默认策略可能禁止直接执行 `.ps1`。不要修改全局执行策略，也不要为了绕过组策略去改注册表；用当前 PowerShell 宿主单次调用（只影响该子进程）：
+
+```powershell
+$ps = (Get-Process -Id $PID).Path
+& $ps -NoProfile -ExecutionPolicy Bypass -File $map status -Json
+```
+
+组织策略若仍拒绝 `Bypass`，按组织流程申请允许的执行策略。agent 新建终端或子进程时应重新采用单次宿主调用。
 
 ## 核心契约（Windows 完整地图）
 
-1. `& $map status -Json`；无地图、过旧或 PATH 变化时执行 `& $map scan -Json`。
-2. `& $map find <工具> -Project <当前项目> -Json`，**find 每次显式传当前项目**，不硬编码项目路径。
+1. `& $map status -Json`；无地图、过旧或候选失效时，先取得用户同意，再用 `scan` / `update` / `add` 维护。PATH 可能仅因会话不同而变化，先确认实际影响。
+2. `& $map find <工具> -Project <当前项目> -Json`，**find 每次显式传当前项目**，不硬编码项目路径。`find` 只读：不执行新候选、不写地图；只读发现的新候选保持未验证。
 3. 检查退出码为 0、`ok:true`、`status:ok`、`requirement` 和 `verification:verified`，再使用返回的绝对 `path`。
-4. 未满足要求时不自行加 `-AllowUnverified` / `-AllowIdeHost`，不执行 shim；先报告项目要求、发现的副本、当前解析到谁。
-5. `find` 失败只说明本次范围没有合适副本，不授权安装；明确需要时先 `install <工具>@<版本> -WhatIf -Json` 看计划，再单独安装。已有副本用 `add` 登记，不搬路径、不改全局 PATH。
+4. 未满足要求时先诊断；`find` 不支持 `-AllowUnverified`，不自行加 `-AllowIdeHost`，不执行 shim；先报告项目要求、发现的副本、当前解析到谁。
+5. `find` 失败只说明当前地图没有合适副本，不授权安装；先判断是地图过期、缺少候选还是版本不符，再用 `scan` / `update` / `add` 显式维护。明确需要安装时先 `install <工具>@<版本> -WhatIf -Json` 看计划，再单独安装。已有副本用 `add` 登记，不搬路径、不改全局 PATH。
 6. 全局规则可选（跨项目复用），但**必须有一个 agent 能读到的持久入口**；仅安装或写好技能文件不能证明 agent 真会调用。
 7. 仅预计安装占用 ≥1 GB 时询问安装位置，下载包大小不触发询问；所有新安装都检查目标盘与暂存/缓存盘空间。估算与选盘方法见 [存储与大工具安装](storage.md)。
+
+## find 严格只读与显式维护
+
+`find` / `toolkit_find` 只负责“按现有地图和项目声明选择”，不承担维护：
+
+- 不执行新候选：即使只读发现新路径，也不会运行它取版本；新候选保持 `unverified`，不会被默认选中；
+- 不写地图：查询不会更新 `scannedAt` / `updatedAt`、候选列表或首选路径；
+- 验证靠显式维护：`scan` / `update` / `add` 才会实际探测并把候选变成可用的已验证副本。
+
+需要改变地图时，由人显式执行：
+
+```powershell
+& $ps -NoProfile -ExecutionPolicy Bypass -File $map scan -Json              # 完整重扫
+& $ps -NoProfile -ExecutionPolicy Bypass -File $map update node -Json       # 只重探已有条目
+& $ps -NoProfile -ExecutionPolicy Bypass -File $map add node -Path 'D:\existing\node.exe' -Json  # 登记已有副本
+```
+
+MCP 的维护工具（`toolkit_scan` / `toolkit_update` / `toolkit_add`）遵循同一原则：默认只返回预览，`confirm:true` 才请求执行。**`confirm:true` 不能证明操作者是人或已获用户授权**；客户端必须展示将要发生的变更并取得用户明确同意。执行 `scan` / `update` / `add` 会为取版本探测本机候选程序，因此更要先确认。维护工具不安装工具、不改 PATH。见 [MCP 维护工具](mcp.md#维护工具)。
 
 ## Cursor
 
@@ -95,6 +123,10 @@ $claudeRules = Join-Path $env:USERPROFILE '.claude\CLAUDE.md'
 `-RulesFile` 覆盖默认的项目 `AGENTS.md`；`-WhatIf` 纯只读。`doctor` 同时检查宿主、地图和新鲜度，接入检查只针对**指定文件**的标记区与
 当前 script 绝对路径，且 `agentVerified` 始终 `false`——它不访问账号/UI 规则，也无法证明模型行为。
 
+`setup` 写入的标记块包含本机 `map.ps1` 绝对路径。共享项目里不要把这个块提交上去；每人本地执行 `setup`，或改用本地未跟踪的规则文件。升级源码目录后路径会变化，需要重新生成。
+
+`setup` 生成的规则块应先说明 MCP 优先、再给脚本回退，并说明 `find` 只读、维护用 `scan` / `update` / `add`。用 `-WhatIf -Json` 的 `preview` 核对当前文案；如果仍是旧顺序，先更新源码再重新 `setup`，不要手工改已部署块。
+
 ```powershell
 & $map setup -Project $project -WhatIf -Json
 & $map setup -Project $project -Json
@@ -109,9 +141,9 @@ Git 克隆安装：先检查本地修改，工作区干净时更新到稳定标�
 $installDir = "$env:USERPROFILE\Projects\toolkit-map" # 按真实安装目录改
 git -C $installDir status --short
 # 确认上一步没有本地修改后执行；任一步失败就先处理，别继续。
-git -C $installDir fetch --depth 1 origin tag v1.1.3
+git -C $installDir fetch --depth 1 origin tag v2.0.0
 if ($LASTEXITCODE -ne 0) { throw '获取版本失败' }
-git -C $installDir switch --detach v1.1.3
+git -C $installDir switch --detach v2.0.0
 if ($LASTEXITCODE -ne 0) { throw '切换版本失败' }
 $map = Join-Path $installDir 'scripts\map.ps1'
 ```
@@ -148,7 +180,7 @@ New-Item -ItemType Junction -Path (Join-Path $skillParent 'toolkit-map') -Target
 
 ```powershell
 $project = (Get-Location).Path
-$installDir = 'C:\your-install\toolkit-map-v1.1.3' # 替换为你解压后的源码根目录
+$installDir = 'C:\your-install\toolkit-map-v2.0.0' # 替换为你解压后的源码根目录
 $map = Join-Path $installDir 'scripts\map.ps1'
 $ps = (Get-Process -Id $PID).Path
 & $ps -NoProfile -ExecutionPolicy Bypass -File $map setup -Project $project -WhatIf -Json

@@ -11,6 +11,17 @@ import { SERVER_NAME, SERVER_TITLE } from './lib/tools.mjs';
 const SERVER_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(SERVER_PATH), '..');
 const MAX_LINE_LENGTH = 1024 * 1024;
+// Captured once at startup: the client cannot choose a different map file or
+// script, and previews must describe the environment the server actually got.
+const RUNNER_CONFIG = {
+  // Startup snapshots: previews must describe the environment and working
+  // directory map.ps1 will actually get, and the client cannot choose either.
+  env: { ...process.env },
+  cwd: process.cwd(),
+  ...(process.env.TOOLKIT_MAP_SCRIPT ? { script: process.env.TOOLKIT_MAP_SCRIPT } : {}),
+  ...(process.env.TOOLKIT_MAP_POWERSHELL ? { powershell: process.env.TOOLKIT_MAP_POWERSHELL } : {}),
+  ...(process.env.TOOLKIT_MAP_FILE ? { mapFile: process.env.TOOLKIT_MAP_FILE } : {})
+};
 
 function readVersion() {
   try {
@@ -132,7 +143,7 @@ async function main() {
 
   if (argv.includes('--check')) {
     try {
-      const result = await runMap('status', {});
+      const result = await runMap('status', {}, RUNNER_CONFIG);
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       process.exitCode = result.ok ? 0 : 1;
     } catch (error) {
@@ -145,6 +156,7 @@ async function main() {
 
   const handler = createProtocolHandler({
     runMap,
+    runMapConfig: RUNNER_CONFIG,
     serverInfo: { name: SERVER_NAME, title: SERVER_TITLE, version: readVersion() },
     defaultProject: process.env.TOOLKIT_MAP_PROJECT || process.env.CLAUDE_PROJECT_DIR || process.cwd()
   });

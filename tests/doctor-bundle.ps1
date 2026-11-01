@@ -47,6 +47,20 @@ try {
     Check 'bundle.version 与 VERSION 一致' ($withMap.bundle.version -eq $version)
     Check 'bundle.checks 包含检查项' (@($withMap.bundle.checks).Count -ge 4)
     Check 'bundle.generatedAt 非空' (-not [string]::IsNullOrWhiteSpace($withMap.bundle.generatedAt))
+
+    # 不同 shell 的 PATH 不同不代表完整扫描过期；这里只改临时地图快照。
+    $fixtureMap = [IO.File]::ReadAllText($mapFile) | ConvertFrom-Json
+    $fixtureMap.scannedAt = (Get-Date).ToString('o')
+    $fixtureMap.pathSnapshot = 'C:\fixture\a-different-session'
+    [IO.File]::WriteAllText($mapFile, ($fixtureMap | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding $true))
+    $statusOutput = & $powerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $mapPath status -MapFile $mapFile -Json
+    $status = $statusOutput | Out-String | ConvertFrom-Json
+    Check 'PATH 会话不同且扫描新鲜时单独提示，不自动建议反复重扫' ($status.pathChanged -and -not $status.stale -and $status.hint -match '当前进程' -and $status.hint -notmatch '建议 scan')
+    $doctorOutput = & $powerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $mapPath doctor -Project $project -MapFile $mapFile -Json
+    $doctor = $doctorOutput | Out-String | ConvertFrom-Json
+    $freshness = @($doctor.checks | Where-Object { $_.name -eq 'freshness' })
+    $pathContext = @($doctor.checks | Where-Object { $_.name -eq 'path_context' })
+    Check 'doctor 区分扫描新鲜度和不同进程 PATH' ($freshness.Count -eq 1 -and $freshness[0].ok -and $pathContext.Count -eq 1 -and $pathContext[0].detail -match '不同')
 } finally {
     Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

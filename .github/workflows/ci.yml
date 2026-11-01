@@ -177,19 +177,22 @@ jobs:
           exit $code
 
   mcp:
-    # MCP 适配器是零依赖 Node 18+ stdio 服务器；两个平台跑纯协议/运行器测试，
-    # Windows 再用临时地图跑真实 map.ps1 集成测试。地图本身仍由上面的 PowerShell job 覆盖。
+    # MCP 适配器是零依赖 Node 18+ stdio 服务器；矩阵覆盖最低 Node 18 与 Node 22，
+    # 两个平台跑纯协议/运行器测试，Windows 再用临时地图跑真实 map.ps1 集成测试。
+    # 不执行 npm install：测试只用 Node 内置模块，不引入生产依赖。
+    # 地图本身仍由上面的 PowerShell job 覆盖。
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
+        node: ['18.x', '22.x']
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node }}
       - name: MCP 语法检查
         run: |
           node --check mcp/server.mjs
@@ -197,10 +200,10 @@ jobs:
           node --check mcp/lib/runner.mjs
           node --check mcp/lib/tools.mjs
       - name: MCP 协议与运行器测试
-        run: node --test mcp/test/protocol.test.mjs mcp/test/runner.test.mjs mcp/test/server.test.mjs mcp/test/contract.test.mjs
+        run: node --test mcp/test/protocol.test.mjs mcp/test/runner.test.mjs mcp/test/server.test.mjs mcp/test/maintenance.test.mjs mcp/test/contract.test.mjs
       - name: MCP 真实地图集成测试（Windows）
         if: runner.os == 'Windows'
-        run: node --test mcp/test/integration.test.mjs
+        run: node --test mcp/test/integration.test.mjs mcp/test/maintenance-integration.test.mjs
 
   windows-baseline:
     # 收敛计划 P1 起：首扫基线。真实 runner 上用临时地图跑 map.ps1 scan，

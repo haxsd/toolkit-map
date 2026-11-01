@@ -15,16 +15,73 @@ function Test-ToolkitUnderRoot {
     } catch { return $false }
 }
 
-function Test-ToolkitShimPath {
+# Resolve reparse points one component at a time without executing the file.
+# An inaccessible, unsupported, dangling or cyclic link returns an empty path:
+# callers must treat that as unverified rather than guessing that probing is safe.
+function Resolve-ToolkitProbePath {
+    param([string]$Value)
+    if (-not $Value) { return '' }
+    try { $path = [IO.Path]::GetFullPath($Value) } catch { return '' }
+    $seen = @{}
+    :resolve while ($true) {
+        $key = Get-ToolkitNormalizedPath $path
+        if ($seen.ContainsKey($key) -or $seen.Count -ge 40) { return '' }
+        $seen[$key] = $true
+        $root = [IO.Path]::GetPathRoot($path)
+        if (-not $root) { return '' }
+        $parts = @($path.Substring($root.Length) -split '[\\/]' | Where-Object { $_ })
+        $current = $root
+        for ($i = 0; $i -lt $parts.Count; $i++) {
+            try {
+                $current = Join-Path $current $parts[$i]
+                $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
+            } catch { return '' }
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) { continue }
+            $targets = @($item.Target | Where-Object { $_ })
+            if ($targets.Count -ne 1) { return '' }
+            $target = [string]$targets[0]
+            try {
+                if (-not [IO.Path]::IsPathRooted($target)) { $target = Join-Path (Split-Path $current -Parent) $target }
+                for ($j = $i + 1; $j -lt $parts.Count; $j++) { $target = Join-Path $target $parts[$j] }
+                $path = [IO.Path]::GetFullPath($target)
+            } catch { return '' }
+            continue resolve
+        }
+        return $path
+    }
+}
+
+function Test-ToolkitShimPathLexical {
     param([string]$Value)
     $p = $Value -replace '\\', '/'
     # shims 是间接层；目录名判断也覆盖非默认的 mise/asdf/pyenv 数据目录。
     if ($p -match '(?i)/shims/') { return $true }
     if ([IO.Path]::GetFileName($Value) -match '(?i)^(node|python|java)[-_]?v?\d.*\.(cmd|bat|ps1|sh)$') { return $true }
-    foreach ($root in @($env:MISE_SHIMS_DIR, $env:VOLTA_HOME)) {
-        if ($root -and (Test-ToolkitUnderRoot $Value $root)) { return $true }
-    }
+    if ($env:MISE_SHIMS_DIR -and (Test-ToolkitUnderRoot $Value $env:MISE_SHIMS_DIR)) { return $true }
+    # VOLTA_HOME contains both the shims in bin and real runtimes in tools/image.
+    # Excluding the whole root incorrectly made real Volta runtimes unusable.
+    if ($env:VOLTA_HOME -and (Test-ToolkitUnderRoot $Value (Join-Path $env:VOLTA_HOME 'bin'))) { return $true }
+    if ($env:LOCALAPPDATA -and (Test-ToolkitUnderRoot $Value (Join-Path $env:LOCALAPPDATA 'Volta\bin'))) { return $true }
     if ($env:USERPROFILE -and (Test-ToolkitUnderRoot $Value (Join-Path $env:USERPROFILE '.volta\bin'))) { return $true }
+    return $false
+}
+
+function Test-ToolkitShimPath {
+    param([string]$Value)
+    if (Test-ToolkitShimPathLexical $Value) { return $true }
+    $physical = Resolve-ToolkitProbePath $Value
+    if (-not $physical) { return $false }
+    if (Test-ToolkitShimPathLexical $physical) { return $true }
+    # A custom shim root can itself be a junction. Compare both physical paths.
+    $roots = @($env:MISE_SHIMS_DIR)
+    if ($env:VOLTA_HOME) { $roots += Join-Path $env:VOLTA_HOME 'bin' }
+    if ($env:LOCALAPPDATA) { $roots += Join-Path $env:LOCALAPPDATA 'Volta\bin' }
+    if ($env:USERPROFILE) { $roots += Join-Path $env:USERPROFILE '.volta\bin' }
+    foreach ($root in $roots) {
+        if (-not $root) { continue }
+        $physicalRoot = Resolve-ToolkitProbePath $root
+        if ($physicalRoot -and (Test-ToolkitUnderRoot $physical $physicalRoot)) { return $true }
+    }
     return $false
 }
 
@@ -72,6 +129,7 @@ function Test-ToolkitProbeSafe {
     # node 启动器实际会用的 node 也必须安全。解析不出解释器时宁可不执行。
     param([string]$Path, [int]$Depth = 0)
     if (-not $Path -or $Depth -gt 3 -or (Test-ToolkitShimPath $Path)) { return $false }
+    if (-not (Resolve-ToolkitProbePath $Path)) { return $false }
     $shebang = Get-ToolkitShebang $Path
     $isScript = [bool]$shebang -or ([IO.Path]::GetExtension($Path).ToLowerInvariant() -in @('.cmd', '.bat', '.ps1', '.sh'))
     if ($shebang) {
@@ -309,6 +367,8 @@ function Get-ToolkitCanonicalName {
     }
     switch ($Name.ToLowerInvariant()) {
         'nodejs' { return 'node' }
+        'python3' { return 'python' }
+        'golang' { return 'go' }
         'ripgrep' { return 'rg' }
         default { return $Name.ToLowerInvariant() }
     }
@@ -321,48 +381,93 @@ function Read-ToolkitDeclaredTools {
     $base = [IO.Path]::GetFileName($File)
     $text = [IO.File]::ReadAllText($File)
     if ($base -eq 'package.json') {
-        $package = $text | ConvertFrom-Json
-        if ($package.engines.node) { $tools.node = "$($package.engines.node)" }
+        # package.json is a Node-specific declaration source. A malformed
+        # document or engines value cannot safely be treated as no constraint,
+        # but it must not block unrelated tool lookups such as git.
+        try { $package = $text | ConvertFrom-Json } catch { $package = $null }
+        if ($null -eq $package -or $package -is [array] -or $package -isnot [pscustomobject]) {
+            $unsupported.Add('node')
+        } elseif ($package.PSObject.Properties['engines']) {
+            if ($null -eq $package.engines -or $package.engines -is [array] -or $package.engines -isnot [pscustomobject]) {
+                $unsupported.Add('node')
+            } elseif ($package.engines.PSObject.Properties['node']) {
+                if ($package.engines.node -is [string] -and -not [string]::IsNullOrWhiteSpace($package.engines.node)) {
+                    $tools.node = $package.engines.node
+                } else { $unsupported.Add('node') }
+            }
+        }
     } elseif ($base -in @('.nvmrc', '.node-version', '.python-version')) {
         $name = if ($base -eq '.python-version') { 'python' } else { 'node' }
         $tools[$name] = $text.Trim()
     } else {
         $inTools = $false
+        $atRoot = $true
+        $continuation = ''
+        $keyPattern = '(?:[A-Za-z0-9_-]+|"[^"]+"|''[^'']+'')'
+        $stringPattern = '(?:"[^"]*"|''[^'']*'')'
+        $pairPattern = "(?<key>$keyPattern)\s*=\s*(?<value>$stringPattern)"
+        $record = {
+            param([string]$RawKey, [string]$RawValue)
+            $key = Get-ToolkitCanonicalName ($RawKey.Trim('"').Trim("'"))
+            $value = $RawValue.Trim()
+            if ($value -match '^(["''])([^"'']*)\1\s*(?:#.*)?$') {
+                $tools[$key] = $Matches[2]
+            } elseif ($value -match '^\[\s*(?:["''][^"'']+["'']\s*,?\s*)*\]\s*(?:#.*)?$') {
+                $tools[$key] = (($value -replace '\s+#.*$', '') -replace '[\[\]"'']', '').Trim()
+            } else { $unsupported.Add($key) }
+        }
         foreach ($line in ($text -split "`r?`n")) {
             $t = $line.Trim()
             if (-not $t -or $t.StartsWith('#')) { continue }
             if ($base -eq '.tool-versions') {
                 if ($t -match '^(\S+)\s+(.+?)(?:\s+#.*)?$') {
                     $name = Get-ToolkitCanonicalName $Matches[1]
-                    if ($name -eq 'python3') { $name = 'python' }
                     $tools[$name] = ($Matches[2] -replace '\s+', ',')
                 }
                 continue
             }
+            # A multiline value belongs to its original key; its continuation
+            # lines must not make unrelated tools unsupported.
+            if ($continuation) {
+                if ($t -match '\]\s*(?:#.*)?$') { $continuation = '' }
+                continue
+            }
             if ($t -match '^\[\[?\s*(.+?)\s*\]\]?') {
                 $section = $Matches[1]
+                $atRoot = $false
                 $inTools = ($section -match '^(tools|"tools"|''tools'')$')
                 if ($section -match '^(?:tools|"tools"|''tools'')\s*\.\s*([A-Za-z0-9_-]+|"[^"]+"|''[^'']+'')') {
-                    $key = Get-ToolkitCanonicalName ($Matches[1].Trim('"').Trim("'"))
-                    if ($key -eq 'python3') { $key = 'python' }
-                    $unsupported.Add($key)
+                    $unsupported.Add((Get-ToolkitCanonicalName ($Matches[1].Trim('"').Trim("'"))))
                 }
                 continue
             }
-            if (-not $inTools) { continue }
+            if (-not $inTools) {
+                if ($atRoot -and $t -match "^(?:tools|`"tools`"|'tools')\s*\.\s*($keyPattern)\s*=\s*(.+)$") {
+                    $rawKey = $Matches[1]; $rawValue = $Matches[2]
+                    & $record $rawKey $rawValue
+                } elseif ($atRoot -and $t -match '^(?:tools|"tools"|''tools'')\s*=\s*(.+)$') {
+                    $inline = $Matches[1].Trim()
+                    if ($inline -match "^\{\s*$pairPattern(?:\s*,\s*$pairPattern)*\s*,?\s*\}\s*(?:#.*)?$") {
+                        foreach ($pair in [regex]::Matches($inline, $pairPattern)) { & $record $pair.Groups['key'].Value $pair.Groups['value'].Value }
+                    } else { $unsupported.Add('*') }
+                }
+                continue
+            }
             if ($t -match '^([A-Za-z0-9_-]+|"[^"]+"|''[^'']+'')\s*\.') {
                 $unsupported.Add((Get-ToolkitCanonicalName ($Matches[1].Trim('"').Trim("'"))))
                 continue
             }
             if ($t -match '^([A-Za-z0-9_-]+|"[^"]+"|''[^'']+'')\s*=\s*(.+)$') {
-                $key = Get-ToolkitCanonicalName ($Matches[1].Trim('"').Trim("'"))
-                if ($key -eq 'python3') { $key = 'python' }
-                $value = ($Matches[2] -replace '\s+#.*$', '').Trim()
-                if ($value -match '^(["'']).*\1$' -or $value -match '^\[\s*(?:["''][^"'']+["'']\s*,?\s*)*\]$') {
-                    $tools[$key] = ($value -replace '[\[\]"'']', '').Trim()
-                } else { $unsupported.Add($key) }
+                $rawKey = $Matches[1]; $rawValue = $Matches[2].Trim()
+                if ($rawValue -match '^\[' -and $rawValue -notmatch '\]\s*(?:#.*)?$') {
+                    $continuation = Get-ToolkitCanonicalName ($rawKey.Trim('"').Trim("'"))
+                    $unsupported.Add($continuation)
+                    continue
+                }
+                & $record $rawKey $rawValue
             } else { $unsupported.Add('*') }
         }
+        if ($continuation) { $unsupported.Add('*') }
     }
     return @{ tools = $tools; unsupported = $unsupported.ToArray() }
 }

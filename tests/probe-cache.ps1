@@ -110,6 +110,14 @@ try {
     Check '挂住的那个结果是 timeout' ($h.reason -eq 'timeout' -and -not $h.ok -and $h.cached) "reason=$($h.reason)"
     $n10 = Get-Launches
     Check '-Throttle 1 不预热（等于原来的串行）' ((Invoke-ToolkitProbeBatch -Jobs @(@{ exe = $other; args = @('-x') }) -Throttle 1) -eq 0 -and (Get-Launches) -eq $n10)
+    $script:ToolCatalog = (ConvertTo-HashtableDeep ([IO.File]::ReadAllText((Join-Path $scripts 'tools.json')) | ConvertFrom-Json)).tools
+    $hostPath = (Get-Process -Id $PID).Path
+    $hostJob = Get-ExeVersionProbeJob $hostPath
+    Check 'PowerShell 版本探测保留完整的参数组' (@($hostJob.args).Count -eq 4 -and $hostJob.args[0] -eq '-NoProfile' -and $hostJob.args[2] -eq '-Command') "args=$($hostJob.args -join ',')"
+    $script:seenHostArgs = @()
+    function Get-ProbeText { param([string]$Exe, [string[]]$Arguments, [int]$MaxLines = 4) $script:seenHostArgs += ,@($Arguments); return 'PowerShell 5.1.0' }
+    $hostVersion = Get-ExeVersion $hostPath
+    Check '实际版本读取只调用一次完整 PowerShell 参数组' ($hostVersion -eq '5.1.0' -and $script:seenHostArgs.Count -eq 1 -and @($script:seenHostArgs[0]).Count -eq 4) "calls=$($script:seenHostArgs.Count)"
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }

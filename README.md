@@ -70,15 +70,22 @@ toolkit-map 在调用前回答三个问题：
 
 **要求**：Windows + Windows PowerShell 5.1 或 PowerShell 7 + Git。想用 MCP 接入时另需 Node.js 18+；地图本身不依赖 Node。
 
-想先看效果？在源码目录运行 `.\scripts\demo.ps1`（临时地图，不改本机）。想一次完成下载、项目接入并生成 MCP 配置：
+想先看效果？在源码目录运行 `.\scripts\demo.ps1`（临时地图，不改本机）。想一次完成下载、项目接入并写入项目级 MCP 配置：
 
 ```powershell
+$project = (Get-Location).Path
 $d = Join-Path $env:USERPROFILE 'Projects\toolkit-map'
-git clone --branch v1.1.3 --depth 1 https://github.com/haxsd/toolkit-map $d
-& powershell -NoProfile -ExecutionPolicy Bypass -File "$d\scripts\quickstart.ps1" -Project (Get-Location).Path -Mcp -WriteMcp
+git clone --branch v2.0.0 --depth 1 https://github.com/haxsd/toolkit-map $d
+if ($LASTEXITCODE -ne 0) { throw '下载未完成。已有安装请按升级指南处理，不要覆盖。' }
+$ps = (Get-Process -Id $PID).Path
+& $ps -NoProfile -ExecutionPolicy Bypass -File "$d\scripts\quickstart.ps1" -Project $project -Mcp -WriteMcp
 ```
 
-`quickstart` 只写项目 `AGENTS.md` 并打印 MCP 配置，不覆盖客户端已有的服务器配置。已经运行上面的块时可直接跳到第 2 步；下面是分步说明。加 `-WriteMcp` 可直接写入项目级 Cursor `.cursor/mcp.json`（默认）或 Claude Code `.mcp.json`（`-McpClient claude` / `both`），修改前备份并保留其他服务器。
+`quickstart` 会写项目 `AGENTS.md`，用地图验证 Node 18+，核对 `mcp/server.mjs --print-config` 的 JSON，再执行 `--check`；全部通过后才写项目级 MCP 配置（默认 Cursor `.cursor/mcp.json`；`-McpClient claude` 写 `.mcp.json`，`both` 两个都写）。修改前备份并保留其他服务器；已有文件不是合法 JSON 或结构不符合预期时拒绝写入。
+
+看退出码，不要只看打印：`0` 表示全部完成；`2` 表示**部分完成**——项目规则已经接入，但 MCP 没写成（例如没有 Node 18+、配置生成失败或启动检查失败），修好后重跑同一命令；`1` 表示项目接入本身失败。运行成功的话直接跳到第 4 步；下面是分步说明。
+
+`-ExecutionPolicy Bypass` 只作用于这一个子进程，不修改用户或机器策略。组织策略若仍拒绝 Bypass，按组织流程申请允许的执行策略，不要改注册表或组策略来绕过。
 
 ### 1. 下载稳定版
 
@@ -87,7 +94,7 @@ git clone --branch v1.1.3 --depth 1 https://github.com/haxsd/toolkit-map $d
 ```powershell
 $project = (Get-Location).Path
 $installDir = Join-Path $env:USERPROFILE 'Projects\toolkit-map'
-git clone --branch v1.1.3 --depth 1 https://github.com/haxsd/toolkit-map $installDir
+git clone --branch v2.0.0 --depth 1 https://github.com/haxsd/toolkit-map $installDir
 if ($LASTEXITCODE -ne 0) { throw '下载未完成。已有安装请按升级指南处理，不要覆盖。' }
 $map = Join-Path $installDir 'scripts\map.ps1'
 $ps = (Get-Process -Id $PID).Path
@@ -110,7 +117,11 @@ toolkit find git -Project $project
 
 `doctor` 正常时返回 `ok: true`、`status: ok`；`find git` 显示绝对路径、版本与 `验证 verified`。异常时按 `checks` 排查，见[故障排查](docs/troubleshooting.md)。
 
-### 3. 在 agent 里验收
+### 3. 接入 MCP（推荐，可选）
+
+MCP 客户端可直接调用地图工具，不依赖模型记住规则文件。已经用上面的 one-paste 加 `-Mcp -WriteMcp` 成功写入的，重启客户端后直接跳到第 4 步；否则按[用 MCP 接入](#用-mcp-接入推荐)生成并校验配置。手写配置时只合并 `toolkit-map` 条目，不要覆盖其他服务器；Codex 的 TOML 要替换已有的 `[mcp_servers.toolkit-map]` 段，不能重复追加。
+
+### 4. 在 agent 里验收
 
 在同一项目新开一个 Cursor Agent Chat 或 Codex 会话，发送：
 
@@ -122,8 +133,10 @@ toolkit find git -Project $project
 
 ```powershell
 toolkit status -Json                        # 地图新鲜度、PATH 变化
-toolkit find node -Project $project -Json   # 项目要求 + 绝对路径
-toolkit add node -Path 'C:\existing-node\node.exe' -Json   # 登记已有副本
+toolkit find node -Project $project -Json   # 只读查询；不执行新候选、不写地图
+toolkit scan -Json                          # 显式重扫（会写地图）
+toolkit update node -Json                   # 只重探已有条目（会写地图）
+toolkit add node -Path 'C:\existing-node\node.exe' -Json   # 登记已有副本（会写地图）
 toolkit install rg@latest -WhatIf -Json     # 查看安装计划，不联网
 ```
 
@@ -135,16 +148,19 @@ toolkit install rg@latest -WhatIf -Json     # 查看安装计划，不联网
 
 ```powershell
 # 1. 用地图找一个已验证的 Node 18+，不要用 PATH 上的旧版本
+#    find 只读：先确保 setup 或 scan 已建图；它不执行新候选、不写地图
 $node = (& $map find node -Version '>=18' -Json | ConvertFrom-Json).path
 
 # 2. 生成 Cursor / Claude Code 的 mcpServers JSON；Codex 用 --print-config codex
 & $node (Join-Path $installDir 'mcp\server.mjs') --print-config
 
-# 3. 先脱离客户端验证服务器和地图
+# 3. 先脱离客户端验证服务器和地图；检查退出码，不要只看输出
 & $node (Join-Path $installDir 'mcp\server.mjs') --check
 ```
 
-把输出合并进 Cursor 的 `~/.cursor/mcp.json`（或项目 `.cursor/mcp.json`）、Claude Code 的 `.mcp.json`，或按 TOML 粘进 `~/.codex/config.toml`，重启客户端。新会话里应能看到 `toolkit_find`、`toolkit_status`、`toolkit_doctor` 三个只读工具。
+把输出合并进 Cursor 的 `~/.cursor/mcp.json`（或项目 `.cursor/mcp.json`）、Claude Code 的 `.mcp.json`，或按 TOML 粘进 `~/.codex/config.toml`，重启客户端。Codex 要**替换**已有的 `[mcp_servers.toolkit-map]` 整段（含 `env`），不要重复追加；重复 TOML 表会报错或被后者覆盖。
+
+MCP 适配器提供三个查询工具和三个维护工具。`toolkit_find` / `toolkit_status` / `toolkit_doctor` 只读；`toolkit_scan` / `toolkit_update` / `toolkit_add` 默认只返回预览，`confirm:true` 才请求执行。维护工具可能为取版本而探测本机候选程序，执行前必须取得用户明确授权；`confirm:true` 本身不能证明是人或已授权。维护工具不安装工具、不改 PATH，契约见 [MCP 接入](docs/mcp.md#维护工具)。
 
 MCP 与规则文件可以同时启用；MCP 不会自动改写 `AGENTS.md`，`setup` 也不会替你写 MCP 配置。完整配置、协议版本与故障排查见 [MCP 接入](docs/mcp.md)。
 
@@ -158,6 +174,8 @@ MCP 与规则文件可以同时启用；MCP 不会自动改写 `AGENTS.md`，`se
 
 任何能读取规则文件的 agent 都可以接入。完整位置、模板与生效验收见 [agent 接入指南](docs/agent-integration.md)。
 
+**团队共享仓库**：`setup` 写进项目 `AGENTS.md` 的规则块包含本机 `map.ps1` 绝对路径，`-WriteMcp` 写出的 MCP 配置也包含本机 Node 绝对路径。不要把这两类本机路径提交到团队仓库；每位成员在自己机器上生成，或把 MCP 配置放在客户端用户级、项目内未跟踪的本地文件。项目里需要共享接入说明时，只提交不带本机路径的通用模板，并让各人本地执行 `setup`。
+
 ## 能力范围
 
 | 能力 | 当前支持 | 边界 |
@@ -167,15 +185,17 @@ MCP 与规则文件可以同时启用；MCP 不会自动改写 `AGENTS.md`，`se
 | 项目声明 | 常见 `mise.toml`、`.tool-versions`、Node/Python 版本文件和 Node `engines` | 轻量读取器，不解释完整 TOML / mise 环境语义 |
 | portable 安装 | gh、jadx、rg/ripgrep、fd（Windows x64）、adb；自定义 ZIP | 不自动安装所有能发现的工具；下载版本在最终位置再次验证 |
 | 安装器 | 明确使用 `-Via winget` | 位置由包管理器决定 |
-| MCP 接入 | `toolkit_find` / `toolkit_status` / `toolkit_doctor`，零 npm 依赖 | 需要 Node.js 18+；只读，不暴露安装与扫描 |
+| MCP 接入 | 三个查询工具 + `toolkit_scan` / `toolkit_update` / `toolkit_add`，零 npm 依赖 | 需要 Node.js 18+；查询只读；维护默认预览，`confirm:true` 才执行且需用户授权 |
 | 接口契约 | v1.0 冻结 JSON result v2、地图 v2、30 项状态枚举与 MCP 工具契约 | 兼容与弃用策略见[契约冻结](docs/contract.md) |
 | 平台 | Windows PowerShell 5.1 / 7 支持完整地图 | Unix 目前仅 `census.sh` 扫描内核 |
 
 ## 安全边界
 
-- **默认只读**：`scan` / `status` / `find` / `doctor` 不安装工具、不改 PATH、不写配置；
+- **查询默认只读**：`status` / `find` / `doctor` 不安装工具、不改 PATH、不写配置；`find` 不执行新候选、不写地图，只读发现的新候选保持未验证；
+- **维护是显式动作**：`scan` / `update` / `add` 会写地图，只在需要时调用；地图缺失或过期时先维护，再查询；
 - **安装是独立动作**：`install` 需要显式调用，建议先用 `-WhatIf` 查看计划，不联网；
-- **改文件先备份**：`setup` 只维护你指定的规则文件，已有内容保留、修改前备份；
+- **MCP 维护需授权**：`toolkit_scan` / `toolkit_update` / `toolkit_add` 默认只返回预览，`confirm:true` 才请求执行；参数不能证明操作者是人或已获授权，客户端必须向用户确认。维护工具可能探测本机候选程序，但不自动安装、不改 PATH；
+- **改文件先备份**：`setup` 只维护你指定的规则文件，已有内容保留、修改前备份；`quickstart -WriteMcp` 写客户端配置前也先备份；
 - **验证状态明确**：`verified` / `unverified` / `unavailable` / `skipped` 不混用，未经验证的副本不会默认被选中；
 - **不碰凭据**：本机地图、工具、缓存和凭据不进入发布包；
 - **不修改全局执行策略**：用当前宿主单次调用，组织组策略的限制照常遵守。
@@ -190,7 +210,8 @@ MCP 与规则文件可以同时启用；MCP 不会自动改写 `AGENTS.md`，`se
 - **会把工具搬走或改 PATH 吗？** 扫描和接入不会；已有副本留在原处。`install` 是单独的明确操作。`bootstrap` 是可选环境配置，会修改机器，不在上述接入流程中。
 - **必须用 mise 吗？** 不用。没有 mise 也能发现、登记和查询工具；项目需要完整管理器环境时再使用 mise。
 - **工具默认放 C 盘吗？** 地图默认在 `~/.toolkit/map.json`，新的 portable 工具默认在 `~/toolchains`。`TOOLCHAIN_ROOT` 可改仓库位置，见[存储指南](docs/storage.md)。
-- **能撤销吗？** 可以移除接入规则与技能链接，保留已有工具，见[撤销与卸载](docs/uninstall.md)。
+- **能撤销吗？** 可以移除接入规则、MCP 配置与技能链接，保留已有工具，见[撤销与卸载](docs/uninstall.md)。
+- **团队共用仓库要注意什么？** 不要提交 `setup` 生成的本机绝对路径规则块，也不要把带本机 Node 路径的 `.cursor/mcp.json` / `.mcp.json` 提交上去。每人本地生成，或把 MCP 配置放到用户级/未跟踪文件；共享模板只保留占位符和接入说明。
 - **升级后会自动生效吗？** 源码更新不等于旧规则更新。文件规则重跑 `setup`；Cursor 全局 User Rules 重新生成并粘贴；随后新开会话验收。
 
 ## 贡献与许可

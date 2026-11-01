@@ -31,6 +31,13 @@ $ps = (Get-Process -Id $PID).Path
   ```powershell
   & $ps -NoProfile -ExecutionPolicy Bypass -File $map status -Json
   ```
+  `-ExecutionPolicy Bypass` 只作用于这个子进程，不修改用户或机器策略。若组策略仍拒绝 `Bypass`，命令还是会失败；此时按组织流程申请允许的执行策略或管理员放行，不要改注册表、组策略或使用其他方式绕过。`quickstart` 可以用同一方式启动。
+
+## quickstart 退出码 2（部分完成）
+
+- 症状：`quickstart -Mcp -WriteMcp` 返回 2，打印“部分完成”。
+- 含义：项目 `AGENTS.md` 规则已经接入；MCP 配置没有写成。常见原因是找不到 Node 18+、`--print-config` 退出码非 0、返回的 JSON 不合法、`--check` 启动检查失败，或已有客户端配置损坏。
+- 动作：先读输出里的原因和已写入的规则文件/地图路径；修好 Node 或配置后重跑同一命令。不要把它当成功，也不要手工把未验证的配置粘进客户端。已经写入的 MCP 配置文件不会被自动回滚。
 
 ## 地图不存在（map_missing）
 
@@ -53,10 +60,14 @@ $ps = (Get-Process -Id $PID).Path
 ## 找不到候选（not_found）
 
 - 症状：`find` 返回 `status:not_found`，`search.complete:false`。
-- 动作：这只说明**本次搜索范围**没有合适副本，不代表全盘不存在，也不授权安装。可查看已发现候选与范围，必要时明确安装：
+- 动作：`find` 只读：不执行新候选、不写地图；只读发现的新候选保持未验证。这只说明**当前地图**没有可用候选，不代表全盘不存在，也不授权安装。先显式维护地图，再重新查询：
   ```powershell
+  & $ps -NoProfile -ExecutionPolicy Bypass -File $map scan -Json
+  & $ps -NoProfile -ExecutionPolicy Bypass -File $map update node -Json
+  & $ps -NoProfile -ExecutionPolicy Bypass -File $map add node -Path 'D:\existing\node.exe' -Json
   & $ps -NoProfile -ExecutionPolicy Bypass -File $map find node -Project $project -Json
   ```
+  已有确定路径的副本用 `add` 登记，不要为了查询去改 PATH 或让 agent 执行未知文件。明确需要安装时，再单独评估 `install`。
 
 ## 有副本但版本不符（version_mismatch）
 
@@ -90,6 +101,16 @@ $ps = (Get-Process -Id $PID).Path
   (& $ps -NoProfile -ExecutionPolicy Bypass -File $map setup -Project $project -WhatIf -Json | ConvertFrom-Json).preview
   ```
   检查脚本路径是否与分析范围一致、是否与更具体的规则冲突。不要靠“是否遵守”自述判断，改成实际观察。
+
+## Codex 报 TOML 重复表或配置不生效
+
+- 症状：客户端提示重复的 `[mcp_servers.toolkit-map]`，或改了配置仍启动旧路径。
+- 动作：打开 `~/.codex/config.toml`，删除旧的 `[mcp_servers.toolkit-map]` 整段（含 `command`、`args`、`env`），只保留一段新生成的配置。不要用“追加”更新 TOML；重复表会报错或被静默覆盖。改完重启客户端。
+
+## 团队仓库里出现本机绝对路径
+
+- 症状：项目 `AGENTS.md` 的规则块、`.cursor/mcp.json` 或 `.mcp.json` 里出现某个人的 `map.ps1` / Node 路径，其他人机器上不可用。
+- 动作：这些配置只对本机有效。从共享仓库移除本机路径，改为每人本地执行 `setup` / `quickstart`，或把 MCP 配置放在用户级、项目内未跟踪的本地文件；共享的模板只保留占位符和不含路径的说明。
 
 ## 首次扫描需要等待
 

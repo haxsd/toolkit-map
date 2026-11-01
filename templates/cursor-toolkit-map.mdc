@@ -3,6 +3,8 @@ description: 调用本机工具前先查询 toolkit-map（使用前替换正文�
 alwaysApply: true
 ---
 
+> 本文件含本机绝对路径，**不要提交到团队共享仓库**。每位成员在自己机器上替换路径或本地生成；MCP 配置同样含本机 Node 路径，不要提交。
+
 <!-- toolkit-map:begin -->
 ## 本机工具发现
 
@@ -13,15 +15,18 @@ alwaysApply: true
 在 PowerShell 中执行（每次将项目参数替换成当前项目目录）：
 
 ```powershell
-& 'C:/Users/YOUR_USER/Projects/toolkit-map/scripts/map.ps1' status -Json
-& 'C:/Users/YOUR_USER/Projects/toolkit-map/scripts/map.ps1' find <工具> -Project '<当前项目目录>' -Json
+& 'C:/Users/YOUR_USER/Projects/toolkit-map/scripts/map.ps1' status -MapFile 'C:/Users/YOUR_USER/.toolkit/map.json' -Json
+& 'C:/Users/YOUR_USER/Projects/toolkit-map/scripts/map.ps1' find <工具> -Project '<当前项目目录>' -MapFile 'C:/Users/YOUR_USER/.toolkit/map.json' -Json
 ```
 
-- 没有地图时先执行 `scan` 建图；地图过旧或 PATH 变化时重新 `scan`。不要为刷新地图反复修改规则文件。
-- Windows 策略禁止直接执行脚本时，用当前 PowerShell 宿主以 `-NoProfile -ExecutionPolicy Bypass -File` 单次调用；不修改全局执行策略，遵循组织组策略。
+- 没有地图时，经用户确认后执行 `setup` 或 `scan` 建图；地图过旧或候选变化时，经确认使用 `scan` / `update` / `add` 维护。CLI 回退的这些动作也必须显式传上面相同的 `-MapFile`，以免修改另一张地图。PATH 因会话不同而变化时先确认实际影响，不必反复重扫。
+- `find` 只读：不执行新候选、不写地图；只读发现的新候选保持未验证，需要显式维护验证。
+- Windows 策略禁止直接执行脚本时，用当前 PowerShell 宿主以 `-NoProfile -ExecutionPolicy Bypass -File` 单次调用；不修改全局执行策略，遵循组织组策略。组策略拒绝 Bypass 时按组织流程处理，不要绕过。
 - 检查退出码为 0、`ok:true`、`status:ok`、`verification:verified` 和 `requirement`，再使用返回的绝对 `path`。已在本次会话查证且配置未变的路径可以复用。
-- 版本不匹配或未验证时先诊断，不降级、不执行 shim、不自行加 `-AllowUnverified` / `-AllowIdeHost`。搜索失败只表示本次范围未找到，不表示整台机器没有。
+- 版本不匹配或未验证时先诊断，不降级、不执行 shim；`find` 不支持 `-AllowUnverified`，`-AllowIdeHost` 只能在明确需要时使用。`find` 失败只表示当前地图没有合适副本，不表示整台机器没有。
 - `find` 不安装工具；明确需要时才另行 `install`，先用 `-WhatIf -Json` 预览。已有副本用 `add` 登记，不迁移、不改全局 PATH。
+- 如果客户端提供 `toolkit_scan` / `toolkit_update` / `toolkit_add`，默认只接受预览；`confirm:true` 也只表示请求执行，不能证明已获用户授权。执行前必须让用户明确确认。不要调用 `install`，不要改 PATH。
+- 团队共享仓库不要提交本机绝对路径的规则块或 MCP 配置；每台机器各自生成。
 - 下载前说明预计下载量、安装占用及实际目标目录，检查目标盘与暂存/缓存盘空间。仅预计安装占用 ≥1 GB 时询问位置，下载包大小不触发询问；等用户回答再下载。体积未知时先核实估算，Rust、Android SDK 等预计达到门槛的工具即使精确体积未知也先确认。已有明确位置偏好且空间足够时复用；用户指定门槛优先。
 - portable 仓库由 `TOOLCHAIN_ROOT` 指定（默认 `~/toolchains`），暂存使用 `TEMP`；管理器的数据/缓存目录分别配置。仅临时改变量不会成为永久偏好，持久化需用户明确选择，已有工具不自动迁移。
 - 项目需要完整工具链环境时，通过已登记的 mise 执行 `mise exec -- <命令>`。报告区分项目声明、发现的可用副本与当前 PATH 解析。

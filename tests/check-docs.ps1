@@ -118,11 +118,20 @@ foreach ($f in $docs) {
 }
 
 # ---------- 3. 版本号一致 ----------
-# 唯一来源是根目录 VERSION；文档里的稳定标签、CHANGELOG 最新版本与 help 输出都从它派生。
-# 发布时只改 VERSION，再按这里的失败提示同步文档，避免"README 还指向旧标签"。
+# 开发版 VERSION 可以领先已发布的稳定标签；稳定标签从 CHANGELOG 中最近一条
+# 不带“未发布”标记的版本确定，避免开发期间指向尚不存在的标签。
 $versionFile = Join-Path $repoRoot 'VERSION'
 $version = if (Test-Path -LiteralPath $versionFile) { (Get-Content -LiteralPath $versionFile -Raw -Encoding UTF8).Trim() } else { '' }
 Check "VERSION 是 X.Y.Z 格式（当前：$version）" ($version -match '^\d+\.\d+\.\d+$') '根目录 VERSION 只写裸版本号，例如 0.2.3'
+$changelog = Get-Content -LiteralPath (Join-Path $repoRoot 'CHANGELOG.md') -Raw -Encoding UTF8
+$releaseHeadings = [regex]::Matches($changelog, '(?m)^##\s+v(\d+\.\d+\.\d+)([^\r\n]*)')
+$latest = if ($releaseHeadings.Count) { $releaseHeadings[0].Groups[1].Value } else { '' }
+$stable = @($releaseHeadings | Where-Object { $_.Groups[2].Value -notmatch '未发布' } | Select-Object -First 1)
+$stableVersion = if ($stable.Count) { $stable[0].Groups[1].Value } else { '' }
+Check 'CHANGELOG 最新版本与 VERSION 一致' ($latest -eq $version) "CHANGELOG 最新版本：$latest"
+Check 'CHANGELOG 指明最新已发布版本' ([bool]$stableVersion)
+$releaseNotes = Join-Path (Join-Path (Join-Path $repoRoot 'docs') 'releases') "v$version.md"
+Check '当前版本的发布说明存在' ([IO.File]::Exists($releaseNotes)) "缺少：$releaseNotes"
 $tagRe = [regex]'(?:--branch\s+|origin\s+tag\s+|--detach\s+|toolkit-map-)v(\d+\.\d+\.\d+)'
 $tagCount = 0
 foreach ($f in $docs) {
@@ -130,13 +139,10 @@ foreach ($f in $docs) {
     $text = Get-Content -LiteralPath $f.FullName -Raw -Encoding UTF8
     foreach ($m in $tagRe.Matches($text)) {
         $tagCount++
-        if ($m.Groups[1].Value -ne $version) { Check "$($f.Name) 稳定标签 v$($m.Groups[1].Value)" $false "与 VERSION（$version）不一致" }
+        if ($m.Groups[1].Value -ne $stableVersion) { Check "$($f.Name) 稳定标签 v$($m.Groups[1].Value)" $false "与最新已发布版本（$stableVersion）不一致" }
     }
 }
-Check "文档中的稳定标签与 VERSION 一致（$tagCount 处）" ($tagCount -gt 0) '没有找到任何稳定标签，检查规则可能已失效'
-$changelog = Get-Content -LiteralPath (Join-Path $repoRoot 'CHANGELOG.md') -Raw -Encoding UTF8
-$latest = [regex]::Match($changelog, '(?m)^##\s+v(\d+\.\d+\.\d+)')
-Check "CHANGELOG 最新版本与 VERSION 一致" ($latest.Success -and $latest.Groups[1].Value -eq $version) "CHANGELOG 最新版本：$($latest.Groups[1].Value)"
+Check "文档中的稳定标签与最新已发布版本一致（$tagCount 处）" ($tagCount -gt 0) '没有找到任何稳定标签，检查规则可能已失效'
 $mapText = Get-Content -LiteralPath (Join-Path (Join-Path $repoRoot 'scripts') 'map.ps1') -Raw -Encoding UTF8
 Check 'map.ps1 不硬编码版本号' ($mapText -notmatch "version\s*=\s*'\d+\.\d+\.\d+'" -and $mapText.Contains('Get-ToolkitVersion')) 'help 的版本应读取 VERSION'
 

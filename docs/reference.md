@@ -14,7 +14,7 @@
 | `doctor` | `-Project`、`-RulesFile`、`-Bundle` | 只读检查宿主、地图、新鲜度与接入文件；`-Bundle` 附带可提交 issue 的宿主/地图摘要 |
 | `scan` | `-Throttle`（默认 min(8, CPU 数)） | 调用 census，合并仍存在的已有登记，再完整重扫；各候选的版本探测先并行跑完再按原顺序建图，`-Throttle 1` 为串行，结果相同；结果附带计量字段 probeStats（见“扫描内核”） |
 | `status` | `-MaxAgeHours`（默认 24） | 完整扫描年龄、最近更新、失效文件数、PATH 变化 |
-| `find` | `<工具>`、`-Project`、`-Version`、`-SkipScan` | 按当前或指定项目声明动态选择；不匹配不降级；没有合适候选时可做限定范围现场搜索 |
+| `find` | `<工具>`、`-Project`、`-Version`、`-SkipScan` | 只读：按当前或指定项目声明选择；不执行新候选、不写地图；只读发现的新候选保持未验证；不匹配不降级。维护用 `scan` / `update` / `add` |
 | `add` | `<工具> -Path <文件>`、`-Version`、`-Note`、`-Prefer` | 登记已有副本；Version 是提示，不能把探测失败变成已验证；Prefer 保存路径偏好 |
 | `update` | `[工具]` | 重探已有文件与新候选，不刷新完整扫描时间 |
 | `install` | `<工具>@<版本>`、`-Url`、`-Sha256`、`-Via winget`、`-WingetId`、`-WhatIf` | 单独的明确安装动作；portable 版本验证后落仓库；安装器由包管理器管理 |
@@ -22,7 +22,9 @@
 
 通用：`-Json` 输出机器结果；`-MapFile` 覆盖地图路径；`-LockTimeoutSeconds` 控制更新锁等待（默认 60 秒，0–300）。
 
-`-AllowUnverified` 仅在明确需要时允许选择未验证的普通副本，不允许 shim、跳过探测的商店别名或不可用文件。`-AllowIdeHost` 允许已验证的 IDE 内置运行时。conda 环境副本不作默认首选。
+`find` 的只读契约：不执行新候选、不写地图（不改 `scannedAt` / `updatedAt`、候选列表或首选路径）。它可能只读发现候选元数据，但新候选保持 `unverified`，不会被默认选中；必须通过显式 `scan`（完整重扫）、`update <工具>`（只重探条目）或 `add`（登记已有副本）验证后，才可能进入选择。`-SkipScan` 可关闭这次只读发现。CLI 与 MCP 的维护边界一致。
+
+`-AllowUnverified` 不再用于 `find`：严格只读查询仅返回已验证且指纹未变的候选，传入该参数会明确报错。`-AllowIdeHost` 允许已验证的 IDE 内置运行时。conda 环境副本不作默认首选。
 
 ## JSON 输出协议 v2
 
@@ -55,7 +57,7 @@
 | `ok` | 动作成功；find 默认返回已验证候选 |
 | `planned` | WhatIf 计划，未执行变更或联网 |
 | `already_available` | 已有合适的已验证副本，复用而不重复安装 |
-| `unverified` | 用户显式允许未验证候选；不能报告为已验证 |
+| `unverified` | 保留的旧版状态；当前 `find` 不选择未验证候选 |
 | `not_found` | 本次搜索范围未找到副本，不代表全盘不存在 |
 | `no_usable_candidate` | 存在副本，但没有符合选择策略的可用候选 |
 | `version_mismatch` | 没有满足要求的已验证副本，或下载版本不符 |
@@ -81,21 +83,31 @@
 
 读取器不实现完整 TOML / mise 语义。复杂工具表会报告不支持；includes、模板和环境专属配置等需交给管理器处理。二进制选择也不等同于加载项目完整环境。
 
-例如 `[tools.node]`、`[[tools.node]]` 与内联工具表都返回 `requirement_unsupported`，不会忽略项目要求后退回全局版本。可改为支持的 `[tools]` 字符串声明，或明确提供 `-Version`。
+例如 `[tools.node]`、`[[tools.node]]` 与复杂内联工具表返回 `requirement_unsupported`，不会忽略项目要求后退回全局版本；简单的顶层 `tools = { node = "22" }` 与 `tools.node = "22"` 已支持。复杂声明可改为支持的 `[tools]` 字符串声明，或明确提供 `-Version`。
 
-选取步骤：排除 shim、不可用文件、默认不允许的未验证/IDE/conda-env 副本 → 筛选项目要求 → 显式路径偏好 → 已验证 → 仓库 → PATH 可达 → 来源 → 版本 → 路径确定性排序。用户偏好不能绕过版本要求和护栏。
+选取步骤：排除 shim、不可用与未验证文件，以及默认不允许的 IDE/conda-env 副本 → 筛选项目要求 → 显式路径偏好 → 无版本要求时优先实际 PATH 默认 → 其余来源与版本确定性排序。若 PATH 默认是 shim、环境内部路径或未验证文件，可返回其他已验证候选，但依据标为 `available_candidate`，不会冒充 PATH 默认。规范名称有偏好时，别名使用同一偏好，历史别名记录保留。用户偏好不能绕过版本要求和护栏。`-Version` 只覆盖版本声明，指定的 `-Project` 仍须存在，避免返回不存在的工作目录。
 
 ## MCP 适配器
 
-`mcp/server.mjs` 是零依赖的 Node 18+ stdio 适配器，只暴露三个只读工具，内部调用本页的 `map.ps1 -Json`：
+`mcp/server.mjs` 是零依赖的 Node 18+ stdio 适配器，提供三个严格只读的查询工具，内部调用本页的 `map.ps1 -Json`：
 
 | 工具 | 对应动作 | 说明 |
 |---|---|---|
-| `toolkit_find` | `find` | `tool` 必填；`project`、`version` 可选 |
+| `toolkit_find` | `find` | `tool` 必填；`project`、`version` 可选；不执行新候选、不写地图；新候选需显式维护验证 |
 | `toolkit_status` | `status` | 无参数 |
 | `toolkit_doctor` | `doctor` | `project`、`rulesFile` 可选 |
 
-返回的 `structuredContent` 是地图结果对象本身；`ok:false` 时 MCP 工具结果同时带 `isError:true`，不降级、不安装。`install` / `add` / `scan` / `update` 不通过 MCP 暴露。
+返回的 `structuredContent` 是地图结果对象本身；`ok:false` 时 MCP 工具结果同时带 `isError:true`，不降级、不安装。
+
+MCP 还提供显式维护工具（默认只预览，`confirm:true` 才请求执行，仍需客户端/用户授权）：
+
+| 工具 | 对应动作 | 说明 |
+|---|---|---|
+| `toolkit_scan` | `scan` | 默认返回扫描预览；确认后完整重扫 |
+| `toolkit_update` | `update` | 默认返回重探范围；确认后重探条目 |
+| `toolkit_add` | `add` | 默认返回登记计划；确认后登记已有绝对路径 |
+
+`confirm:true` 只是执行请求，不能证明操作者是人或已获用户授权；客户端必须向用户确认。执行 `scan` / `update` / `add` 会为取版本探测本机候选程序，必须取得明确授权。维护工具不安装工具、不改 PATH。详见 [MCP 维护工具](mcp.md#维护工具)。
 
 协议同时支持旧会话 `initialize`（2024-11-05 至 2025-11-25）与新会话 `2026-07-28` 的 `server/discover`；stdio 每行一个 JSON-RPC 消息，stdout 不输出日志。配置位置、环境变量与排查见 [MCP 接入](mcp.md)。
 
@@ -118,7 +130,7 @@
 }
 ```
 
-地图只保存机器事实和路径偏好，项目选择在 find 时计算。读取 v1 地图时保留原首选路径作为迁移偏好和既有备注；写入时升级到 v2。需要重算默认排序时可重新登记目标路径或调整 preferredPath。未知未来格式不覆盖。
+地图只保存机器事实和路径偏好，项目选择在 find 时计算。`find` 不写地图；只有 `scan` / `update` / `add` 等维护动作会改动 `scannedAt` / `updatedAt` 和候选。读取 v1 地图时保留原首选路径作为迁移偏好和既有备注；写入时升级到 v2。需要重算默认排序时可重新登记目标路径或调整 preferredPath。未知未来格式不覆盖。
 
 候选字段：
 
@@ -135,7 +147,7 @@
 
 探测只接受成功退出且可提取版本的输出。普通零字节文件不可用；商店执行别名不探测、状态 skipped。文件指纹是大小与修改时间，不是完整内容哈希。
 
-完整扫描与局部更新分别计时。读改写全程持有同一登录会话中的命名 mutex，随后原子替换 JSON 和 Markdown；两文件不是联合事务，JSON 是权威文件。可在摘要写入失败后重试刷新。
+完整扫描与局部更新分别计时。读改写全程持有同一登录会话中的命名 mutex，JSON 地图原子替换并作为权威文件；地图文件不能使用 `.md` 扩展名。Markdown 摘要仅在原文件不存在，或与上一张地图生成的摘要完全一致时才写入；原文件被修改、被占用或属于其他用途时会保留，并在结果的 `summaryWarning` 与标准错误中提示。摘要在独占句柄下更新，但与 JSON 不是联合事务；写入中断可能留下不完整摘要，JSON 不受此影响。
 
 ## 适配器与安装
 

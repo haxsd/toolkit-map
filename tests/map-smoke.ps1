@@ -19,6 +19,10 @@ $mapFile = Join-Path $scratch 'map.json'
 $warehouse = Join-Path $scratch 'toolchains'
 $oldToolchainRoot = $env:TOOLCHAIN_ROOT
 $oldPath = $env:PATH
+$originalEnvironment = @{}
+foreach ($name in @('USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'MISE_DATA_DIR', 'MISE_SHIMS_DIR', 'MISE_CONFIG_FILE', 'MISE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'VOLTA_HOME', 'FNM_DIR', 'SCOOP', 'ASDF_DATA_DIR', 'ProgramFiles', 'ProgramFiles(x86)')) {
+    $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
 
 function Fail {
     param([string]$Message)
@@ -73,14 +77,22 @@ function Write-Fixture {
 
 try {
     New-Item -ItemType Directory -Force -Path $scratch, $warehouse | Out-Null
+    # 限制管理器和系统位置，update 只能找到本测试的假工具。
+    $env:USERPROFILE = Join-Path $scratch 'home'
+    $env:APPDATA = Join-Path $scratch 'appdata'
+    $env:LOCALAPPDATA = Join-Path $scratch 'localappdata'
+    $env:MISE_DATA_DIR = Join-Path $scratch 'mise'
+    $env:MISE_SHIMS_DIR = ''; $env:MISE_CONFIG_FILE = ''; $env:MISE_CONFIG_DIR = ''; $env:XDG_CONFIG_HOME = ''
+    $env:VOLTA_HOME = ''; $env:FNM_DIR = ''; $env:SCOOP = ''; $env:ASDF_DATA_DIR = ''
+    [Environment]::SetEnvironmentVariable('ProgramFiles', (Join-Path $scratch 'program-files'), 'Process')
+    [Environment]::SetEnvironmentVariable('ProgramFiles(x86)', (Join-Path $scratch 'program-files-x86'), 'Process')
     $env:TOOLCHAIN_ROOT = $warehouse
 
-    $gitPath = @($env:PATH -split ';' |
-        Where-Object { $_ } |
-        ForEach-Object { Join-Path $_ 'git.exe' } |
-        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
-        Select-Object -First 1)
-    Assert-True ($gitPath.Count -eq 1) '测试环境没有可用于验证的 git.exe'
+    $fakeGitBin = Join-Path $scratch 'fake-git'
+    [void][IO.Directory]::CreateDirectory($fakeGitBin)
+    $fakeGit = Join-Path $fakeGitBin 'git.cmd'
+    [IO.File]::WriteAllText($fakeGit, "@echo off`r`necho git version 2.45.1`r`nexit /b 0`r`n", [Text.Encoding]::ASCII)
+    $env:PATH = $fakeGitBin
 
     $deadPath = Join-Path $scratch 'removed\git.exe'
     $tools = @{
@@ -185,14 +197,14 @@ try {
 
     $result = Invoke-Map @('find', 'git', '-Json', '-MapFile', $mapFile)
     $jsonResult = Get-JsonOutput $result
-    Assert-True ($result.ExitCode -eq 0) "失效首选路径修复后 find 应成功，退出码为 $($result.ExitCode)"
-    Assert-True ([bool]$jsonResult.found) '失效首选路径修复后 found 应为 true'
-    Assert-True ($jsonResult.path -ne $deadPath -and (Test-Path -LiteralPath $jsonResult.path -PathType Leaf)) "find 应返回现场找到的活路径；实际=$($jsonResult.path)"
-
+    Assert-True ($result.ExitCode -ne 0 -and -not [bool]$jsonResult.found) '只读 find 不得自动验证现场发现的 git'
+    Assert-True (@($jsonResult.candidates | Where-Object { $_.path -eq $fakeGit -and $_.verification -eq 'unverified' }).Count -eq 1) '现场发现的 git 应标记为未验证'
+    $result = Invoke-Map @('update', 'git', '-Json', '-MapFile', $mapFile)
+    Assert-True ($result.ExitCode -eq 0) '明确 update 应验证隔离目录里的假 git'
     $result = Invoke-Map @('find', 'git', '-Json', '-SkipScan', '-MapFile', $mapFile)
     $jsonResult = Get-JsonOutput $result
-    Assert-True ($result.ExitCode -eq 0 -and [bool]$jsonResult.found) '修复后的 git 条目应能在跳过现场搜索时继续使用'
-    Assert-True ($jsonResult.path -ne $deadPath -and (Test-Path -LiteralPath $jsonResult.path -PathType Leaf)) '地图修复结果没有持久化'
+    Assert-True ($result.ExitCode -eq 0 -and [bool]$jsonResult.found) '验证后的 git 条目应能在跳过现场搜索时继续使用'
+    Assert-True ($jsonResult.path -eq $fakeGit) '应返回显式验证的假 git 路径'
 
     $result = Invoke-Map @('find', 'map-smoke-empty', '-Json', '-SkipScan', '-MapFile', $mapFile)
     $jsonResult = Get-JsonOutput $result
@@ -214,7 +226,7 @@ try {
     $fakeWinget = Join-Path $fakeWingetBin 'winget.cmd'
     "@echo off`r`necho fake winget failure`r`nexit /b 42" |
         Set-Content -LiteralPath $fakeWinget -Encoding ASCII
-    $env:PATH = $fakeWingetBin + ';' + $oldPath
+    $env:PATH = $fakeWingetBin
     $result = Invoke-Map @('install', 'winget-smoke-tool', '-Via', 'winget', '-MapFile', $mapFile)
     $outputText = ($result.Output | ForEach-Object { "$($_)" }) -join "`n"
     Assert-True ($result.ExitCode -ne 0) 'winget 失败时 install 应返回非零退出码'
@@ -229,6 +241,7 @@ try {
 } finally {
     $env:TOOLCHAIN_ROOT = $oldToolchainRoot
     $env:PATH = $oldPath
+    foreach ($name in $originalEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], 'Process') }
     if (Test-Path -LiteralPath $scratch) {
         Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
     }

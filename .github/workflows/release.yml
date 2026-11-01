@@ -27,18 +27,20 @@ jobs:
           $version = (Get-Content -LiteralPath VERSION -Raw -Encoding UTF8).Trim()
           if ($tag -ne $version) { throw "标签 v$tag 与 VERSION $version 不一致" }
 
-      - name: 发布前静态检查
+      - name: 发布前文档检查
         shell: powershell
-        run: |
-          .\tests\check-docs.ps1
-          .\tests\check-encodings.ps1
+        run: .\tests\check-docs.ps1
+
+      - name: 发布前编码检查
+        shell: powershell
+        run: .\tests\check-encodings.ps1
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
       - name: MCP 测试
-        run: node --test mcp/test/protocol.test.mjs mcp/test/runner.test.mjs mcp/test/server.test.mjs mcp/test/integration.test.mjs mcp/test/contract.test.mjs
+        run: node --test mcp/test/protocol.test.mjs mcp/test/runner.test.mjs mcp/test/server.test.mjs mcp/test/maintenance.test.mjs mcp/test/integration.test.mjs mcp/test/contract.test.mjs mcp/test/maintenance-integration.test.mjs
 
       - name: 发布门禁（完整回归）
         shell: powershell

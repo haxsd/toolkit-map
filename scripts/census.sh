@@ -199,7 +199,8 @@ is_shim_path() {
   local p root
   p="$(printf '%s' "$1" | tr '\\' '/' | tr 'A-Z' 'a-z')"
   case "$p" in */shims/*|*/.volta/bin/*) return 0 ;; esac
-  for root in "${MISE_SHIMS_DIR:-}" "${VOLTA_HOME:-}"; do
+  # VOLTA_HOME 包含 tools/image 里的真实运行时；只有 bin 是 shim 入口。
+  for root in "${MISE_SHIMS_DIR:-}" "${VOLTA_HOME:+${VOLTA_HOME%/}/bin}"; do
     [ -n "$root" ] || continue
     root="$(printf '%s' "$root" | tr '\\' '/' | tr 'A-Z' 'a-z')"
     root="${root%/}"
@@ -225,15 +226,45 @@ read_shebang() {
   head -c 256 "$1" 2>/dev/null | tr -d '\000' | head -n1 | tr -d '\r' | sed -n 's/^#!//p'
 }
 
+# Resolve each directory and file link without executing the candidate. A
+# dangling/cyclic link or inaccessible component is indeterminate and skipped.
+# Component-wise readlink also works on Git Bash when cd -P preserves a junction.
+resolve_probe_path() {
+  local pending="$1" current="" component candidate target depth=0
+  case "$pending" in /*) pending="${pending#/}" ;; *) pending="${PWD%/}/$pending"; pending="${pending#/}" ;; esac
+  while [ -n "$pending" ]; do
+    component="${pending%%/*}"
+    if [ "$component" = "$pending" ]; then pending=""; else pending="${pending#*/}"; fi
+    case "$component" in
+      ''|.) continue ;;
+      ..) current="${current%/*}"; continue ;;
+    esac
+    candidate="$current/$component"
+    if [ -L "$candidate" ]; then
+      depth=$((depth + 1)); [ "$depth" -le 40 ] || return 1
+      target="$(readlink "$candidate" 2>/dev/null)" || return 1
+      [ -n "$target" ] || return 1
+      case "$target" in /*) current=""; target="${target#/}" ;; esac
+      pending="$target${pending:+/$pending}"
+    else
+      [ -e "$candidate" ] || return 1
+      current="$candidate"
+    fi
+  done
+  printf '%s\n' "${current:-/}"
+}
+
 # 执行这个文件做版本探测是否安全：它自己不是 shim，它的解释器（#! 行，env 按 PATH 解析）
 # 也不是 shim；node 启动器实际会用的 node 也必须安全。解析不出解释器时宁可不执行。
 # 与 toolkit-common.ps1 的 Test-ToolkitProbeSafe 保持同一套规则。
 probe_safe() {
-  local p="$1" depth="${2:-0}" sb interp node w is_script=""
+  local p="$1" depth="${2:-0}" sb interp node w is_script="" physical
   local -a words
   [ -n "$p" ] || return 1
   [ "$depth" -le 3 ] || return 1
   is_shim_path "$p" && return 1
+  physical="$(resolve_probe_path "$p")" || return 1
+  is_shim_path "$physical" && return 1
   sb="$(read_shebang "$p")"
   if [ -n "$sb" ]; then
     is_script=1
@@ -270,23 +301,25 @@ probe_safe() {
 # 顺带把 MISE_AUTO_UPDATE 关掉：诊断不该等着检查更新，结果才可复现。
 run_with_timeout() {
   local secs="$1"; shift
-  local resolved
+  local resolved timeout_cmd
   resolved="$(command -v "$1" 2>/dev/null || true)"
-  probe_safe "$resolved" || return 0
-  if command -v timeout >/dev/null 2>&1; then
-    MISE_AUTO_UPDATE=0 timeout "$secs" "$@" 2>/dev/null
-    return 0
+  probe_safe "$resolved" || return 1
+  timeout_cmd="$(command -v timeout 2>/dev/null || true)"
+  if [ -n "$timeout_cmd" ] && probe_safe "$timeout_cmd"; then
+    MISE_AUTO_UPDATE=0 "$timeout_cmd" "$secs" "$@" 2>/dev/null
+    return $?
   fi
-  local out_file pid wd
-  out_file="${TMPDIR:-/tmp}/census-cmd-$$.out"
+  local out_file pid wd rc
+  out_file="$(mktemp "${TMPDIR:-/tmp}/census-cmd-XXXXXX")" || return 1
   MISE_AUTO_UPDATE=0 "$@" >"$out_file" 2>/dev/null &
   pid=$!
-  ( sleep "$secs"; kill "$pid" 2>/dev/null ) 2>/dev/null &
+  ( sleep "$secs"; kill "$pid" 2>/dev/null ) >/dev/null 2>&1 &
   wd=$!
-  wait "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null; rc=$?
   kill "$wd" 2>/dev/null
   cat "$out_file" 2>/dev/null
   rm -f "$out_file"
+  return "$rc"
 }
 
 # ---------- 声明文件读取（供漂移 / 缺失 / 遮罩三类告警共用）----------
@@ -341,6 +374,7 @@ short_tool() {
   case "$1" in
     nodejs|node)     echo node ;;
     python3|python)  echo python ;;
+    ripgrep|rg)      echo rg ;;
     *)               echo "$1" ;;
   esac
 }
@@ -853,15 +887,20 @@ if [ "${STRAY_COUNT:-0}" -gt 0 ]; then
     "count=$STRAY_COUNT" "root=$TOOLS_ROOT"
 fi
 
-# 5) 项目有版本约束，但没有工具读得到的声明文件
-#    package.json 的 engines 只在版本不符时给一条警告，它不会切换版本。
-#    于是"这个项目需要某个版本"这个事实只存在于 engines 里，用上它得靠人记住某个路径。
-#    "项目有声明"的口径与 census.ps1 一致：除 mise.toml / .mise.toml / .tool-versions
-#    （当前目录向上）之外，当前目录里的 .nvmrc / .node-version 也算——它们同样在表达
-#    "这个项目要什么版本"，漏了它们会误报 UNDECLARED。
-#    （只在本判定里算数，不进 DECL_FILES / declared_tools。）
+# 5) 项目有 Node 版本约束，但没有可切换 Node 的项目声明。
+#    其他工具的声明不能掩盖 package.json 中只有 engines 的情况。
 HAS_PROJECT_DECL=0
-[ -n "$PROJECT_DECL_FILES" ] && HAS_PROJECT_DECL=1
+while IFS= read -r decl_file; do
+  [ -f "$decl_file" ] || continue
+  case "$decl_file" in
+    */.tool-versions)
+      if strip_bom "$decl_file" | awk '$1 == "node" || $1 == "nodejs" { found=1 } END { exit !found }'; then HAS_PROJECT_DECL=1; fi ;;
+    *)
+      if tools_keys "$decl_file" | grep -qE '^(node|nodejs)$'; then HAS_PROJECT_DECL=1; fi ;;
+  esac
+done <<EOF
+${PROJECT_DECL_FILES}
+EOF
 [ -f "$(pwd)/.nvmrc" ] && HAS_PROJECT_DECL=1
 [ -f "$(pwd)/.node-version" ] && HAS_PROJECT_DECL=1
 if [ "$HAS_PROJECT_DECL" -eq 0 ] && [ -f "$(pwd)/package.json" ]; then
@@ -910,7 +949,8 @@ while IFS='|' read -r d_tool d_ver d_src; do
   m_ver="$(mise_version "$s_tool" "$d_ver")"
   [ -n "$m_ver" ] || continue
   case "$s_tool" in
-    node)   d_cmds="node npm npx pnpm yarn" ;;
+    # npm/npx/pnpm/yarn report package-manager versions, not the Node host.
+    node)   d_cmds="node" ;;
     # 注意不含 pip：pip --version 报的是 pip 自己的版本（如 25.0.1），
     # 拿它和"声明要求 python 3.12"比是范畴错误，只会造成误报。
     # 下面的清单必须与 census.ps1 的解析名单完全一致。
@@ -922,9 +962,13 @@ while IFS='|' read -r d_tool d_ver d_src; do
     [ -n "$r_path" ] || continue
     case "$r_path" in */mise/*) continue ;; esac
     r_ver="$(printf '%s' "$RESOLVE_ROWS" | awk -F'|' -v c="$c" '$1==c {print $3; exit}')"
-    # 解析到的副本本来就满足声明就不报（版本是对的，只是不是 mise 那一份）；
-    # 与 census.ps1 的 Test-VersionSatisfies 判断一致。
-    version_satisfies "$r_ver" "$d_ver" && continue
+    # 解析到的副本本来就满足声明就不报。Java 8 的旧版号 1.8.x 归一为 8.x；
+    # 用户明确声明 1.8 时仍按原始版本比较，返回结果保留原始版本。
+    compare_ver="$r_ver"
+    if [ "$s_tool" = 'java' ]; then
+      case "$d_ver" in 1.*) ;; *) case "$compare_ver" in 1.[0-9]*.*) compare_ver="${compare_ver#1.}" ;; esac ;; esac
+    fi
+    version_satisfies "$compare_ver" "$d_ver" && continue
     add_warn "PATH_ORDER" "$c" "" \
       "tool=$d_tool" "wanted=$d_ver" "file=$d_src" "have=$m_ver" \
       "command=$c" "path=$r_path" "version=$r_ver"
@@ -932,6 +976,39 @@ while IFS='|' read -r d_tool d_ver d_src; do
 done < <(declared_tools)
 
 # 10) 声明了但没装
+# 对不在 PATH 的普通工具，有限地检查统一仓库的 <tool>/<version>[/bin] 布局。
+# 路径存在本身不足以确认可用；跳过 shim 和符号链接，只调用 --version，
+# 且要求成功退出并返回可解析版本。不会递归安装包内部目录。
+warehouse_tool_available() {
+  local wanted="$1" tool_dir folder container dir leaf ext candidate output rc
+  [ -d "$TOOLS_ROOT" ] && [ ! -L "$TOOLS_ROOT" ] || return 1
+  case "$wanted" in ''|*[!A-Za-z0-9._+-]*) return 1 ;; esac
+  for tool_dir in "$TOOLS_ROOT"/*; do
+    [ -d "$tool_dir" ] && [ ! -L "$tool_dir" ] || continue
+    folder="${tool_dir##*/}"
+    [ "$(short_tool "$folder")" = "$wanted" ] || continue
+    for container in "$tool_dir" "$tool_dir"/*; do
+      [ -d "$container" ] && [ ! -L "$container" ] || continue
+      for dir in "$container" "$container/bin"; do
+        [ -d "$dir" ] && [ ! -L "$dir" ] || continue
+        for leaf in "$wanted" "$folder"; do
+          for ext in '' '.exe'; do
+            candidate="$dir/$leaf$ext"
+            [ ! -L "$candidate" ] && is_real "$candidate" && probe_safe "$candidate" || continue
+            probe_begin
+            output="$(run_with_timeout 20 "$candidate" --version | head -n 4)"; rc=$?
+            probe_end
+            [ "$rc" -eq 0 ] || continue
+            if printf '%s\n' "$output" | grep -ivE 'unrecognized|unknown option|invalid|not found|no such|usage|error|cannot|failed' | grep -qE '(^|[^0-9.])[0-9]+\.[0-9]+'; then
+              return 0
+            fi
+          done
+        done
+      done
+    done
+  done
+  return 1
+}
 while IFS='|' read -r d_tool d_ver d_src; do
   [ -n "$d_tool" ] || continue
   s_tool="$(short_tool "$d_tool")"
@@ -941,6 +1018,7 @@ while IFS='|' read -r d_tool d_ver d_src; do
   # （声明里写 jadx / nmap / ffmpeg 就是这种情况）。
   r_ok="$(printf '%s' "$RESOLVE_ROWS" | awk -F'|' -v c="$s_tool" '$1==c && $5!="no" {found=1} END{print (found ? "yes" : "no")}')"
   [ "$r_ok" = "yes" ] && continue
+  warehouse_tool_available "$s_tool" && continue
   add_warn "MISSING" "$s_tool" "$d_src" \
     "tool=$d_tool" "wanted=$d_ver" "file=$d_src"
 done < <(declared_tools)

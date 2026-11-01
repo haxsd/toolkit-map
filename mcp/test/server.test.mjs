@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -8,10 +9,10 @@ import { fileURLToPath } from 'node:url';
 const SERVER_PATH = fileURLToPath(new URL('../server.mjs', import.meta.url));
 const REPO_ROOT = path.resolve(path.dirname(SERVER_PATH), '..');
 
-function startServer() {
+function startServer(extraEnv = {}) {
   const child = spawn(process.execPath, [SERVER_PATH], {
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, TOOLKIT_MAP_PROJECT: process.cwd() }
+    env: { ...process.env, TOOLKIT_MAP_PROJECT: process.cwd(), ...extraEnv }
   });
   child.stdout.setEncoding('utf8');
   child.stderr.setEncoding('utf8');
@@ -103,12 +104,40 @@ test('stdio server serves initialize, tools/list and ping without stdout noise',
   const ping = await client.waitFor((message) => message.id === 3);
 
   assert.equal(initialize.result.protocolVersion, '2025-06-18');
-  assert.equal(list.result.tools.length, 3);
+  assert.equal(list.result.tools.length, 6);
   assert.equal(ping.result.resultType, undefined);
 
   const exitCode = await client.close();
   assert.equal(exitCode, 0);
   assert.equal(client.messages.length, 3, 'stdout must contain only JSON-RPC messages');
+});
+
+test('maintenance previews describe the map target captured at server startup', async () => {
+  const mapFile = path.join(REPO_ROOT, 'captured', 'from-startup.json');
+  const client = startServer({
+    TOOLKIT_MAP: mapFile,
+    TOOLKIT_MAP_FILE: ''
+  });
+
+  client.send({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: { name: 'toolkit_scan', arguments: {} }
+  });
+
+  const response = await client.waitFor((message) => message.id === 1);
+  const result = response.result.structuredContent;
+
+  assert.equal(result.action, 'scan');
+  assert.equal(result.status, 'planned');
+  assert.equal(result.executed, false);
+  assert.equal(result.mapFile, mapFile);
+  assert.equal(result.mapFileKnown, true);
+  assert.equal(result.mapFileSource, 'environment');
+
+  const exitCode = await client.close();
+  assert.equal(exitCode, 0);
 });
 
 test('stdio server reports parse errors as JSON-RPC errors', async () => {
@@ -142,6 +171,39 @@ test('--print-config codex emits TOML', () => {
   assert.match(output, /^\[mcp_servers\.toolkit-map\]/m);
   assert.match(output, /command = "/);
   assert.match(output, /args = \["/);
+});
+
+test('--check verifies map readability, not freshness', { skip: process.platform !== 'win32' }, (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-map-check-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const mapFile = path.join(dir, 'map.json');
+  const env = {
+    ...process.env,
+    TOOLKIT_MAP_FILE: mapFile,
+    TOOLKIT_MAP: path.join(dir, 'decoy.json'),
+    TOOLKIT_MAP_POWERSHELL: path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  };
+  const missing = spawnSync(process.execPath, [SERVER_PATH, '--check'], { env, encoding: 'utf8' });
+  assert.equal(missing.status, 1);
+  assert.equal(JSON.parse(missing.stdout).status, 'map_missing');
+  assert.equal(fs.existsSync(mapFile), false);
+
+  fs.writeFileSync(mapFile, JSON.stringify({
+    schemaVersion: 2,
+    scannedAt: '2000-01-01T00:00:00Z',
+    updatedAt: null,
+    warehouse: dir,
+    pathSnapshot: 'different-session',
+    tools: {}
+  }));
+  const before = fs.readFileSync(mapFile);
+  const checked = spawnSync(process.execPath, [SERVER_PATH, '--check'], { env, encoding: 'utf8' });
+  assert.equal(checked.status, 0, checked.stderr);
+  const status = JSON.parse(checked.stdout);
+  assert.equal(status.ok, true);
+  assert.equal(status.stale, true);
+  assert.equal(status.pathChanged, true);
+  assert.deepEqual(fs.readFileSync(mapFile), before);
 });
 
 test('--version reads the repository VERSION file', () => {

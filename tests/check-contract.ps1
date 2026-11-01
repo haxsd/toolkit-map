@@ -62,7 +62,7 @@ Check 'statuses.json 的 schemaVersion 为 2' ($statusDoc.schemaVersion -eq 2)
 
 $version = ([IO.File]::ReadAllText((Join-Path $repoRoot 'VERSION'), [Text.Encoding]::UTF8)).Trim()
 $package = [IO.File]::ReadAllText((Join-Path (Join-Path $repoRoot 'mcp') 'package.json'), [Text.Encoding]::UTF8) | ConvertFrom-Json
-Check "VERSION 已进入 1.x（当前：$version）" ($version -match '^1\.\d+\.\d+$')
+Check "VERSION 已进入 2.x（当前：$version）" ($version -match '^2\.\d+\.\d+$')
 Check 'mcp/package.json 与 VERSION 一致' ($package.version -eq $version) "package：$($package.version)"
 
 $required = @($resultSchema.required)

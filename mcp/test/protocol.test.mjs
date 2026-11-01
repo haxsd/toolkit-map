@@ -6,7 +6,13 @@ import { MapRunError } from '../lib/runner.mjs';
 
 const SERVER_INFO = { name: 'toolkit-map', title: 'toolkit-map', version: '0.4.0' };
 
-function createHarness(result = { ok: true, status: 'ok', path: 'C:\\tools\\node.exe' }) {
+function createHarness(result = {
+  schemaVersion: 2,
+  action: 'find',
+  ok: true,
+  status: 'ok',
+  path: 'C:\\tools\\node.exe'
+}) {
   const calls = [];
   const handler = createProtocolHandler({
     serverInfo: SERVER_INFO,
@@ -82,7 +88,7 @@ test('unsupported modern protocol versions return -32022', async () => {
   assert.equal(response.error.data.requested, '2027-01-01');
 });
 
-test('tools/list returns three read-only tools in both eras', async () => {
+test('tools/list keeps the read-only tools and adds maintenance tools in both eras', async () => {
   const { handler } = createHarness();
   const legacy = await handler.handle(legacyRequest(1, 'tools/list'));
   const modern = await handler.handle(modernRequest(2, 'tools/list'));
@@ -90,12 +96,24 @@ test('tools/list returns three read-only tools in both eras', async () => {
   assert.deepEqual(legacy.result.tools.map((tool) => tool.name), [
     'toolkit_find',
     'toolkit_status',
-    'toolkit_doctor'
+    'toolkit_doctor',
+    'toolkit_scan',
+    'toolkit_update',
+    'toolkit_add'
   ]);
   for (const tool of legacy.result.tools) {
     assert.equal(tool.inputSchema.type, 'object');
-    assert.equal(tool.annotations.readOnlyHint, true);
-    assert.equal(tool.annotations.destructiveHint, false);
+    const maintenance = ['toolkit_scan', 'toolkit_update', 'toolkit_add'].includes(tool.name);
+    assert.equal(tool.annotations.readOnlyHint, !maintenance);
+    if (maintenance) {
+      // These actions may launch arbitrary programs while probing versions.
+      assert.equal(tool.annotations.openWorldHint, true);
+      // scan/update can drop auto-discovered records; do not claim otherwise.
+      assert.notEqual(tool.annotations.destructiveHint, false);
+    } else {
+      assert.equal(tool.annotations.destructiveHint, false);
+      assert.equal(tool.annotations.openWorldHint, false);
+    }
   }
   assert.equal(legacy.result.resultType, undefined);
   assert.equal(modern.result.resultType, 'complete');
@@ -103,6 +121,8 @@ test('tools/list returns three read-only tools in both eras', async () => {
 
 test('toolkit_find forwards explicit project and version', async () => {
   const { handler, calls } = createHarness({
+    schemaVersion: 2,
+    action: 'find',
     ok: true,
     status: 'ok',
     path: 'C:\\tools\\node22\\node.exe',
@@ -137,6 +157,8 @@ test('toolkit_find falls back to the default project', async () => {
 
 test('a map result with ok:false becomes a tool execution error', async () => {
   const { handler } = createHarness({
+    schemaVersion: 2,
+    action: 'find',
     ok: false,
     status: 'version_mismatch',
     tool: 'node',
@@ -201,6 +223,73 @@ test('unknown tools and invalid arguments are protocol errors', async () => {
   assert.equal(extra.error.code, -32602);
 
   assert.equal(calls.length, 0);
+});
+
+test('project and rulesFile must be absolute paths', async () => {
+  const { handler, calls } = createHarness();
+
+  const cases = [
+    { name: 'toolkit_find', arguments: { tool: 'node', project: '' }, field: 'project' },
+    { name: 'toolkit_find', arguments: { tool: 'node', project: 'work\\app' }, field: 'project' },
+    { name: 'toolkit_find', arguments: { tool: 'node', project: 'work/app' }, field: 'project' },
+    { name: 'toolkit_find', arguments: { tool: 'node', project: 'C:work' }, field: 'project' },
+    { name: 'toolkit_find', arguments: { tool: 'node', project: 'C:' }, field: 'project' },
+    { name: 'toolkit_find', arguments: { tool: 'node', project: '\\rooted' }, field: 'project' },
+    { name: 'toolkit_find', arguments: { tool: 'node', project: '\\\\?\\C:\\work' }, field: 'project' },
+    { name: 'toolkit_find', arguments: { tool: 'node', project: '\\\\.\\pipe\\work' }, field: 'project' },
+    // PowerShell's GetFullPath rejects UNC paths without a share, so these are
+    // not deterministic absolute paths even though path.win32 accepts them.
+    { name: 'toolkit_find', arguments: { tool: 'node', project: '\\\\server' }, field: 'project' },
+    { name: 'toolkit_find', arguments: { tool: 'node', project: '\\\\server\\' }, field: 'project' },
+    { name: 'toolkit_find', arguments: { tool: 'node', project: '\\\\' }, field: 'project' },
+    { name: 'toolkit_doctor', arguments: { project: 'C:\\work', rulesFile: '' }, field: 'rulesFile' },
+    { name: 'toolkit_doctor', arguments: { rulesFile: 'AGENTS.md' }, field: 'rulesFile' },
+    { name: 'toolkit_doctor', arguments: { rulesFile: 'C:AGENTS.md' }, field: 'rulesFile' },
+    { name: 'toolkit_doctor', arguments: { rulesFile: '\\\\?\\C:\\AGENTS.md' }, field: 'rulesFile' },
+    { name: 'toolkit_doctor', arguments: { rulesFile: '\\\\server' }, field: 'rulesFile' }
+  ];
+
+  for (const item of cases) {
+    const response = await handler.handle(legacyRequest(1, 'tools/call', item));
+    assert.equal(response.error?.code, -32602, `${item.name} ${item.field}: ${JSON.stringify(item.arguments)}`);
+    assert.match(response.error.message, new RegExp(`${item.field} must be an absolute path`));
+  }
+
+  assert.equal(calls.length, 0);
+});
+
+test('absolute project paths in Windows, UNC and POSIX form are forwarded', async () => {
+  const { handler, calls } = createHarness();
+  const projects = ['C:\\work\\app', '\\\\server\\share\\app', '/home/user/app'];
+
+  for (const project of projects) {
+    const response = await handler.handle(legacyRequest(1, 'tools/call', {
+      name: 'toolkit_find',
+      arguments: { tool: 'node', project }
+    }));
+    assert.equal(response.error, undefined, project);
+  }
+
+  const doctor = await handler.handle(legacyRequest(2, 'tools/call', {
+    name: 'toolkit_doctor',
+    arguments: { project: '/home/user/app', rulesFile: '/home/user/AGENTS.md' }
+  }));
+  assert.equal(doctor.error, undefined);
+
+  assert.deepEqual(calls.map((call) => call.options.project), [...projects, '/home/user/app']);
+  assert.equal(calls[calls.length - 1].options.rulesFile, '/home/user/AGENTS.md');
+});
+
+test('toolkit_doctor falls back to the default project when project is omitted', async () => {
+  const { handler, calls } = createHarness();
+
+  await handler.handle(legacyRequest(1, 'tools/call', {
+    name: 'toolkit_doctor',
+    arguments: {}
+  }));
+
+  assert.equal(calls[0].options.project, 'D:\\default-project');
+  assert.equal(calls[0].options.rulesFile, '');
 });
 
 test('unknown methods return -32601 and notifications get no response', async () => {

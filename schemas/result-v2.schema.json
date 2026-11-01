@@ -26,6 +26,7 @@
     "hint": { "type": "string" },
     "message": { "type": "string" },
     "mapFile": { "type": "string" },
+    "summaryWarning": { "type": "string" },
     "rulesFile": { "type": "string" },
     "backup": { "type": "string" },
     "preview": { "type": "string" },

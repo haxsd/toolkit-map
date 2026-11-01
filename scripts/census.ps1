@@ -492,33 +492,17 @@ function Test-IsMiseManaged {
     return ($Path -match '\\mise\\(installs|shims)\\' -or $Path -match '/mise/(installs|shims)/')
 }
 
-# 判断"解析到的实际版本"是否已经满足声明里的要求。
-# 声明里可能是 "3.12"、"22"，也可能是一串（TOML 数组去掉括号后的 "22, 20"）；
-# 实际版本可能是 "3.12.10" / "22.23.2" / "1.8.0_144"。
-# 规则：逐段比数字前缀——声明 "3.12" 满足 "3.12.10"，声明 "22" 满足 "22.23.2"；
-# 带发行版前缀的声明（temurin-21）先剥掉前缀再比。声明是一串时任意一条满足即可。
-# 判断不出来的一律当作满足（latest / stable / 空值）：宁可漏报，也不要在用户本来
-# 就满足声明时喊"版本不对"——那种告警按它自己的建议改完也不会消失。
+# 诊断与地图选择使用同一套版本语义。无法判定的声明不产生误导性 PATH_ORDER；
+# 具体查询仍会返回 requirement_unsupported，绝不会把未知要求当成可安全执行。
 function Test-VersionSatisfies {
     param([string]$Version, [string]$Wanted)
     if ([string]::IsNullOrWhiteSpace($Wanted)) { return $true }
     if ([string]::IsNullOrWhiteSpace($Version)) { return $false }
-    # 数字段按去掉前导零的字符串比较，日期型构建号等超长数字不会让 [int] 溢出。
-    $actual = @([regex]::Matches($Version, '\d+') | ForEach-Object { ConvertTo-ToolkitVersionSegment $_.Value })
-    if ($actual.Count -eq 0) { return $true }
-    foreach ($one in ($Wanted -split '[,;]')) {
-        $w = "$one".Trim() -replace '"', ''
-        if ([string]::IsNullOrWhiteSpace($w)) { continue }
-        if ($w -match '^(?i)(latest|stable|lts|system|any|\*)$') { return $true }
-        $w = $w -replace '^[A-Za-z][A-Za-z0-9]*[-_]', ''      # temurin-21 -> 21
-        $want = @([regex]::Matches($w, '\d+') | ForEach-Object { ConvertTo-ToolkitVersionSegment $_.Value })
-        if ($want.Count -eq 0) { return $true }
-        $n = [Math]::Min($want.Count, $actual.Count)
-        $ok = $true
-        for ($i = 0; $i -lt $n; $i++) { if ($want[$i] -ne $actual[$i]) { $ok = $false; break } }
-        if ($ok) { return $true }
-    }
-    return $false
+    if (-not (Test-ToolkitRequirementSupported $Wanted)) { return $true }
+    $alternatives = @($Wanted -split '\|\||[,;]' | ForEach-Object {
+        "$($_)".Trim().Trim('"') -replace '^[A-Za-z][A-Za-z0-9]*[-_](?=\d)', ''
+    })
+    return (Test-ToolkitVersionSatisfies $Version ($alternatives -join ' || '))
 }
 
 # ---------- 规范根与位置基准 ----------
@@ -793,6 +777,13 @@ function Get-CandidateRoots {
     # --- 静态候选根：版本管理器、conda、系统安装、IDE 安装目录（census-data.tsv，kind = root）---
     foreach ($root in $script:CensusData['root']) { $roots += (Expand-CensusDataPath $root) }
 
+    # 统一仓库采用 <tool>/<version>/... 布局；把每个工具目录也作为根，
+    # 使现有的“根与直接子目录”探测覆盖版本目录，且不扫描整个用户目录。
+    if ($script:ToolsRoot -and (Test-DirQuick $script:ToolsRoot)) {
+        $roots += $script:ToolsRoot
+        foreach ($toolDir in (Get-SubDirectories $script:ToolsRoot)) { $roots += $toolDir }
+    }
+
     # --- IDE 内置运行时（JetBrains 的 jbr 里带完整 JDK，最容易被忽略）：每个盘符根下按名称找 ---
     $idePatterns = $script:CensusData['ide-glob'].ToArray()
     foreach ($drive in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | Where-Object { $_.Root -match '^[A-Z]:\\$' })) {
@@ -860,6 +851,97 @@ function Get-UnmanagedRecords {
         }
     }
     return $records
+}
+
+# ============================================================
+# 第 4c 阶段：统一仓库里的普通工具
+# ============================================================
+# 非纳管层只探测 node/python/java 这类运行时的固定相对路径；rg / jadx / ffmpeg 这类
+# 普通工具在 <统一仓库>/<工具>/<版本>/ 下没有固定的 exe 名可以写进数据表。
+# 这里按"声明里点名的工具"补一次定向查找：只读工具目录与直接版本目录，
+# 不递归整个仓库；shim 只登记、不执行；文件存在本身不算已安装，必须跑出版本号。
+
+# 探测一个候选文件是否真的能跑出版本号。
+# 口径比 PATH 解析更严：退出码必须为 0，且输出行里能解析出带点的版本号；
+# 错误行（unrecognized / not found / error ...）一律忽略。
+function Get-WarehouseToolVersion {
+    param([string]$Tool, [string]$ExePath)
+    if ([string]::IsNullOrWhiteSpace($Tool) -or [string]::IsNullOrWhiteSpace($ExePath)) { return '' }
+    # 护栏必须先于任何文件/进程探测：shim 是间接层，不能执行。
+    if (Test-ToolkitShimPath $ExePath) { return '' }
+    if (-not (Test-RealExecutable $ExePath)) { return '' }
+
+    # 未知工具不猜测其他选项或子命令；它们可能触发真实动作。
+    foreach ($arguments in ,@('--version')) {
+        $probe = Invoke-ToolkitProbe -Exe $ExePath -Arguments $arguments
+        if (-not $probe.ok -or $null -eq $probe.exitCode -or $probe.exitCode -ne 0) { continue }
+        $text = "$($probe.stdout)`n$($probe.stderr)"
+        foreach ($line in ($text -split "`r?`n")) {
+            $line = "$line".Trim()
+            if (-not $line) { continue }
+            if ($line -match '(?i)\b(unrecognized|unknown option|invalid|not found|no such|usage|error|cannot|failed)\b') { continue }
+            $m = [regex]::Match($line, '(?<![\d.])(\d+(?:\.\d+)+[A-Za-z0-9._+-]*)')
+            if ($m.Success) { return $m.Groups[1].Value }
+        }
+    }
+    return ''
+}
+
+# 在统一仓库里查找声明工具。只枚举顶层工具目录与直接版本目录；
+# 每个工具最多返回一条已验证记录，找到就停，避免为同一个工具反复启动进程。
+function Get-WarehouseToolRecords {
+    param([string[]]$ToolNames, [string]$Root = '')
+    $records = New-Object System.Collections.Generic.List[object]
+    if (-not $Root) { $Root = $script:ToolsRoot }
+    if (-not $Root -or -not (Test-DirQuick $Root)) { return $records.ToArray() }
+
+    $wanted = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($name in @($ToolNames)) {
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        [void]$wanted.Add((Get-ToolkitCanonicalName $name))
+    }
+    if ($wanted.Count -eq 0) { return $records.ToArray() }
+
+    $seen = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($toolDir in (Get-SubDirectories $Root)) {
+        $folderName = [IO.Path]::GetFileName($toolDir)
+        $canonical = Get-ToolkitCanonicalName $folderName
+        if (-not $wanted.Contains($canonical)) { continue }
+
+        # 版本目录是 <工具>/<版本>/；工具目录本身也接受（没有版本目录的简单布局）。
+        $containers = New-Object System.Collections.Generic.List[string]
+        $containers.Add($toolDir)
+        foreach ($versionDir in (Get-SubDirectories $toolDir)) { $containers.Add($versionDir) }
+
+        foreach ($container in $containers) {
+            # 常见布局：<版本>/<工具>.exe 与 <版本>/bin/<工具>.exe。
+            # 不再向下递归：再深的目录属于安装包内部结构，不是约定的存放位置。
+            foreach ($dir in @($container, (Join-Path $container 'bin'))) {
+                if (-not (Test-DirQuick $dir)) { continue }
+                foreach ($leaf in @($canonical, $folderName)) {
+                    foreach ($ext in @('.exe', '.cmd', '.bat', '')) {
+                        $candidate = Join-Path $dir ($leaf + $ext)
+                        if (-not (Test-FileQuick $candidate)) { continue }
+                        $full = $candidate
+                        try { $full = (Resolve-Path -LiteralPath $candidate).Path } catch { }
+                        if (-not $seen.Add($full.ToLowerInvariant())) { continue }
+                        $version = Get-WarehouseToolVersion -Tool $canonical -ExePath $full
+                        if (-not $version) { continue }
+                        $records.Add([pscustomobject]@{
+                            tool         = $canonical
+                            version      = $version
+                            path         = $full
+                            source       = 'warehouse'
+                            verification = 'verified'
+                            real         = $true
+                        })
+                        return $records.ToArray()
+                    }
+                }
+            }
+        }
+    }
+    return $records.ToArray()
 }
 
 # ============================================================
@@ -1024,22 +1106,31 @@ function Get-Warnings {
     }
 
     # --- 4) 声明了但没装 ---
+    # 统一仓库里的普通工具只在其它来源都证明不了已安装时才查一次。
+    $warehouseChecked = @{}
     foreach ($d in $Declarations) {
         foreach ($tool in $d.tools.Keys) {
             $wanted = $d.tools[$tool]
-            $short  = ($tool -replace '^(nodejs|node)$', 'node') -replace '^python3$', 'python'
+            $short  = Get-ToolkitCanonicalName $tool
             $installed = @($Managed.records | Where-Object { $_.tool -eq $short }) +
-                         @($Unmanaged | Where-Object { $_.tool -eq $short })
+                         @($Unmanaged | Where-Object { $_.tool -eq $short -and $_.real })
             # 判断"装了没"不能只看运行时清单：这个套件面向所有工具，
             # 声明里可能是 jadx / nmap / ffmpeg 这类不在清单里的东西。
             # 只要 PATH 上能解析到、而且真的能执行，就算装了。
-            $resolvedOk = @($Resolution | Where-Object { $_.command -eq $short -and $_.usable }).Count -gt 0
+            $resolvedOk = @($Resolution | Where-Object { $_.command -eq $short -and $_.usable -and -not $_.isShim }).Count -gt 0
             if ($installed.Count -eq 0 -and -not $resolvedOk) {
-                $warnings.Add((New-Warning -Kind 'MISSING' -Tool $short -Facts @{
-                    tool    = $tool
-                    wanted  = $wanted
-                    file    = $d.path
-                } -Detail $d.path))
+                # 统一仓库是普通工具的安装位置（<root>/<工具>/<版本>/...），它不在运行时清单里，
+                # 也不一定在 PATH 上。这里必须真的跑出版本号才算已安装，不能只看文件存在。
+                if (-not $warehouseChecked.ContainsKey($short)) {
+                    $warehouseChecked[$short] = @(Get-WarehouseToolRecords -ToolNames @($short))
+                }
+                if (@($warehouseChecked[$short]).Count -eq 0) {
+                    $warnings.Add((New-Warning -Kind 'MISSING' -Tool $short -Facts @{
+                        tool    = $tool
+                        wanted  = $wanted
+                        file    = $d.path
+                    } -Detail $d.path))
+                }
             }
         }
     }
@@ -1068,7 +1159,11 @@ function Get-Warnings {
     # package.json 的 engines 只在版本不符时给一条警告，它不会切换版本。
     # 于是"这个项目需要 Node 22"这个事实只存在于 engines 里，用上 22 得靠人
     # 记住某个路径——这正是当初需要 node22.cmd 那类私有约定的原因。
-    $hasProjectDeclaration = @($Declarations | Where-Object { $_.scope -eq 'project' -and [IO.Path]::GetFileName($_.path) -in @('mise.toml', '.mise.toml', '.tool-versions', '.nvmrc', '.node-version') }).Count -gt 0
+    $hasProjectDeclaration = @($Declarations | Where-Object {
+        $_.scope -eq 'project' -and
+        [IO.Path]::GetFileName($_.path) -in @('mise.toml', '.mise.toml', '.tool-versions', '.nvmrc', '.node-version') -and
+        @($_.tools.Keys | Where-Object { (Get-ToolkitCanonicalName $_) -eq 'node' }).Count -gt 0
+    }).Count -gt 0
     if (-not $hasProjectDeclaration) {
         $pkgPath = Join-Path (Get-Location).Path 'package.json'
         if (Test-Path -LiteralPath $pkgPath) {
@@ -1098,12 +1193,13 @@ function Get-Warnings {
     $seenInert = New-Object System.Collections.Generic.HashSet[string]
     foreach ($d in $Declarations) {
         foreach ($tool in $d.tools.Keys) {
-            $short = ($tool -replace '^(nodejs|node)$', 'node') -replace '^python3$', 'python'
+            $short = Get-ToolkitCanonicalName $tool
             $managedForTool = @($Managed.records | Where-Object { $_.tool -eq $short })
             if ($managedForTool.Count -eq 0) { continue }
 
             $resolved = @($Resolution | Where-Object {
-                if ($short -eq 'node')        { $_.command -in @('node', 'npm', 'npx', 'pnpm', 'yarn') }
+                # npm/npx/pnpm/yarn report their own versions, not their Node host.
+                if ($short -eq 'node')        { $_.command -eq 'node' }
                 elseif ($short -eq 'python')  { $_.command -in @('python', 'python3', 'py') }
                 else                          { $_.command -eq $short }
             })
@@ -1115,7 +1211,11 @@ function Get-Warnings {
                 # 声明 python "3.12, 3.13"、解析到 Windows 的 py 启动器（3.12.10）就是这种情况——
                 # 版本是对的，只是不是 mise 那一份。而且 mise 不会为 py 生成 shim，
                 # 按告警建议去调 PATH 顺序也永远不会让它消失，只会白费一轮排查。
-                if (Test-VersionSatisfies -Version $r.version -Wanted "$($d.tools[$tool])") { continue }
+                $versionForComparison = "$($r.version)"
+                if ($short -eq 'java' -and "$($d.tools[$tool])" -notmatch '^1\.' -and $versionForComparison -match '^1\.(\d+)\.(.*)') {
+                    $versionForComparison = $Matches[1] + '.' + $Matches[2]
+                }
+                if (Test-VersionSatisfies -Version $versionForComparison -Wanted "$($d.tools[$tool])") { continue }
                 if (-not $seenInert.Add("$($r.command)|$($r.resolvesTo)")) { continue }
 
                 $warnings.Add((New-Warning -Kind 'PATH_ORDER' -Tool $r.command -Facts @{

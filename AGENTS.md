@@ -27,13 +27,13 @@
 
 ```powershell
 .\scripts\map.ps1 find <工具> -Json      # 返回 path（绝对路径）+ 版本 + 其他候选
-.\scripts\map.ps1 status                 # 地图过旧就先 scan
+.\scripts\map.ps1 status                 # 检查新鲜度；维护前取得用户同意
 ```
 
 用返回的 `path` 去执行。地图是**索引**（这台机器上有什么、在哪），仓库是**存放地点**；
 
 - **调用**：`find` 给的路径可能在统一仓库里，也可能在系统安装目录或管理器目录里——看 `source` 字段，不要假定它一定在仓库里；
-- **安装**：`find` 先在现有地图里查，没有就现场搜一次；**现场也搜不到才算"本机没有"，这时才谈安装**（规则 5）。
+- **新候选**：`find` 严格只读，不执行新候选、不写地图；本次搜索未发现可用副本不代表整台机器没有。需要验证或更新时，先取得用户同意，再使用 `scan`、`update` 或 `add`；只有用户明确需要时才讨论安装（规则 5）。
 
 **不要**用 `Get-Command`、`where.exe`、`Test-Path` 或手工比较 PATH 来推测"该用哪个"——
 实测会推错：同一个命令名在旧会话与新会话里可能跑的不是同一个文件
@@ -62,7 +62,7 @@
 4. **非纳管层** —— 版本管理器目录、系统安装目录、IDE 内置运行时、conda 环境
 5. **解析层** —— 常见命令实际解析到哪个文件
 
-`map.ps1 scan` 覆盖这五类，并明确**排除**依赖特定环境的对象（conda 某个 env 里的小包、
+`map.ps1 scan` 面向这五类来源，但搜索范围有限，不能把未发现当成全盘不存在；同时排除依赖特定环境的对象（conda 某个 env 里的小包、
 venv / site-packages / node_modules）——它们离开环境就没有意义，不是"工具"。
 
 ### 规则 4：需要特定版本时用一次性激活，不要改全局状态
@@ -88,7 +88,7 @@ uv run --python 3.12 script.py    # Python 的等价物
 
 ### 规则 6：只读地探测，别把机器搞脏
 
-扫描/探测**不得执行 shim**：mise 的 shim 在目标工具缺失时会自动安装
+扫描/探测**不得执行 shim**；`find` 更严格，既不执行新发现或指纹变化的候选，也不写地图。经用户授权的 `scan`、`update`、`add` 可能执行普通候选的版本探测。mise 的 shim 在目标工具缺失时可能自动安装
 （实测过——只为取版本执行了一下 shim，就在 `mise\installs` 下装出了第二份 `gh`）。
 地图对 shim 只登记路径、不执行；候选里的 `isShim` 就是这个意思。
 
@@ -110,7 +110,7 @@ uv run --python 3.12 script.py    # Python 的等价物
    node = "16"
    ```
 
-3. 让机器去满足它：`mise trust && mise install`（mise 自己拉版本，不需要手工下载配 PATH）。
+3. 取得用户同意后，让机器去满足它：`mise trust && mise install`（mise 自己拉版本，不需要手工下载配 PATH）。
 4. 之后 `cd` 进这个项目就自动用对版本。
 
 **不要**做这三件事：改全局 PATH 顺序把某个版本顶上"系统默认"；在项目里硬编码绝对路径
@@ -124,7 +124,7 @@ uv run --python 3.12 script.py    # Python 的等价物
 
 `WindowsApps\python3.exe` 是 0 字节的商店别名：`Get-Command` 返回它，执行却无输出、退出码 9009。
 但同一个目录下 `pwsh.exe`、`winget.exe` 也是 0 字节却能正常执行。
-**要下结论必须真跑一次版本命令**。
+文件存在或大小本身不足以证明可用；`find` 不会为此执行别名。只有在用户授权且确认探测安全时，才另行验证。
 
 ### 坑 2：PATH 是单值命名空间
 
@@ -159,13 +159,13 @@ JetBrains 系 IDE 的 `jbr/` 里有完整 JDK，版本常常比用户自己装�
 
 ## 优先使用 MCP
 
-如果当前客户端已经暴露 `toolkit_find` / `toolkit_status` / `toolkit_doctor` MCP 工具，直接调用它们；不要为同样的查询再启动 PowerShell 执行 `map.ps1`。下面的脚本命令是 MCP 不可用时的回退。这样能少一层宿主终端，也不会让每次查询都触发新的控制台。
+如果当前客户端已经暴露 `toolkit_find` / `toolkit_status` / `toolkit_doctor` MCP 工具，直接调用它们；不要为同样的查询再启动 PowerShell 执行 `map.ps1`。若客户端还提供 `toolkit_scan` / `toolkit_update` / `toolkit_add`，先预览并向用户展示目标，取得明确授权后才请求执行；`confirm:true` 只是工作流护栏，不是真人授权证明。脚本是没有对应 MCP 工具时的回退。
 
 ## v0.2 查询契约
 
 完整地图动作支持 Windows PowerShell 5.1/7。接入用 `setup -Project <目录>`，诊断用 `doctor`；技能中的脚本路径必须按技能实际位置确定，不能按项目工作目录猜。
 
-查询用 `find <工具> -Project <项目目录> -Json`，检查 `ok`、`status`、`verification` 和 `requirement`。版本不匹配或要求无法判断时失败，不降级。搜索失败只说明本次范围未发现合适副本，不说明整台机器没有。shim 永不作首选，未验证与 IDE 副本需要明确选择策略。
+查询用 `find <工具> -Project <项目目录> -Json`，检查 `ok`、`status`、`verification` 和 `requirement`。版本不匹配或要求无法判断时失败，不降级。搜索失败只说明本次范围未发现合适副本，不说明整台机器没有。shim 与未验证副本不得用于执行；IDE 副本只有经明确选择且已验证时才可使用。
 
 地图 v2 的 `scannedAt` 是完整扫描时间，`updatedAt` 是局部更新时间；重扫保留已登记副本、备注与偏好。所有动作的 JSON stdout 是一个对象。
 
@@ -176,7 +176,7 @@ JetBrains 系 IDE 的 `jbr/` 里有完整 JDK，版本常常比用户自己装�
 .\scripts\map.ps1 find <你要用的工具> -Json
 ```
 
-看这几类告警（扫描内核 census 的 `warnings`）：`[MISSING]`（声明要求了但没装）、
+看这几类告警（扫描内核 census 的 `warnings`）：`[MISSING]`（本次扫描范围没有发现声明的工具）、
 `[PATH_ORDER]`（解析到的版本不满足声明）、`[STUB]`（命令指向跑不起来的文件）、
 `[DRIFT]`（模板与实际声明不一致）、`[UNDECLARED]`（项目有版本约束却没有声明文件）。
 
@@ -209,7 +209,7 @@ Get-Content mise.toml, .tool-versions, .nvmrc -ErrorAction SilentlyContinue
 .\scripts\map.ps1 status
 .\scripts\map.ps1 find <工具> -Json
 
-# 3. 缺什么就按声明补齐（而不是改项目去迁就机器）
+# 3. 用户明确同意安装后，按声明补齐（而不是改项目去迁就机器）
 mise trust; mise install
 
 # 4. 用一次性激活执行命令

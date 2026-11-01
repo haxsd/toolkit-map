@@ -9,7 +9,9 @@ description: "AI agent 的本机工具发现与选择层：调用工具前查询
 
 安装技能不会自动写入前端的全局规则。希望在各项目持续遵守本流程时，将简短调用规则接入前端支持的全局指令；仅单个项目使用时可运行 `setup -Project <目录>`。接入位置、可复制模板和生效验收见 [agent 接入指南](docs/agent-integration.md)。
 
-客户端支持 MCP 时，优先配置 `mcp/server.mjs`：它暴露 `toolkit_find` / `toolkit_status` / `toolkit_doctor` 三个只读工具，直接调用同一份 `map.ps1 -Json`，不依赖模型记住规则文件。配置与验收见 [MCP 接入](docs/mcp.md)；规则文件仍可作为回退，两者可以同时启用。
+客户端支持 MCP 时，优先配置 `mcp/server.mjs`：它提供 `toolkit_find` / `toolkit_status` / `toolkit_doctor` 三个只读查询工具，直接调用同一份 `map.ps1 -Json`，不依赖模型记住规则文件。配置与验收见 [MCP 接入](docs/mcp.md)；规则文件仍可作为回退，两者可以同时启用。
+
+`find` 只读：不执行新候选、不写地图；只读发现的新候选保持未验证，需要 `scan` / `update` / `add` 显式维护。MCP 维护工具（`toolkit_scan` / `toolkit_update` / `toolkit_add`）默认只预览，`confirm:true` 才请求执行；执行会探测本机候选程序，必须取得用户明确授权。团队共享仓库不要提交含本机绝对路径的规则块或 MCP 配置。
 
 **有 MCP 工具时，不要再用 shell 执行 `map.ps1` 做同样的查询**；直接用 MCP 工具。只有 MCP 不可用时，才按下面的脚本流程回退。这样既少一层参数拼接，也避免每次查询都经过宿主终端。
 
@@ -17,12 +19,12 @@ description: "AI agent 的本机工具发现与选择层：调用工具前查询
 
 Windows 策略禁止直接执行脚本时，用当前 PowerShell 宿主以 `-NoProfile -ExecutionPolicy Bypass -File <地图脚本绝对路径> <动作与参数>` 单次调用；不修改全局执行策略，遵循组织组策略。
 
-1. 执行 `<地图脚本绝对路径> status -Json`。没有地图时执行 `setup -Project <项目目录>`，或只执行 `scan`；过旧或 PATH 变化时重扫。
-2. 执行 `<地图脚本绝对路径> find <工具> -Project <当前项目目录> -Json`。
+1. 执行 `<地图脚本绝对路径> status -Json`。没有地图、地图过旧或候选变化时，先取得用户同意，再使用 `setup`、`scan`、`update` 或 `add` 维护。PATH 因会话不同而变化时先确认实际影响，不必反复重扫。
+2. 执行 `<地图脚本绝对路径> find <工具> -Project <当前项目目录> -Json`。`find` 只读：不执行新候选、不写地图；新候选保持未验证。
 3. 检查退出码、`ok`、`status`、`requirement`、`verification`。只有成功且已验证的结果默认可以直接使用 `path`。
 4. 项目需要环境变量或配套工具时，通过已登记的 mise 执行 `mise exec -- <命令>`。
 
-`find` 在地图没有合适副本时搜索 PATH、仓库和 mise 安装目录。失败只说明本次搜索范围没有合适副本，不代表全盘不存在，也不授权自动安装。
+`find` 只读当前地图与项目声明；地图没有可用候选时不会执行新候选，也不会写地图。只读发现的新候选保持未验证，需要显式 `scan` / `update` / `add` 验证后才可能被选中。失败只说明当前地图没有可用候选，不代表全盘不存在，也不授权自动安装。
 
 ## 安装流程
 
@@ -42,7 +44,7 @@ portable 工具落在 `~/toolchains/<工具>/<版本>/`；`-Via winget` 由包�
 | `doctor -Project <目录>` | 只读验证地图、宿主与接入文件；不证明模型行为 |
 | `scan` | 完整扫描，保留手工副本、备注和偏好 |
 | `status` | 完整扫描年龄、局部更新时间和 PATH 变化 |
-| `find <工具> [-Project <目录>] [-Version <要求>]` | 动态选择；不满足时失败，不降级 |
+| `find <工具> [-Project <目录>] [-Version <要求>]` | 只读选择；不执行新候选、不写地图；新候选需显式维护验证；不满足时失败，不降级 |
 | `add <工具> -Path <绝对路径> [-Note <文本>] [-Prefer]` | 登记已有文件；保存路径偏好 |
 | `update [工具]` | 重探条目，不刷新完整扫描时间 |
 | `install <工具>@<版本> [-WhatIf]` | 明确安装，可用 `-Url` / `-Sha256` 或 `-Via winget` |
@@ -51,7 +53,7 @@ portable 工具落在 `~/toolchains/<工具>/<版本>/`；`-Via winget` 由包�
 
 ## 首选与护栏
 
-项目要求 > 显式偏好 > 已验证副本的默认排序；`-Version` 可以显式覆盖项目要求。shim 永不作首选，IDE 运行时和 conda env 默认不参选。`-AllowUnverified` / `-AllowIdeHost` 只能在用户明确需要时使用，不能为了让查询成功而自行添加。
+项目要求 > 显式偏好 > 已验证副本的默认排序；`-Version` 可以显式覆盖项目要求。shim 永不作首选，IDE 运行时和 conda env 默认不参选。`find` 不再支持 `-AllowUnverified`；`-AllowIdeHost` 只能在用户明确需要时使用，不能为了让查询成功而自行添加。
 
 不执行 shim 探测版本；不把存在等同可用；不把未知要求判成满足。用 `source` 区分仓库、管理器、系统、手工和宿主副本。地图是索引，仓库是存放位置。
 

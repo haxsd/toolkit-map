@@ -7,7 +7,7 @@ $repo = Split-Path $PSScriptRoot -Parent
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repo 'scripts\census.ps1'), [ref]$tokens, [ref]$errors)
 foreach ($definition in $ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $false)) {
-    if ($definition.Name -in @('Get-Resolution', 'Get-FirstLine', 'Get-RuntimeVersion')) { Invoke-Expression $definition.Extent.Text }
+    if ($definition.Name -in @('Get-Resolution', 'Get-FirstLine', 'Get-RuntimeVersion', 'Get-WarehouseToolVersion')) { Invoke-Expression $definition.Extent.Text }
 }
 # Get-Resolution 的默认命令表来自 census-data.tsv（census.ps1 在顶层加载，这里单独抽函数运行，要自己加载）。
 $script:CensusData = Read-ToolkitDataTable -Path (Join-Path $repo 'scripts\census-data.tsv') -Os 'win'
@@ -27,9 +27,20 @@ try {
     if (-not (Test-ToolkitShimPath 'C:\fixture\custom-bin\node.exe')) { throw '未识别 MISE_SHIMS_DIR' }
     if (Test-ToolkitShimPath 'C:\fixture\custom-binary\node.exe') { throw '前缀相同的其他目录被误识别为 shim' }
 } finally { $env:MISE_SHIMS_DIR = $old }
+$oldVolta = $env:VOLTA_HOME
+try {
+    $env:VOLTA_HOME = 'C:\fixture\Volta'
+    if (Test-ToolkitShimPath 'C:\fixture\Volta\tools\image\node\22.1.0\node.exe') { throw 'Volta 真实运行时不应被当作 shim' }
+    if (-not (Test-ToolkitShimPath 'C:\fixture\Volta\bin\node.exe')) { throw 'Volta bin 中的 shim 必须识别' }
+} finally { $env:VOLTA_HOME = $oldVolta }
 # 统一执行器自己也必须先过护栏：shim 不启动、不计数、不进缓存。
 $before = $script:ToolkitProbeStats.launches
 $probe = Invoke-ToolkitProbe 'C:\fixture\custom-data\shims\node.exe' @('--version')
 if ($probe.reason -ne 'skipped' -or $script:ToolkitProbeStats.launches -ne $before) { throw 'Invoke-ToolkitProbe 不应执行 shim' }
+# 统一仓库工具的探测同样先拒绝 shim：路径检查必须在文件探测与执行器之前。
+function Test-RealExecutable { param($Path) throw "shim 被交给了文件探测器：$Path" }
+function Invoke-ToolkitProbe { param($Exe, $Arguments) throw "shim 被交给了执行器：$Exe" }
+$warehouseShim = Get-WarehouseToolVersion -Tool 'rg' -ExePath 'C:\fixture\custom-data\shims\rg.exe'
+if ($warehouseShim) { throw 'Get-WarehouseToolVersion 不应探测 shim' }
 Write-Host '[通过] 扫描内核各层 shim 护栏'
 exit 0
