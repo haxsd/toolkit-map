@@ -275,7 +275,7 @@ run_with_timeout() {
   resolved="$(command -v "$1" 2>/dev/null || true)"
   probe_safe "$resolved" || return 1
   timeout_cmd="$(command -v timeout 2>/dev/null || true)"
-  if [ -n "$timeout_cmd" ]; then
+  if [ -n "$timeout_cmd" ] && probe_safe "$timeout_cmd"; then
     MISE_AUTO_UPDATE=0 "$timeout_cmd" "$secs" "$@" 2>/dev/null
     return $?
   fi
