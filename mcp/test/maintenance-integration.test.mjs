@@ -17,7 +17,7 @@ const POWERSHELL = process.env.TOOLKIT_MAP_POWERSHELL || 'C:\\WINDOWS\\System32\
 const windowsOnly = { skip: process.platform !== 'win32' };
 
 function tempDir(t, prefix) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

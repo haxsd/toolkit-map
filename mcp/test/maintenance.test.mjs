@@ -624,13 +624,13 @@ test('toolkit_update previews by default and executes only with confirm:true', a
     ok: true,
     status: 'ok',
     tools: ['node']
-  }, { runConfig: { mapFile: 'C:\\server\\map.json' } });
+  }, { runConfig: { platform: 'win32', cwd: 'C:\\work', mapFile: 'C:\\server\\map.json', env: {} } });
 
   response = await execute.handler.handle(callTool(3, 'toolkit_update', { tool: 'Node', confirm: true }));
   assert.deepEqual(execute.calls, [{
     action: 'update',
     options: { tool: 'node' },
-    config: { mapFile: 'C:\\server\\map.json' }
+    config: { platform: 'win32', cwd: 'C:\\work', mapFile: 'C:\\server\\map.json', env: {} }
   }]);
   assert.equal(response.result.isError, false);
 });
@@ -680,7 +680,7 @@ test('toolkit_add previews and forwards only allowlisted arguments on confirm', 
     status: 'ok',
     tool: 'node',
     path: 'C:\\tools\\node.exe'
-  }, { runConfig: { mapFile: 'C:\\server\\map.json' } });
+  }, { runConfig: { platform: 'win32', cwd: 'C:\\work', mapFile: 'C:\\server\\map.json', env: {} } });
 
   const executed = await execute.handler.handle(callTool(2, 'toolkit_add', {
     tool: 'Node',
@@ -700,7 +700,7 @@ test('toolkit_add previews and forwards only allowlisted arguments on confirm', 
       version: '22.1.0',
       prefer: true
     },
-    config: { mapFile: 'C:\\server\\map.json' }
+    config: { platform: 'win32', cwd: 'C:\\work', mapFile: 'C:\\server\\map.json', env: {} }
   }]);
   assert.equal(executed.result.isError, false);
 });

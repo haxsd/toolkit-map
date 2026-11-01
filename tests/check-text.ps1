@@ -119,7 +119,16 @@ if ($source.IndexOf($managedLine, [StringComparison]::Ordinal) -lt 0 -or
     $source.IndexOf($managedLine, [StringComparison]::Ordinal) -ne $source.LastIndexOf($managedLine, [StringComparison]::Ordinal)) {
     throw '无法隔离管理器探测；拒绝运行文案测试。'
 }
+$pathDirsLine = '$pathDirs = @(Get-PathDirs)'
+$pathDirsPattern = '(?m)^\$pathDirs = @\(Get-PathDirs\)\r?$'
+if ([regex]::Matches($source, $pathDirsPattern).Count -ne 1) {
+    throw '无法隔离 PATH；拒绝运行文案测试。'
+}
+# PowerShell 7 may add its own directory to PATH during startup. Restore the
+# fixture PATH inside the child before census starts collecting candidates.
+$pathFixture = '$env:PATH = Join-Path $env:USERPROFILE ''empty-bin''' + "`r`n" + $pathDirsLine
 $source = $source.Replace($rootsLine, $isolatedLine).Replace($managedLine, $managedFixture)
+$source = [regex]::Replace($source, $pathDirsPattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $pathFixture })
 [IO.File]::WriteAllText($isolatedCensus, $source, (New-Object Text.UTF8Encoding $true))
 $originalEnvironment = @{}
 foreach ($name in @('USERPROFILE', 'HOME', 'APPDATA', 'LOCALAPPDATA', 'PATH', 'TOOLCHAIN_ROOT', 'MISE_DATA_DIR', 'MISE_SHIMS_DIR', 'MISE_CONFIG_FILE', 'MISE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'VOLTA_HOME', 'FNM_DIR', 'SCOOP', 'ASDF_DATA_DIR', 'ProgramFiles', 'ProgramFiles(x86)')) {
