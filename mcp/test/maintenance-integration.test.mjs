@@ -16,6 +16,11 @@ const MAP_SCRIPT = path.join(REPO_ROOT, 'scripts', 'map.ps1');
 const POWERSHELL = process.env.TOOLKIT_MAP_POWERSHELL || 'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const windowsOnly = { skip: process.platform !== 'win32' };
 
+function sameFilePath(a, b) {
+  try { return fs.realpathSync(a).toLowerCase() === fs.realpathSync(b).toLowerCase(); }
+  catch { return path.win32.resolve(a).toLowerCase() === path.win32.resolve(b).toLowerCase(); }
+}
+
 function tempDir(t, prefix) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -360,10 +365,10 @@ test('confirmed toolkit_add writes only the configured temporary map', windowsOn
   assert.equal(map.schemaVersion, 2);
   const entry = map.tools.node;
   assert.ok(entry, 'node entry must be registered');
-  const candidate = entry.candidates.find((item) => path.normalize(item.path).toLowerCase() === path.normalize(runtime).toLowerCase());
+  const candidate = entry.candidates.find((item) => sameFilePath(item.path, runtime));
   assert.ok(candidate, JSON.stringify(entry.candidates));
   assert.equal(candidate.userNote, 'manual registration');
-  assert.equal(entry.preferredPath.toLowerCase(), runtime.toLowerCase());
+  assert.ok(sameFilePath(entry.preferredPath, runtime));
 });
 
 test('real add failures return a schema-valid frozen error result', windowsOnly, async (t) => {
@@ -422,12 +427,14 @@ test('a relative TOOLKIT_MAP preview is pinned to the same temporary file on exe
   });
   const args = { tool: 'node', path: runtime };
   const preview = await handler.handle(callTool(1, 'toolkit_add', args));
-  assert.equal(preview.result.structuredContent.mapFile, expectedMap);
-  assert.equal(fs.existsSync(expectedMap), false);
+  const previewMap = preview.result.structuredContent.mapFile;
+  assert.equal(path.basename(previewMap), 'chosen.json');
+  assert.equal(sameFilePath(previewMap, expectedMap), true, previewMap);
+  assert.equal(fs.existsSync(previewMap), false);
   const executed = await handler.handle(callTool(2, 'toolkit_add', { ...args, confirm: true }));
   assert.equal(executed.result.isError, false, JSON.stringify(executed.result));
-  assert.equal(executed.result.structuredContent.mapFile, expectedMap);
-  assert.ok(readMap(expectedMap).tools.node);
+  assert.equal(executed.result.structuredContent.mapFile, previewMap);
+  assert.ok(readMap(previewMap).tools.node);
 });
 
 test('the preview names the map file that toolkit_add actually writes', windowsOnly, async (t) => {
