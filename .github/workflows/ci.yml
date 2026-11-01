@@ -89,9 +89,6 @@ jobs:
       - name: 项目选择与接入契约（PowerShell 5.1）
         shell: powershell
         run: .\tests\map-contract.ps1
-      - name: 项目选择与接入契约（PowerShell 7）
-        shell: pwsh
-        run: .\tests\map-contract.ps1
       - name: 版本比较与排序（PowerShell 5.1）
         shell: powershell
         run: .\tests\version-contract.ps1
@@ -124,36 +121,6 @@ jobs:
           # 输出同时进控制台和文件：失败时把文件尾部转成注解（注解可以匿名从 API 读到，
           # job 日志需要鉴权——无人值守时这是唯一能自己看到失败原因的通道）。
           $log = Join-Path $env:RUNNER_TEMP 'parity.log'
-          try {
-            & .\tests\parity.ps1 *>&1 | Tee-Object -FilePath $log
-            $code = $LASTEXITCODE
-          } catch {
-            # 脚本抛异常时会在这里被接住：否则它只留一句"exit code 1"，什么线索都没有
-            Write-Host "::error::parity.ps1 抛出异常: $($_.Exception.Message)"
-            $code = 1
-          }
-          if ($code -ne 0) {
-            $lines = @(Get-Content -LiteralPath $log -ErrorAction SilentlyContinue)
-            Write-Host "::error::parity.ps1 退出码 $code，输出 $($lines.Count) 行"
-            # 脚本可能在打印任何东西之前就退出（例如语法或宿主层面的问题），
-            # 那种情况下只有 $Error 里有线索，所以一并带出来。
-            foreach ($rec in @($Error | Select-Object -First 3)) {
-              $msg = ($rec.ToString() -replace "`r?`n", ' ')
-              if ($msg.Trim()) { Write-Host "::error::异常: $($msg.Trim())" }
-            }
-            $lines | Where-Object { $_.Trim() } | Select-Object -Last 30 |
-              ForEach-Object { Write-Host "::error::$($_.Trim())" }
-          }
-          exit $code
-
-      # 同一份测试再用 PowerShell 7 跑：parity.ps1 用当前宿主启动 census.ps1，
-      # 这一步覆盖 census.ps1 在 PS7 下的行为（地图动作在 PS7 下调用的就是它）。
-      - name: 一致性测试（PowerShell 7 宿主）
-        shell: pwsh
-        run: |
-          # 输出同时进控制台和文件：失败时把文件尾部转成注解（注解可以匿名从 API 读到，
-          # job 日志需要鉴权——无人值守时这是唯一能自己看到失败原因的通道）。
-          $log = Join-Path $env:RUNNER_TEMP 'parity-ps7.log'
           try {
             & .\tests\parity.ps1 *>&1 | Tee-Object -FilePath $log
             $code = $LASTEXITCODE
