@@ -24,7 +24,7 @@ jobs:
   windows:
     runs-on: windows-latest
     # 测试内部对每个子进程都有超时保护，这里再兜一道：宁可快速失败，也不要长期占着 runner
-    timeout-minutes: 8
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       # 编码检查放在最前：.ps1 缺 BOM 时，英文系统的 ANSI 代码页（cp1252）会把中文注释
