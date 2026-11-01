@@ -547,6 +547,25 @@ function Invoke-Scan {
     $censusWallMs = [int64]$censusSw.Elapsed.TotalMilliseconds
     if ($LASTEXITCODE -ne 0) { Throw-MapError 'scan_failed' "census 退出码：$LASTEXITCODE" }
     try { $census = ($output | Out-String) | ConvertFrom-Json } catch { Throw-MapError 'scan_failed' 'census 未返回有效 JSON。' }
+    # A syntactically valid but partial report must not become a fresh map.
+    # probeStats is optional for older census versions; the inventory arrays
+    # and each runtime's identity are required for a complete scan.
+    if ($null -eq $census -or $census -is [array] -or $census -isnot [pscustomobject] -or $census.schemaVersion -ne 1 -or
+        $census.runtimes -isnot [array] -or $census.declarations -isnot [array] -or $census.warnings -isnot [array]) {
+        Throw-MapError 'scan_failed' 'census 报告缺少完整扫描所需字段；未写入地图。'
+    }
+    foreach ($runtime in $census.runtimes) {
+        if ($runtime -isnot [pscustomobject] -or $runtime.tool -isnot [string] -or -not $runtime.tool -or
+            $runtime.path -isnot [string] -or -not $runtime.path) {
+            Throw-MapError 'scan_failed' 'census 运行时记录缺少工具名或路径；未写入地图。'
+        }
+    }
+    foreach ($declaration in $census.declarations) {
+        if ($null -eq $declaration -or $declaration -is [array] -or $declaration -isnot [pscustomobject] -or
+            $null -eq $declaration.tools -or $declaration.tools -is [array] -or $declaration.tools -isnot [pscustomobject]) {
+            Throw-MapError 'scan_failed' 'census 声明记录不完整；未写入地图。'
+        }
+    }
     $index = @{}
     foreach ($runtime in @($census.runtimes)) { $index[$runtime.path] = $runtime }
     $names = New-Object System.Collections.Generic.HashSet[string]
