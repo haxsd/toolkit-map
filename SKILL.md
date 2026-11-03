@@ -63,4 +63,4 @@ portable 工具落在 `~/toolchains/<工具>/<版本>/`；`-Via winget` 由包�
 
 向用户报告时区分：项目要求什么、机器发现哪些副本、当前命令解析到谁。发现范围和验证状态都必须保留。
 
-首次使用见 [README](README.md#首次接入一个项目)；遇到问题见 [故障排查](docs/troubleshooting.md)，撤销见 [卸载指南](docs/uninstall.md)。不把本机环境告警或 doctor 待处理项误报为安装失败。
+首次使用见 [README](README.md#快速开始)；遇到问题见 [故障排查](docs/troubleshooting.md)，撤销见 [卸载指南](docs/uninstall.md)。不把本机环境告警或 doctor 待处理项误报为安装失败。

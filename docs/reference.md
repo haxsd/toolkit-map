@@ -4,6 +4,41 @@
 
 自 1.0.0 起，本页的 JSON result v2 与地图存储 v2 已冻结；兼容、弃用与状态枚举承诺见 [v1.0 契约冻结](contract.md)。
 
+## 和其他工具的区别
+
+| | 直接 PATH | mise / asdf | toolkit-map |
+|---|---|---|---|
+| 知道项目要求 | 否 | 是 | 是（读取常见声明） |
+| 发现本机已有副本 | 只知道一个 | 只管自己安装的 | PATH、工具仓库、mise 安装目录、手工登记 |
+| 返回可验证的绝对路径 | 否 | 部分场景 | 是（`version` + `verification` + `requirement`） |
+| 需要安装 / 改 PATH | — | 需要 | 不需要（`install` 是单独的显式动作） |
+| 覆盖场景 | 单版本 | 多版本 | 多版本 + Windows 上已有的多套工具 |
+
+> toolkit-map 不替代 mise / asdf：它补齐"项目要求 → 本机哪个副本 → 绝对路径"这一链，安装仍交给版本管理器，或在明确需要时执行一次 `install`。
+
+## 示例
+
+假设 PATH 上是 Node 16，机器另有 Node 22，项目声明需要 Node 22：
+
+| 场景 | toolkit-map 返回 | agent 接着做什么 |
+|---|---|---|
+| 发现可验证的 Node 16、22 | 选择满足项目要求的 Node 22，返回绝对路径 | 用该路径调用工具 |
+| 本次范围只发现 Node 16 | `version_mismatch`，不给错误版本的调用路径 | 报告缺口，明确需要时再安装 |
+| 声明无法解释 | `requirement_unsupported` | 澄清要求或交给管理器，不猜版本 |
+
+成功查询的关键字段（示例路径，不是你本机的清单）：
+
+```json
+{
+  "ok": true,
+  "status": "ok",
+  "path": "C:\\tools\\node\\22\\node.exe",
+  "version": "22.23.2",
+  "verification": "verified",
+  "requirement": { "version": "22", "scope": "project", "source": "C:\\project\\mise.toml" }
+}
+```
+
 ## 命令与结果
 
 `map.ps1 <动作> [工具] [参数]`。完整地图动作支持 Windows PowerShell 5.1 和 PowerShell 7。

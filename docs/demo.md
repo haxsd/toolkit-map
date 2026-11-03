@@ -54,6 +54,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\demo.ps1
 
 ## 接下来
 
-- 真实项目接入：见 [README 的首次接入](../README.md#首次接入一个项目)；
+- 真实项目接入：见 [README 的快速开始](../README.md#快速开始)；
 - MCP 配置：见 [MCP 接入](mcp.md)；
 - 一条命令完成规则接入并生成 MCP 配置：用 `scripts/quickstart.ps1`。

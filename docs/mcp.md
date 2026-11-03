@@ -12,7 +12,7 @@ MCP 适配器把 toolkit-map 暴露成查询工具，客户端直接调用，不
 
 - Windows + Windows PowerShell 5.1 或 PowerShell 7；
 - Node.js 18 或更新版本（只用于 MCP 适配器，不影响地图本身）；
-- 已经拿到 toolkit-map 源码目录。首次下载见 [README 的首次接入](../README.md#首次接入一个项目)。
+- 已经拿到 toolkit-map 源码目录。首次下载见 [README 的快速开始](../README.md#快速开始)。
 
 **不要直接用 PATH 上的 `node` 启动服务器。** PATH 上的 Node 可能正好是项目要避开的旧版本。先让地图给出一个已验证的 Node 18+ 绝对路径：
 
