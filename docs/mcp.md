@@ -80,7 +80,7 @@ quickstart 打印或写入的配置会把 `TOOLKIT_MAP_FILE` 固定为本次 `se
 }
 ```
 
-重启 Cursor，在 MCP 设置里确认 `toolkit-map` 已连接，并能看到 `toolkit_find`、`toolkit_status`、`toolkit_doctor` 三个查询工具。
+重启 Cursor，在 MCP 设置里确认 `toolkit-map` 已连接，并能看到 `toolkit_find`、`toolkit_status`、`toolkit_doctor` 三个查询工具，以及 `toolkit_scan`、`toolkit_update`、`toolkit_add` 三个维护工具（旧版适配器可能只提供查询工具）。
 
 ### Claude Code
 

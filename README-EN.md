@@ -29,7 +29,7 @@ AI coding agents usually run `node`, `python` or `git` straight from `PATH`. Tha
 2. **Which verified copies exist locally?** It scans `PATH`, tool warehouses, mise installs and manually registered paths.
 3. **Which absolute path should be used now?** It returns `path`, `version`, `verification` and `requirement`.
 
-**Lookup only — no installs, no PATH changes, no version guessing.** When no copy satisfies the requirement it returns `version_mismatch` instead of silently falling back; when a declaration cannot be interpreted it returns `requirement_unsupported` and leaves the decision to a version manager or a human.
+**Lookups are strictly read-only — no installs, no PATH changes, no version guessing.** Map maintenance (`scan` / `update` / `add`) is a separate, explicit action that requires user authorization. When no copy satisfies the requirement it returns `version_mismatch` instead of silently falling back; when a declaration cannot be interpreted it returns `requirement_unsupported` and leaves the decision to a version manager or a human.
 
 ## How it differs from PATH / mise / asdf
 

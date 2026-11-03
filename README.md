@@ -29,7 +29,7 @@ toolkit-map 在调用前回答三个问题：
 2. **本机有哪些已验证的副本？** 扫描 PATH、工具仓库、mise 安装目录和手工登记的位置；
 3. **这次该用哪个绝对路径？** 返回 `path`、`version`、`verification` 和 `requirement`。
 
-**只查询，不安装、不改 PATH、不猜版本。** 没有满足要求的副本时返回 `version_mismatch`，而不是退回旧版本；声明无法解释时返回 `requirement_unsupported`，交给版本管理器或人来处理。
+**查询严格只读，不安装、不改 PATH、不猜版本。** 地图维护（`scan` / `update` / `add`）是单独的显式动作，执行前需要用户授权。没有满足要求的副本时返回 `version_mismatch`，而不是退回旧版本；声明无法解释时返回 `requirement_unsupported`，交给版本管理器或人来处理。
 
 ## 和直接 PATH / mise / asdf 的区别
 

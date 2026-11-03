@@ -9,7 +9,7 @@ description: "AI agent 的本机工具发现与选择层：调用工具前查询
 
 安装技能不会自动写入前端的全局规则。希望在各项目持续遵守本流程时，将简短调用规则接入前端支持的全局指令；仅单个项目使用时可运行 `setup -Project <目录>`。接入位置、可复制模板和生效验收见 [agent 接入指南](docs/agent-integration.md)。
 
-客户端支持 MCP 时，优先配置 `mcp/server.mjs`：它提供 `toolkit_find` / `toolkit_status` / `toolkit_doctor` 三个只读查询工具，直接调用同一份 `map.ps1 -Json`，不依赖模型记住规则文件。配置与验收见 [MCP 接入](docs/mcp.md)；规则文件仍可作为回退，两者可以同时启用。
+客户端支持 MCP 时，优先配置 `mcp/server.mjs`：它提供 `toolkit_find` / `toolkit_status` / `toolkit_doctor` 三个只读查询工具，以及 `toolkit_scan` / `toolkit_update` / `toolkit_add` 三个默认预览的维护工具，直接调用同一份 `map.ps1 -Json`，不依赖模型记住规则文件。配置与验收见 [MCP 接入](docs/mcp.md)；规则文件仍可作为回退，两者可以同时启用。
 
 `find` 只读：不执行新候选、不写地图；只读发现的新候选保持未验证，需要 `scan` / `update` / `add` 显式维护。MCP 维护工具（`toolkit_scan` / `toolkit_update` / `toolkit_add`）默认只预览，`confirm:true` 才请求执行；执行会探测本机候选程序，必须取得用户明确授权。团队共享仓库不要提交含本机绝对路径的规则块或 MCP 配置。
 
