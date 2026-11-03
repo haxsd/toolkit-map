@@ -202,7 +202,7 @@ MCP 与规则文件可以同时启用；MCP 不会自动改写 `AGENTS.md`，`se
 
 ## 文档
 
-[参考手册](docs/reference.md) · [契约冻结](docs/contract.md) · [MCP 接入](docs/mcp.md) · [2 分钟演示](docs/demo.md) · [agent 接入](docs/agent-integration.md) · [平台说明](docs/platform-notes.md) · [存储与大工具安装](docs/storage.md) · [故障排查](docs/troubleshooting.md) · [撤销与卸载](docs/uninstall.md) · [贡献指南](docs/contributing.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
+[参考手册](docs/reference.md) · [契约冻结](docs/contract.md) · [MCP 接入](docs/mcp.md) · [2 分钟演示](docs/demo.md) · [agent 接入](docs/agent-integration.md) · [平台说明](docs/platform-notes.md) · [存储与大工具安装](docs/storage.md) · [故障排查](docs/troubleshooting.md) · [撤销与卸载](docs/uninstall.md) · [开发与贡献](docs/development.md) · [安全策略](SECURITY.md) · [更新记录](CHANGELOG.md)
 
 ## 常见问题
 
@@ -216,6 +216,6 @@ MCP 与规则文件可以同时启用；MCP 不会自动改写 `AGENTS.md`，`se
 
 ## 贡献与许可
 
-欢迎 Issue 和 PR：先看[贡献指南](docs/contributing.md)，Bug 与功能建议请用 [Issue 模板](https://github.com/haxsd/toolkit-map/issues/new/choose)，尽量附上复现步骤与 `doctor -Bundle -Json` 输出（粘贴前隐去路径中的用户名）。
+欢迎 Issue 和 PR：先看[开发与贡献](docs/development.md)，Bug 与功能建议请用 [Issue 模板](https://github.com/haxsd/toolkit-map/issues/new/choose)，尽量附上复现步骤与 `doctor -Bundle -Json` 输出（粘贴前隐去路径中的用户名）。
 
 源码、协议、通用示例与配方使用 [MIT](LICENSE) 许可。本机地图、工具、缓存和凭据不进入发布包。

@@ -8,7 +8,7 @@
 
 - [ ] `.\tests\check-docs.ps1`
 - [ ] `.\tests\check-encodings.ps1`
-- [ ] 与改动相关的契约测试（见 `docs/contributing.md`）
+- [ ] 与改动相关的契约测试（见 `docs/development.md`）
 - [ ] 涉及发布流程时运行 `.\tests\release-gate.ps1`
 
 ## 兼容性

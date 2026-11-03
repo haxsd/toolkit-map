@@ -205,7 +205,7 @@ Any agent that can read a rules file can be wired up. Full locations, templates 
 
 Reference · agent integration · platform notes · storage and large installs · troubleshooting · uninstall · contributing · changelog:
 
-[Reference](docs/reference.md) · [Contract](docs/contract.md) · [MCP access](docs/mcp.md) · [2-minute demo](docs/demo.md) · [Agent integration](docs/agent-integration.md) · [Platform notes](docs/platform-notes.md) · [Storage](docs/storage.md) · [Troubleshooting](docs/troubleshooting.md) · [Uninstall](docs/uninstall.md) · [Contributing](docs/contributing.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
+[Reference](docs/reference.md) · [Contract](docs/contract.md) · [MCP access](docs/mcp.md) · [2-minute demo](docs/demo.md) · [Agent integration](docs/agent-integration.md) · [Platform notes](docs/platform-notes.md) · [Storage](docs/storage.md) · [Troubleshooting](docs/troubleshooting.md) · [Uninstall](docs/uninstall.md) · [Development and contributing](docs/development.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 > The docs are currently written in Chinese; English translations are welcome. The README and the CLI's `-Lang en` output are the English entry points.
 
@@ -221,6 +221,6 @@ Reference · agent integration · platform notes · storage and large installs �
 
 ## Contributing and license
 
-Issues and PRs are welcome. Start with the [contributing guide](docs/contributing.md); for bugs and feature requests use the [issue templates](https://github.com/haxsd/toolkit-map/issues/new/choose) and include reproduction steps plus the output of `doctor -Bundle -Json` (redact usernames in paths before pasting).
+Issues and PRs are welcome. Start with the [development and contributing guide](docs/development.md); for bugs and feature requests use the [issue templates](https://github.com/haxsd/toolkit-map/issues/new/choose) and include reproduction steps plus the output of `doctor -Bundle -Json` (redact usernames in paths before pasting).
 
 Source, protocol, examples and recipes are released under the [MIT](LICENSE) license. Local maps, tools, caches and credentials are not part of the published package.
