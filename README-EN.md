@@ -205,7 +205,7 @@ Any agent that can read a rules file can be wired up. Full locations, templates 
 
 Reference · agent integration · platform notes · storage and large installs · troubleshooting · uninstall · contributing · changelog:
 
-[Reference](docs/reference.md) · [Contract](docs/contract.md) · [MCP access](docs/mcp.md) · [2-minute demo](docs/demo.md) · [Agent integration](docs/agent-integration.md) · [Platform notes](docs/platform-notes.md) · [Storage](docs/storage.md) · [Troubleshooting](docs/troubleshooting.md) · [Uninstall](docs/uninstall.md) · [Development and contributing](docs/development.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
+[Reference](docs/reference.md) · [Contract](docs/contract.md) · [MCP access](docs/mcp.md) · [2-minute demo](docs/demo.md) · [Agent integration](docs/agent-integration.md) · [Platform notes](docs/platform-notes.md) · [Storage](docs/storage.md) · [Troubleshooting](docs/troubleshooting.md) · [Uninstall](docs/uninstall.md) · [Development and contributing](docs/development.md) · [Security](docs/security-policy.md) · [Changelog](CHANGELOG.md)
 
 > The docs are currently written in Chinese; English translations are welcome. The README and the CLI's `-Lang en` output are the English entry points.
 
