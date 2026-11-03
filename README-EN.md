@@ -186,7 +186,7 @@ Any agent that can read a rules file can be wired up. Full locations, templates 
 | Project declarations | Common `mise.toml`, `.tool-versions`, Node/Python version files and Node `engines` | Lightweight reader; does not interpret full TOML / mise environment semantics |
 | Portable installs | gh, jadx, rg/ripgrep, fd (Windows x64), adb; custom ZIP | Does not auto-install every discoverable tool; downloaded versions are verified again at the final location |
 | MCP access | Three lookup tools plus `toolkit_scan` / `toolkit_update` / `toolkit_add`, zero npm dependencies | Requires Node.js 18+; lookups are read-only; maintenance previews by default, executes only with `confirm:true`, and needs user authorization |
-| Interface contract | v1.0 freezes JSON result v2, map v2, 30 status values and the MCP tool contract | Compatibility and deprecation policy in the [contract](docs/contract.md) |
+| Interface contract | JSON result v2, map v2, 30 status values and the MCP tool contract, frozen since v1.0 | Compatibility and deprecation policy in the [contract](docs/contract.md) |
 | Installers | Explicit `-Via winget` | Location is decided by the package manager |
 | Platforms | Windows PowerShell 5.1 / 7 support the full map | On Unix, only the `census.sh` scanning kernel is available |
 

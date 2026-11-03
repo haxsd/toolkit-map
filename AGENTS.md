@@ -161,7 +161,7 @@ JetBrains 系 IDE 的 `jbr/` 里有完整 JDK，版本常常比用户自己装�
 
 如果当前客户端已经暴露 `toolkit_find` / `toolkit_status` / `toolkit_doctor` MCP 工具，直接调用它们；不要为同样的查询再启动 PowerShell 执行 `map.ps1`。若客户端还提供 `toolkit_scan` / `toolkit_update` / `toolkit_add`，先预览并向用户展示目标，取得明确授权后才请求执行；`confirm:true` 只是工作流护栏，不是真人授权证明。脚本是没有对应 MCP 工具时的回退。
 
-## v0.2 查询契约
+## 查询契约（v2）
 
 完整地图动作支持 Windows PowerShell 5.1/7。接入用 `setup -Project <目录>`，诊断用 `doctor`；技能中的脚本路径必须按技能实际位置确定，不能按项目工作目录猜。
 

@@ -43,7 +43,7 @@ body:
     attributes:
       label: toolkit-map 版本
       description: 运行 map.ps1 help -Json 查看 version，或提供 Release 标签/源码提交号
-      placeholder: 例如 v0.2.3 或完整 Git commit；无法获取时写“不确定”
+      placeholder: 例如 v2.0.0 或完整 Git commit；无法获取时写“不确定”
     validations:
       required: true
   - type: textarea

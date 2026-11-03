@@ -186,7 +186,7 @@ MCP 与规则文件可以同时启用；MCP 不会自动改写 `AGENTS.md`，`se
 | portable 安装 | gh、jadx、rg/ripgrep、fd（Windows x64）、adb；自定义 ZIP | 不自动安装所有能发现的工具；下载版本在最终位置再次验证 |
 | 安装器 | 明确使用 `-Via winget` | 位置由包管理器决定 |
 | MCP 接入 | 三个查询工具 + `toolkit_scan` / `toolkit_update` / `toolkit_add`，零 npm 依赖 | 需要 Node.js 18+；查询只读；维护默认预览，`confirm:true` 才执行且需用户授权 |
-| 接口契约 | v1.0 冻结 JSON result v2、地图 v2、30 项状态枚举与 MCP 工具契约 | 兼容与弃用策略见[契约冻结](docs/contract.md) |
+| 接口契约 | 自 v1.0 冻结的 JSON result v2、地图 v2、30 项状态枚举与 MCP 工具契约 | 兼容与弃用策略见[契约冻结](docs/contract.md) |
 | 平台 | Windows PowerShell 5.1 / 7 支持完整地图 | Unix 目前仅 `census.sh` 扫描内核 |
 
 ## 安全边界

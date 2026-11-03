@@ -2,7 +2,7 @@
   "name": "toolkit-map-mcp",
   "version": "2.0.0",
   "private": true,
-  "description": "MCP stdio adapter for toolkit-map: verified local tool paths for AI coding agents.",
+  "description": "MCP stdio adapter for toolkit-map: read-only local tool lookup plus explicit map maintenance for AI coding agents.",
   "type": "module",
   "bin": {
     "toolkit-map-mcp": "./server.mjs"
