@@ -53,7 +53,7 @@ portable 工具落在 `~/toolchains/<工具>/<版本>/`；`-Via winget` 由包�
 
 ## 首选与护栏
 
-项目要求 > 显式偏好 > 已验证副本的默认排序；`-Version` 可以显式覆盖项目要求。shim 永不作首选，IDE 运行时和 conda env 默认不参选。`find` 不再支持 `-AllowUnverified`；`-AllowIdeHost` 只能在用户明确需要时使用，不能为了让查询成功而自行添加。
+项目要求 > 显式偏好 > 已验证副本的默认排序；`-Version` 可以显式覆盖项目要求。shim 永不作首选，IDE / 编辑器自带运行时和 conda env 默认不参选。`find` 不再支持 `-AllowUnverified`；`-AllowIdeHost` 只能在用户明确需要时使用，不能为了让查询成功而自行添加。
 
 不执行 shim 探测版本；不把存在等同可用；不把未知要求判成满足。用 `source` 区分仓库、管理器、系统、手工和宿主副本。地图是索引，仓库是存放位置。
 

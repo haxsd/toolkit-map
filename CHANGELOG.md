@@ -1,5 +1,11 @@
 # 更新记录
 
+## v2.0.1 — 编辑器自带运行时默认不参选（未发布）
+
+- 将 Cursor / VS Code 等编辑器 `resources\app\resources\helpers\` 下的宿主自带运行时归类为 `ide-host`，与 IDE 自带 JBR 一样默认不参与选择；`-AllowIdeHost` 仍可显式启用。
+- 修复 `find -Version 24` 可能选中 Cursor 自带 Node 的问题；`quickstart` 也不会再用它作为 MCP 启动器。
+- 地图与 JSON 结果仍使用 schema v2，无契约变更。
+
 ## v2.0.0 — 严格只读查询与显式维护
 
 - **不兼容变更**：`find` 严格只读，不执行新发现或指纹变化的候选、不写地图，仅选用仍可访问且指纹未变的已验证副本；`-AllowUnverified` 不再受支持。新候选需要用户授权后通过 `scan`、`update` 或 `add` 验证。

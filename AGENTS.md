@@ -59,7 +59,7 @@
 1. **声明层** —— 项目与全局的声明文件
 2. **纳管层** —— mise / fnm / uv / conda 等管理器管理的
 3. **约定层** —— PATH 里带版本号的命名 shim（`node22`、`python312`）
-4. **非纳管层** —— 版本管理器目录、系统安装目录、IDE 内置运行时、conda 环境
+4. **非纳管层** —— 版本管理器目录、系统安装目录、IDE / 编辑器内置运行时、conda 环境
 5. **解析层** —— 常见命令实际解析到哪个文件
 
 `map.ps1 scan` 面向这五类来源，但搜索范围有限，不能把未发现当成全盘不存在；同时排除依赖特定环境的对象（conda 某个 env 里的小包、
@@ -142,7 +142,8 @@ uv run --python 3.12 script.py    # Python 的等价物
 ### 坑 4：IDE 自带的运行时
 
 JetBrains 系 IDE 的 `jbr/` 里有完整 JDK，版本常常比用户自己装的还新。
-**只在明确需要时使用**，不要当项目 JDK——那会让构建依赖某个 IDE 的私有安装。
+Cursor / VS Code 等编辑器的 `resources\app\resources\helpers\` 里也可能带 Node。
+**只在明确需要时使用**，不要当项目 JDK / Node——那会让构建依赖某个宿主的私有安装。
 
 ### 坑 5：Windows PowerShell 5.1 的 `@()` 陷阱
 
@@ -165,7 +166,7 @@ JetBrains 系 IDE 的 `jbr/` 里有完整 JDK，版本常常比用户自己装�
 
 完整地图动作支持 Windows PowerShell 5.1/7。接入用 `setup -Project <目录>`，诊断用 `doctor`；技能中的脚本路径必须按技能实际位置确定，不能按项目工作目录猜。
 
-查询用 `find <工具> -Project <项目目录> -Json`，检查 `ok`、`status`、`verification` 和 `requirement`。版本不匹配或要求无法判断时失败，不降级。搜索失败只说明本次范围未发现合适副本，不说明整台机器没有。shim 与未验证副本不得用于执行；IDE 副本只有经明确选择且已验证时才可使用。
+查询用 `find <工具> -Project <项目目录> -Json`，检查 `ok`、`status`、`verification` 和 `requirement`。版本不匹配或要求无法判断时失败，不降级。搜索失败只说明本次范围未发现合适副本，不说明整台机器没有。shim 与未验证副本不得用于执行；IDE / 编辑器副本只有经明确选择且已验证时才可使用。
 
 地图 v2 的 `scannedAt` 是完整扫描时间，`updatedAt` 是局部更新时间；重扫保留已登记副本、备注与偏好。所有动作的 JSON stdout 是一个对象。
 

@@ -30,6 +30,14 @@ function Test-ToolkitShimPath {
     return $false
 }
 
+# 编辑器 / IDE 宿主自带的运行时（Cursor、VS Code 等的 resources\app\resources\helpers\node.exe）
+# 是宿主私有文件，不是项目工具。即使它出现在 PATH 中，也不能默认拿来构建项目。
+function Test-ToolkitHostRuntimePath {
+    param([string]$Value)
+    if (-not $Value) { return $false }
+    return ($Value -match '(?i)[\\/]resources[\\/]app[\\/]resources[\\/]helpers[\\/]')
+}
+
 # 脚本型启动器（npm/npx/pnpm/yarn/corepack，含 npm22 这类约定名）本身不是 shim，
 # 但执行它时会再去调用 node：npm.cmd 与 Unix 的 sh 启动器优先用同目录的 node，没有才走 PATH；
 # `#!/usr/bin/env node` 直接走 PATH。PATH 上的 node 恰好是 shim 时，探测启动器版本

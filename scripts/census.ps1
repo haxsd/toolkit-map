@@ -756,7 +756,7 @@ function Get-InstallSource {
     $p = $Path.ToLowerInvariant()
     if ($p -match '\\mise\\')                                                    { return 'mise' }
     if ($p -match '\\envs\\' -or $p -match '\\(mini|ana)conda')                  { return 'conda' }
-    if ($p -match '\\jbr\\' -or $p -match '(pycharm|intellij|jetbrains|android[\\ ]studio)') { return 'IDE 内置' }
+    if ((Test-ToolkitHostRuntimePath $Path) -or $p -match '\\jbr\\' -or $p -match '(pycharm|intellij|jetbrains|android[\\ ]studio)') { return 'IDE 内置' }
     if ($p -match '\\(nvm|fnm|nvs|volta|asdf|pyenv)\b')                          { return '版本管理器' }
     if ($p -match '\\scoop\\')                                                    { return 'scoop' }
     if ($p -match '\\chocolatey\\')                                               { return 'chocolatey' }

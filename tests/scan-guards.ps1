@@ -7,7 +7,7 @@ $repo = Split-Path $PSScriptRoot -Parent
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repo 'scripts\census.ps1'), [ref]$tokens, [ref]$errors)
 foreach ($definition in $ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $false)) {
-    if ($definition.Name -in @('Get-Resolution', 'Get-FirstLine', 'Get-RuntimeVersion', 'Get-WarehouseToolVersion')) { Invoke-Expression $definition.Extent.Text }
+    if ($definition.Name -in @('Get-Resolution', 'Get-FirstLine', 'Get-RuntimeVersion', 'Get-WarehouseToolVersion', 'Get-InstallSource')) { Invoke-Expression $definition.Extent.Text }
 }
 # Get-Resolution 的默认命令表来自 census-data.tsv（census.ps1 在顶层加载，这里单独抽函数运行，要自己加载）。
 $script:CensusData = Read-ToolkitDataTable -Path (Join-Path $repo 'scripts\census-data.tsv') -Os 'win'
@@ -42,5 +42,9 @@ function Test-RealExecutable { param($Path) throw "shim 被交给了文件探测
 function Invoke-ToolkitProbe { param($Exe, $Arguments) throw "shim 被交给了执行器：$Exe" }
 $warehouseShim = Get-WarehouseToolVersion -Tool 'rg' -ExePath 'C:\fixture\custom-data\shims\rg.exe'
 if ($warehouseShim) { throw 'Get-WarehouseToolVersion 不应探测 shim' }
+# 编辑器 / IDE 宿主自带的 helper 运行时不能被当成普通项目工具。
+if (-not (Test-ToolkitHostRuntimePath 'C:\fixture\editor\resources\app\resources\helpers\node.exe')) { throw '未识别编辑器自带运行时' }
+if (Test-ToolkitHostRuntimePath 'C:\fixture\tools\node.exe') { throw '普通工具目录被误识别为宿主运行时' }
+if ((Get-InstallSource 'C:\fixture\editor\resources\app\resources\helpers\node.exe') -ne 'IDE 内置') { throw '扫描器未把编辑器 helper 归为 IDE 内置' }
 Write-Host '[通过] 扫描内核各层 shim 护栏'
 exit 0

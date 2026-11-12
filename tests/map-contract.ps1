@@ -106,6 +106,15 @@ param([switch]$Json)
     $r = Run-Map @('add', 'node', '-Path', $one)
     $r = Run-Map @('find', 'node', '-Project', $project, '-SkipScan')
     Assert ($r.value.ok -and $r.value.path -eq $one -and $r.value.note -eq '手工登记保留') '重新登记同一路径且未提供新备注时应保留已有备注与偏好'
+    # 编辑器/IDE 宿主自带的 helper 运行时不能作为项目候选；只有 -AllowIdeHost 才能显式启用。
+    $editorNode = Fake-Tool (Join-Path $scratch 'editor\resources\app\resources\helpers') 'node' '24.22.1'
+    $r = Run-Map @('add', 'node', '-Path', $editorNode); Assert ($r.code -eq 0) '登记编辑器自带 Node 失败'
+    $editorFind = Run-Map @('find', 'node', '-Project', $project, '-Version', '24', '-SkipScan')
+    Assert (-not $editorFind.value.ok -and $editorFind.value.status -eq 'version_mismatch' -and -not $editorFind.value.path) '编辑器自带 Node 不应被 -Version 24 默认选中'
+    $editorCandidate = @($editorFind.value.candidates | Where-Object { $_.path -eq $editorNode } | Select-Object -First 1)
+    Assert ($editorCandidate.Count -eq 1 -and $editorCandidate[0].source -eq 'ide-host' -and $editorCandidate[0].verification -eq 'verified') '编辑器自带 Node 必须归为 ide-host 且保留验证状态'
+    $editorAllowed = Run-Map @('find', 'node', '-Project', $project, '-Version', '24', '-SkipScan', '-AllowIdeHost')
+    Assert ($editorAllowed.value.ok -and $editorAllowed.value.path -eq $editorNode) '-AllowIdeHost 应允许显式选择编辑器自带 Node'
     # 损坏的 package.json 是无法判断的 Node 声明，而不是可忽略的空声明。
     $badProject = Join-Path $scratch 'bad-package-project'; [void][IO.Directory]::CreateDirectory($badProject)
     foreach ($badJson in @('{invalid', '[]', '{"engines":"22"}', '{"engines":{"node":22}}')) {

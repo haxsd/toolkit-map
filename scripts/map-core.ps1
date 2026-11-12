@@ -187,7 +187,7 @@ function Get-CandidateSource {
     if ((Test-IsShimPath $P) -or (Test-ToolkitUnderRoot $P $miseRoot) -or $P -match '(?i)[\\/](nvm|fnm|volta|asdf|pyenv|scoop)[\\/]') { return 'manager' }
     if ($P -match '(?i)[\\/]envs[\\/][^\\/]+[\\/]') { return 'conda-env' }
     if ($P -match '(?i)miniconda|anaconda|miniforge') { return 'conda-base' }
-    if ($P -match '(?i)[\\/]jbr[\\/]|JetBrains|IntelliJ|PyCharm|IDEA') { return 'ide-host' }
+    if ((Test-ToolkitHostRuntimePath $P) -or $P -match '(?i)[\\/]jbr[\\/]|JetBrains|IntelliJ|PyCharm|IDEA') { return 'ide-host' }
     if ($P -match '(?i)[\\/](Program Files(?: \(x86\))?|WindowsApps|Windows)[\\/]') { return 'system' }
     return 'manual'
 }
@@ -195,7 +195,7 @@ function Get-CandidateNote {
     param([string]$Source, [string]$P)
     if (Test-IsShimPath $P) { return 'shim：只登记，不执行探测，不作首选' }
     if (Test-IsStoreAlias $P) { return '商店应用执行别名：未执行，是否可用未知' }
-    if ($Source -eq 'ide-host') { return 'IDE 自带运行时：默认不作首选；明确需要时使用 -AllowIdeHost' }
+    if ($Source -eq 'ide-host') { return '宿主/IDE 自带运行时：默认不作首选；明确需要时使用 -AllowIdeHost' }
     if ($Source -eq 'conda-env') { return 'conda 环境内的解释器：默认不作首选' }
     return ''
 }
