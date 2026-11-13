@@ -1,10 +1,13 @@
 # 更新记录
 
-## v2.0.1 — 编辑器自带运行时默认不参选（未发布）
+## v2.1.0 — agent 按策略自动维护地图
 
-- 将 Cursor / VS Code 等编辑器 `resources\app\resources\helpers\` 下的宿主自带运行时归类为 `ide-host`，与 IDE 自带 JBR 一样默认不参与选择；`-AllowIdeHost` 仍可显式启用。
-- 修复 `find -Version 24` 可能选中 Cursor 自带 Node 的问题；`quickstart` 也不会再用它作为 MCP 启动器。
-- 地图与 JSON 结果仍使用 schema v2，无契约变更。
+- `find` 新增 `maintenance`：地图年龄、待验证或变化的候选、`required` / `recommended`、建议动作与 `autoAllowed`。`find` 仍不执行候选、不写地图。
+- `setup` 写入 `settings.maintenance`：无参数默认预授权定向 `update`；未执行 `setup` 不预授权；`-NoAutoUpdate` 可关闭。`scan` / `add` / `install` 仍需用户确认，`install` 不自动执行。
+- agent 规则、MCP 说明、`SKILL.md` 与 `templates/*` 同步维护循环：`autoAllowed:true` 的定向 `update` 执行后重试一次 `find`；地图过期不再导致每次全量 `scan`。
+- MCP `toolkit_update` 可在 `find.maintenance.autoAllowed` 为 true 时传 `confirm:true` 执行；`toolkit_scan` / `toolkit_add` 仍先预览并取得明确授权。
+- 将 Cursor / VS Code 等编辑器 `resources\app\resources\helpers\` 下的宿主自带运行时归类为 `ide-host`，默认不参与选择；`-AllowIdeHost` 仍可显式启用。维护待办也不会再被宿主候选触发（原计划在 v2.0.1 的修复并入本版本）。
+- 地图与 JSON 结果仍使用 schema v2；新增 `settings.maintenance` 与 `maintenance` 字段均为可选，向后兼容。
 
 ## v2.0.0 — 严格只读查询与显式维护
 

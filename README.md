@@ -36,7 +36,7 @@ toolkit-map 在调用前回答三件事：
 ```powershell
 $project = (Get-Location).Path
 $d = Join-Path $env:USERPROFILE 'Projects\toolkit-map'
-git clone --branch v2.0.0 --depth 1 https://github.com/haxsd/toolkit-map $d
+git clone --branch v2.1.0 --depth 1 https://github.com/haxsd/toolkit-map $d
 if ($LASTEXITCODE -ne 0) { throw '下载未完成。已有安装请按升级指南处理，不要覆盖。' }
 $ps = (Get-Process -Id $PID).Path
 & $ps -NoProfile -ExecutionPolicy Bypass -File "$d\scripts\quickstart.ps1" -Project $project -Mcp -WriteMcp
@@ -49,7 +49,7 @@ $ps = (Get-Process -Id $PID).Path
 ```powershell
 $project = (Get-Location).Path
 $installDir = Join-Path $env:USERPROFILE 'Projects\toolkit-map'
-git clone --branch v2.0.0 --depth 1 https://github.com/haxsd/toolkit-map $installDir
+git clone --branch v2.1.0 --depth 1 https://github.com/haxsd/toolkit-map $installDir
 $map = Join-Path $installDir 'scripts\map.ps1'
 $ps = (Get-Process -Id $PID).Path
 function toolkit { & $ps -NoProfile -ExecutionPolicy Bypass -File $map @args }

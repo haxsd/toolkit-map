@@ -36,7 +36,7 @@ One paste to download, wire the project and write the project-level MCP config:
 ```powershell
 $project = (Get-Location).Path
 $d = Join-Path $env:USERPROFILE 'Projects\toolkit-map'
-git clone --branch v2.0.0 --depth 1 https://github.com/haxsd/toolkit-map $d
+git clone --branch v2.1.0 --depth 1 https://github.com/haxsd/toolkit-map $d
 if ($LASTEXITCODE -ne 0) { throw 'Download failed. For an existing install, follow the upgrade steps instead of overwriting it.' }
 $ps = (Get-Process -Id $PID).Path
 & $ps -NoProfile -ExecutionPolicy Bypass -File "$d\scripts\quickstart.ps1" -Project $project -Mcp -WriteMcp
@@ -49,7 +49,7 @@ Or do the same steps manually:
 ```powershell
 $project = (Get-Location).Path
 $installDir = Join-Path $env:USERPROFILE 'Projects\toolkit-map'
-git clone --branch v2.0.0 --depth 1 https://github.com/haxsd/toolkit-map $installDir
+git clone --branch v2.1.0 --depth 1 https://github.com/haxsd/toolkit-map $installDir
 $map = Join-Path $installDir 'scripts\map.ps1'
 $ps = (Get-Process -Id $PID).Path
 function toolkit { & $ps -NoProfile -ExecutionPolicy Bypass -File $map @args }
