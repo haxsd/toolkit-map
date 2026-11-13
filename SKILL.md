@@ -1,6 +1,6 @@
 ---
 name: toolkit-map
-description: "AI agent 的本机工具发现与选择层：调用工具前查询绝对路径、项目要求和验证状态；查询只读，地图维护需显式确认；明确需要安装时才单独安装。避免把 PATH 解析当机器盘点，避免重复安装或改全局环境。"
+description: "AI agent 的本机工具发现与选择层：调用工具前查询绝对路径、项目要求和验证状态；查询只读，find 返回维护建议，setup 预授权后 agent 可自动定向 update，scan/install 仍确认。避免把 PATH 解析当机器盘点，避免重复安装或改全局环境。"
 ---
 
 # toolkit-map
@@ -9,9 +9,9 @@ description: "AI agent 的本机工具发现与选择层：调用工具前查询
 
 安装技能不会自动写入前端的全局规则。希望在各项目持续遵守本流程时，将简短调用规则接入前端支持的全局指令；仅单个项目使用时可运行 `setup -Project <目录>`。接入位置、可复制模板和生效验收见 [agent 接入指南](docs/agent-integration.md)。
 
-客户端支持 MCP 时，优先配置 `mcp/server.mjs`：它提供 `toolkit_find` / `toolkit_status` / `toolkit_doctor` 三个只读查询工具，以及 `toolkit_scan` / `toolkit_update` / `toolkit_add` 三个默认预览的维护工具，直接调用同一份 `map.ps1 -Json`，不依赖模型记住规则文件。配置与验收见 [MCP 接入](docs/mcp.md)；规则文件仍可作为回退，两者可以同时启用。
+客户端支持 MCP 时，优先配置 `mcp/server.mjs`：它提供 `toolkit_find` / `toolkit_status` / `toolkit_doctor` 三个只读查询工具，以及 `toolkit_scan` / `toolkit_update` / `toolkit_add` 三个维护工具，直接调用同一份 `map.ps1 -Json`，不依赖模型记住规则文件。维护工具默认只预览；`find.maintenance.autoAllowed` 为 true 时，`toolkit_update` 可传 `confirm:true` 直接执行（策略已授权），然后重试 `find`；`toolkit_scan` / `toolkit_add` 仍需用户明确确认。配置与验收见 [MCP 接入](docs/mcp.md)；规则文件仍可作为回退，两者可以同时启用。
 
-`find` 只读：不执行新候选、不写地图；只读发现的新候选保持未验证，需要 `scan` / `update` / `add` 显式维护。MCP 维护工具（`toolkit_scan` / `toolkit_update` / `toolkit_add`）默认只预览，`confirm:true` 才请求执行；执行会探测本机候选程序，必须取得用户明确授权。团队共享仓库不要提交含本机绝对路径的规则块或 MCP 配置。
+`find` 只读：不执行新候选、不写地图；只读发现的新候选保持未验证。结果里的 `maintenance` 会说明地图是否过期、有没有待验证候选、建议动作和 `autoAllowed`。`setup` 默认预授权定向 `update`；未执行 `setup` 不预授权，`-NoAutoUpdate` 可关闭；`scan` / `add` / `install` 仍确认。团队共享仓库不要提交含本机绝对路径的规则块或 MCP 配置。
 
 **有 MCP 工具时，不要再用 shell 执行 `map.ps1` 做同样的查询**；直接用 MCP 工具。只有 MCP 不可用时，才按下面的脚本流程回退。这样既少一层参数拼接，也避免每次查询都经过宿主终端。
 
@@ -19,12 +19,13 @@ description: "AI agent 的本机工具发现与选择层：调用工具前查询
 
 Windows 策略禁止直接执行脚本时，用当前 PowerShell 宿主以 `-NoProfile -ExecutionPolicy Bypass -File <地图脚本绝对路径> <动作与参数>` 单次调用；不修改全局执行策略，遵循组织组策略。
 
-1. 执行 `<地图脚本绝对路径> status -Json`。没有地图、地图过旧或候选变化时，先取得用户同意，再使用 `setup`、`scan`、`update` 或 `add` 维护。PATH 因会话不同而变化时先确认实际影响，不必反复重扫。
-2. 执行 `<地图脚本绝对路径> find <工具> -Project <当前项目目录> -Json`。`find` 只读：不执行新候选、不写地图；新候选保持未验证。
-3. 检查退出码、`ok`、`status`、`requirement`、`verification`。只有成功且已验证的结果默认可以直接使用 `path`。
-4. 项目需要环境变量或配套工具时，通过已登记的 mise 执行 `mise exec -- <命令>`。
+1. 执行 `<地图脚本绝对路径> status -Json`。没有地图时，取得用户同意后用 `setup` / `scan` 建图；地图过旧或候选变化时，优先按 `find` 返回的 `maintenance` 处理。PATH 因会话不同而变化时先确认实际影响，不必反复重扫。
+2. 执行 `<地图脚本绝对路径> find <工具> -Project <当前项目目录> -Json`。`find` 只读：不执行新候选、不写地图；新候选保持未验证，并出现在 `maintenance.pending` 里。
+3. 检查退出码、`ok`、`status`、`requirement`、`verification`。同时检查 `maintenance`：`required` 必须先处理，`recommended` 可先维护再执行。
+4. 若 `maintenance.actions` 里的定向 `update <tool>` 为 `autoAllowed:true`，直接执行并重试一次 `find`；`scan` / `add` / `install` 或 `autoAllowed:false` 时只确认一次。不要因为地图旧就每次全量重扫。
+5. 项目需要环境变量或配套工具时，通过已登记的 mise 执行 `mise exec -- <命令>`。
 
-`find` 只读当前地图与项目声明；地图没有可用候选时不会执行新候选，也不会写地图。只读发现的新候选保持未验证，需要显式 `scan` / `update` / `add` 验证后才可能被选中。失败只说明当前地图没有可用候选，不代表全盘不存在，也不授权自动安装。
+`find` 只读当前地图与项目声明；地图没有可用候选时不会执行新候选，也不会写地图。只读发现的新候选保持未验证，需要维护动作验证后才可能被选中。失败只说明当前地图没有可用候选，不代表全盘不存在，也不授权自动安装。`maintenance.autoAllowed` 只授权定向 `update`，不授权 `scan` / `add` / `install`。
 
 ## 安装流程
 
@@ -40,13 +41,13 @@ portable 工具落在 `~/toolchains/<工具>/<版本>/`；`-Via winget` 由包�
 
 | 动作 | 用途 |
 |---|---|
-| `setup -Project <目录> [-WhatIf]` | 首次建图并接入项目 AGENTS.md；已有文件先备份；`-RulesFile` 可指定文件 |
+| `setup -Project <目录> [-WhatIf] [-AutoUpdate|-NoAutoUpdate]` | 首次建图并接入项目 AGENTS.md；写入维护策略（默认预授权定向 update）；已有文件先备份；`-RulesFile` 可指定文件 |
 | `doctor -Project <目录>` | 只读验证地图、宿主与接入文件；不证明模型行为 |
 | `scan` | 完整扫描，保留手工副本、备注和偏好 |
 | `status` | 完整扫描年龄、局部更新时间和 PATH 变化 |
-| `find <工具> [-Project <目录>] [-Version <要求>]` | 只读选择；不执行新候选、不写地图；新候选需显式维护验证；不满足时失败，不降级 |
+| `find <工具> [-Project <目录>] [-Version <要求>]` | 只读选择；不执行新候选、不写地图；返回 `maintenance`（地图年龄、待验证候选、建议动作、`autoAllowed`）；不满足时失败，不降级 |
 | `add <工具> -Path <绝对路径> [-Note <文本>] [-Prefer]` | 登记已有文件；保存路径偏好 |
-| `update [工具]` | 重探条目，不刷新完整扫描时间 |
+| `update [工具]` | 重探条目，不刷新完整扫描时间；`find.maintenance.autoAllowed` 为 true 时可由 agent 自动执行 |
 | `install <工具>@<版本> [-WhatIf]` | 明确安装，可用 `-Url` / `-Sha256` 或 `-Via winget` |
 
 所有动作支持 `-Json`；stdout 一个对象，协议 `schemaVersion: 2`。`ok:false` 时必须处理 `status`：`map_missing`、`map_corrupt`、`not_found`、`no_usable_candidate`、`version_mismatch`、`requirement_unsupported`、`map_busy` 等。

@@ -27,13 +27,13 @@
 
 ```powershell
 .\scripts\map.ps1 find <工具> -Json      # 返回 path（绝对路径）+ 版本 + 其他候选
-.\scripts\map.ps1 status                 # 检查新鲜度；维护前取得用户同意
+.\scripts\map.ps1 status                 # 检查新鲜度；find 返回 maintenance 时按策略处理
 ```
 
 用返回的 `path` 去执行。地图是**索引**（这台机器上有什么、在哪），仓库是**存放地点**；
 
 - **调用**：`find` 给的路径可能在统一仓库里，也可能在系统安装目录或管理器目录里——看 `source` 字段，不要假定它一定在仓库里；
-- **新候选**：`find` 严格只读，不执行新候选、不写地图；本次搜索未发现可用副本不代表整台机器没有。需要验证或更新时，先取得用户同意，再使用 `scan`、`update` 或 `add`；只有用户明确需要时才讨论安装（规则 5）。
+- **新候选**：`find` 严格只读，不执行新候选、不写地图；本次搜索未发现可用副本不代表整台机器没有。结果里的 `maintenance` 会给出 `required` / `recommended`、建议动作和 `autoAllowed`。`setup` 默认预授权定向 `update`；未执行 `setup` 不预授权。`scan`、`add`、`install` 仍需用户确认；只有用户明确需要时才讨论安装（规则 5）。
 
 **不要**用 `Get-Command`、`where.exe`、`Test-Path` 或手工比较 PATH 来推测"该用哪个"——
 实测会推错：同一个命令名在旧会话与新会话里可能跑的不是同一个文件
@@ -88,7 +88,7 @@ uv run --python 3.12 script.py    # Python 的等价物
 
 ### 规则 6：只读地探测，别把机器搞脏
 
-扫描/探测**不得执行 shim**；`find` 更严格，既不执行新发现或指纹变化的候选，也不写地图。经用户授权的 `scan`、`update`、`add` 可能执行普通候选的版本探测。mise 的 shim 在目标工具缺失时可能自动安装
+扫描/探测**不得执行 shim**；`find` 更严格，既不执行新发现或指纹变化的候选，也不写地图。`setup` 预授权的定向 `update`、以及经用户确认的 `scan`、`update`、`add` 可能执行普通候选的版本探测。mise 的 shim 在目标工具缺失时可能自动安装
 （实测过——只为取版本执行了一下 shim，就在 `mise\installs` 下装出了第二份 `gh`）。
 地图对 shim 只登记路径、不执行；候选里的 `isShim` 就是这个意思。
 
@@ -160,13 +160,13 @@ Cursor / VS Code 等编辑器的 `resources\app\resources\helpers\` 里也可能
 
 ## 优先使用 MCP
 
-如果当前客户端已经暴露 `toolkit_find` / `toolkit_status` / `toolkit_doctor` MCP 工具，直接调用它们；不要为同样的查询再启动 PowerShell 执行 `map.ps1`。若客户端还提供 `toolkit_scan` / `toolkit_update` / `toolkit_add`，先预览并向用户展示目标，取得明确授权后才请求执行；`confirm:true` 只是工作流护栏，不是真人授权证明。脚本是没有对应 MCP 工具时的回退。
+如果当前客户端已经暴露 `toolkit_find` / `toolkit_status` / `toolkit_doctor` MCP 工具，直接调用它们；不要为同样的查询再启动 PowerShell 执行 `map.ps1`。若客户端还提供 `toolkit_update`，在 `find.maintenance.autoAllowed` 为 true 时可传 `confirm:true` 直接执行（策略已授权），然后重试 `find`；`toolkit_scan` / `toolkit_add` 仍先预览并取得明确授权。`confirm:true` 只是工作流护栏，不是真人授权证明。脚本是没有对应 MCP 工具时的回退。
 
 ## 查询契约（v2）
 
 完整地图动作支持 Windows PowerShell 5.1/7。接入用 `setup -Project <目录>`，诊断用 `doctor`；技能中的脚本路径必须按技能实际位置确定，不能按项目工作目录猜。
 
-查询用 `find <工具> -Project <项目目录> -Json`，检查 `ok`、`status`、`verification` 和 `requirement`。版本不匹配或要求无法判断时失败，不降级。搜索失败只说明本次范围未发现合适副本，不说明整台机器没有。shim 与未验证副本不得用于执行；IDE / 编辑器副本只有经明确选择且已验证时才可使用。
+查询用 `find <工具> -Project <项目目录> -Json`，检查 `ok`、`status`、`verification` 和 `requirement`，并检查 `maintenance`：`required` 必须先处理，`recommended` 可先维护再执行；`autoAllowed:true` 的定向 `update` 可直接执行并重试一次。版本不匹配或要求无法判断时失败，不降级。搜索失败只说明本次范围未发现合适副本，不说明整台机器没有。shim 与未验证副本不得用于执行；IDE / 编辑器副本只有经明确选择且已验证时才可使用。
 
 地图 v2 的 `scannedAt` 是完整扫描时间，`updatedAt` 是局部更新时间；重扫保留已登记副本、备注与偏好。所有动作的 JSON stdout 是一个对象。
 
