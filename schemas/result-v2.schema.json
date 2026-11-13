@@ -22,6 +22,7 @@
     "requirement": { "$ref": "#/$defs/requirement" },
     "invocation": { "oneOf": [{ "$ref": "#/$defs/invocation" }, { "type": "null" }] },
     "candidates": { "type": "array", "items": { "$ref": "#/$defs/resultCandidate" } },
+    "maintenance": { "type": "object", "additionalProperties": true },
     "search": { "$ref": "#/$defs/search" },
     "hint": { "type": "string" },
     "message": { "type": "string" },

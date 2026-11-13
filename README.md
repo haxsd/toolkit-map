@@ -25,7 +25,7 @@ toolkit-map 在调用前回答三件事：
 2. **本机有哪些已验证的副本？** 扫描 PATH、统一仓库、mise 安装目录和手工登记的位置；
 3. **这次该用哪个绝对路径？** 返回 `path`、`version`、`verification` 和 `requirement`。
 
-**查询严格只读，不安装、不改 PATH、不猜版本。** 地图维护（`scan` / `update` / `add`）是单独的显式动作，执行前需要用户授权。没有满足要求的副本时返回 `version_mismatch`，不降级；声明无法解释时返回 `requirement_unsupported`，交给版本管理器或人处理。与其他工具的区别和返回示例见[参考手册](docs/reference.md#和其他工具的区别)。
+**查询严格只读，不安装、不改 PATH、不猜版本。** 地图维护（`scan` / `update` / `add`）是单独动作；`setup` 默认预授权 agent 在 `find` 返回维护建议时自动执行定向 `update <tool>`，未执行 `setup` 时不预授权；`scan` / `add` / `install` 仍需用户确认。没有满足要求的副本时返回 `version_mismatch`，不降级；声明无法解释时返回 `requirement_unsupported`，交给版本管理器或人处理。与其他工具的区别和返回示例见[参考手册](docs/reference.md#和其他工具的区别)。
 
 ## 快速开始
 

@@ -28,6 +28,8 @@ param(
     [ValidateRange(0, 300)][int]$LockTimeoutSeconds = 60,
     [string]$Note = '',                      # add/find 用：备注
     [switch]$Prefer,                         # add 用：同时标记为首选
+    [switch]$AutoUpdate,                     # setup 用：明确允许 agent 定向 update
+    [switch]$NoAutoUpdate,                   # setup 用：关闭 agent 定向 update
 
     [string]$Url = '',                       # install 用：portable 归档的直链
     [string]$Sha256 = '',                    # install 用：归档的可选 SHA256（可带 sha256: 前缀）
@@ -339,7 +341,7 @@ function Invoke-Install {
                 Throw-MapError 'installed_not_discovered' "winget 装完了，但没找到 $name 的可执行文件。请确认路径后用 add 登记。"
             }
             $map = Read-Map
-            if ($null -eq $map) { $map = @{ schemaVersion = 2; warehouse = Get-WarehouseRoot; tools = @{}; scannedAt = $null; pathSnapshot = $saved } }
+            if ($null -eq $map) { $map = @{ schemaVersion = 2; warehouse = Get-WarehouseRoot; tools = @{}; scannedAt = $null; pathSnapshot = $saved; settings = @{ maintenance = Get-DefaultMaintenancePolicy } } }
             if (-not $map.tools.ContainsKey($name)) { $map.tools[$name] = @{ candidates = @(); preferred = ''; preferredPath = '' } }
             $freshPaths = @($fresh | ForEach-Object { $_.path })
             foreach ($c in $cands) {
@@ -519,7 +521,7 @@ function Invoke-Install {
 
         # 登记进地图并设为首选（同一工具的多个版本可以并存，目录并列）
         $map = Read-Map
-        if ($null -eq $map) { $map = @{ schemaVersion = 1; warehouse = $root; tools = @{} } }
+        if ($null -eq $map) { $map = @{ schemaVersion = 2; warehouse = $root; tools = @{}; settings = @{ maintenance = Get-DefaultMaintenancePolicy } } }
         if (-not $map.tools.ContainsKey($name)) { $map.tools[$name] = @{ preferred = ''; candidates = @() } }
         $map.tools[$name].candidates = @($map.tools[$name].candidates) + @($c)
         $map.tools[$name].preferred = $c.id
@@ -557,7 +559,7 @@ try {
         'install' { Invoke-Install }
         'setup'   { Invoke-Setup }
         'doctor'  { Invoke-Doctor }
-        'help'    { New-MapResult 'ok' @{ version = (Get-ToolkitVersion); actions = @('setup', 'doctor', 'scan', 'status', 'find', 'add', 'update', 'install'); hint = 'find <工具> [-Project <目录>] [-Version <版本>] -Json；setup [-Project <目录>] [-WhatIf]；doctor [-Project <目录>] [-Bundle]' } }
+        'help'    { New-MapResult 'ok' @{ version = (Get-ToolkitVersion); actions = @('setup', 'doctor', 'scan', 'status', 'find', 'add', 'update', 'install'); hint = 'find <工具> [-Project <目录>] [-Version <版本>] -Json；setup [-Project <目录>] [-NoAutoUpdate] [-WhatIf]；doctor [-Project <目录>] [-Bundle]' } }
         default   { Throw-MapError 'invalid_action' "未知动作：$Action；执行 help 查看用法。" }
     }
     if ($null -eq $result) { $result = New-MapResult 'ok' @{ mapFile = Get-MapPath } }

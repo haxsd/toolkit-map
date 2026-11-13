@@ -20,7 +20,7 @@
 - 退出码 `0` 表示 `ok:true`；`1` 表示 `ok:false` 或 `doctor` 返回 `attention_required`；
 - 未知动作、异常同样输出结构化结果，不输出半截 JSON；
 - 新增动作、参数或字段属于 minor；删除、重命名、改变参数含义属于 major；
-- `find` 只读：不执行新候选、不写地图，只读发现的新候选保持未验证；维护只通过显式 `scan` / `update` / `add`。`find` 失败只代表当前地图没有可用候选，不授权安装，也不代表整台机器不存在该工具。
+- `find` 只读：不执行新候选、不写地图，只读发现的新候选保持未验证；结果额外返回 `maintenance`，包含 `required` / `recommended`、建议动作、`autoAllowed`、维护策略、地图年龄和待验证候选。`setup` 默认允许 agent 自动执行定向 `update <tool>`；`scan` / `add` / `install` 仍由用户确认。`find` 失败只代表当前地图没有可用候选，不授权安装，也不代表整台机器不存在该工具。
 - `doctor -Bundle` 在结果里附加 `bundle`（宿主、地图摘要、检查项、告警、版本）；不包含候选列表与 PATH 快照。提交 issue 前仍应检查并隐去用户名等路径信息。
 
 ## 2. JSON 结果 v2

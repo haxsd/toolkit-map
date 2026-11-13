@@ -10,6 +10,9 @@ export const INSTRUCTIONS = [
   'changes PATH, or falls back to a version that does not satisfy the project requirement.',
   'When the result is not ok, report the requirement, the candidates found, and the current',
   'resolution instead of guessing. Install nothing unless the user explicitly asks for it.',
+  'When toolkit_find returns maintenance.required or maintenance.recommended, inspect maintenance.actions.',
+  'If an action has autoAllowed:true (setup pre-authorizes targeted update by default), run toolkit_update',
+  'with confirm:true and retry toolkit_find once. Do not auto-run scan, add or install.',
   'toolkit_scan, toolkit_update and toolkit_add are maintenance tools. They update the map',
   'file configured by the server and may update its generated Markdown summary; they never install',
   'tools and never change PATH. A user-edited summary is preserved, with a warning. They return a',
@@ -43,6 +46,7 @@ const RESULT_SCHEMA = {
     },
     search: { type: 'object', additionalProperties: true },
     candidates: { type: 'array', items: { type: 'object', additionalProperties: true } },
+    maintenance: { type: 'object', additionalProperties: true },
     hint: { type: 'string' },
     message: { type: 'string' },
     mapFile: { type: 'string' },
@@ -96,7 +100,8 @@ export const TOOLS = [
       'Look up which local copy of a tool the project should use and return its verified absolute path.',
       'Call this before running node, python, git or another version-sensitive command instead of relying on PATH,',
       '`where`, `Get-Command` or `node --version`. The result distinguishes the project requirement, all verified',
-      'candidates, and the selected path. It never installs anything or changes PATH. If ok is false, do not run a',
+      'candidates, and the selected path. It also returns maintenance (map age, pending candidates, recommended',
+      'actions). It never installs anything or changes PATH. If ok is false, do not run a',
       'different version as a fallback; report the gap or ask the user.'
     ].join(' '),
     inputSchema: {
@@ -184,7 +189,8 @@ export const TOOLS = [
       'Maintenance action that re-probes one registered tool, or every registered tool when tool is omitted, and',
       'updates the server-configured map. It never installs tools and never changes PATH. By default it returns',
       'only a structured planned preview and runs nothing; pass confirm:true to execute. Candidate version probing',
-      'may execute programs found on this machine, so obtain explicit human authorization first. confirm is a',
+      'may execute programs found on this machine. Obtain explicit human authorization first unless toolkit_find',
+      'returned maintenance.autoAllowed true for this tool; that setup policy is the authorization. confirm is a',
       'workflow guard, not a permission or security boundary.'
     ].join(' '),
     inputSchema: {

@@ -3,6 +3,30 @@ function Get-MapPath {
     $value = if ($MapFile) { $MapFile } elseif ($env:TOOLKIT_MAP) { $env:TOOLKIT_MAP } else { Join-Path $env:USERPROFILE '.toolkit\map.json' }
     return [IO.Path]::GetFullPath($value)
 }
+function Get-DefaultMaintenancePolicy {
+    # 未执行 setup 时不预授权；setup 会显式写入 autoUpdate=true（或用 -NoAutoUpdate 关闭）。
+    $maxAge = if ($null -ne $MaxAgeHours -and [int]$MaxAgeHours -gt 0) { [int]$MaxAgeHours } else { 24 }
+    return @{ autoUpdate = $false; autoScan = $false; maxMapAgeHours = $maxAge; configured = $false }
+}
+function Get-MaintenancePolicy {
+    param($Map)
+    $policy = Get-DefaultMaintenancePolicy
+    if ($Map -is [hashtable] -and $Map.ContainsKey('settings') -and $Map.settings -is [hashtable] -and
+        $Map.settings.ContainsKey('maintenance') -and $Map.settings.maintenance -is [hashtable]) {
+        foreach ($key in @('autoUpdate', 'autoScan', 'maxMapAgeHours', 'configured')) {
+            if ($Map.settings.maintenance.ContainsKey($key) -and $null -ne $Map.settings.maintenance[$key]) {
+                $policy[$key] = $Map.settings.maintenance[$key]
+            }
+        }
+    }
+    return $policy
+}
+function Set-MaintenancePolicy {
+    param($Map, [hashtable]$Policy)
+    if ($Map -isnot [hashtable]) { return }
+    if (-not $Map.ContainsKey('settings') -or $Map.settings -isnot [hashtable]) { $Map['settings'] = @{} }
+    $Map.settings['maintenance'] = $Policy
+}
 function Assert-MapWritePath {
     # The companion Markdown path uses ChangeExtension(..., '.md'). A map
     # ending in .md would otherwise be replaced by its own summary.
@@ -576,7 +600,9 @@ function Invoke-Scan {
     $miseRoot = if ($env:MISE_DATA_DIR) { $env:MISE_DATA_DIR } else { Join-Path $env:LOCALAPPDATA 'mise' }
     foreach ($dir in (Get-ChildItem -LiteralPath (Join-Path $miseRoot 'installs') -Directory -ErrorAction SilentlyContinue)) { [void]$names.Add((Get-ToolkitCanonicalName $dir.Name)) }
     if ($old) { foreach ($name in $old.tools.Keys) { [void]$names.Add((Get-ToolkitCanonicalName $name)) } }
-    $map = @{ schemaVersion = 2; scannedAt = (Get-Date).ToString('o'); warehouse = Get-WarehouseRoot; pathSnapshot = $env:PATH; tools = @{};
+    $settings = if ($old -is [hashtable] -and $old.ContainsKey('settings') -and $old.settings -is [hashtable]) { $old.settings } else { @{} }
+    if (-not $settings.ContainsKey('maintenance')) { $settings['maintenance'] = Get-DefaultMaintenancePolicy }
+    $map = @{ schemaVersion = 2; scannedAt = (Get-Date).ToString('o'); warehouse = Get-WarehouseRoot; pathSnapshot = $env:PATH; tools = @{}; settings = $settings;
         censusSummary = @{ warnings = @($census.warnings); counts = @{ runtimes = @($census.runtimes).Count; declarations = @($census.declarations).Count } } }
     # 两阶段（收敛计划 P3）：先收集所有候选路径，把它们的版本探测一起并行跑完、写进探测缓存；
     # 下面再按原来的顺序逐个建候选，探测全部命中缓存。所以输出与串行完全一致（-Throttle 1 就是原来的串行）。
@@ -649,14 +675,17 @@ function Invoke-Status {
     $toolCount = @($map.tools.Keys | ForEach-Object { Get-ToolkitCanonicalName $_ } | Sort-Object -Unique).Count
     $changed = ($map.pathSnapshot -ne $env:PATH)
     $stale = ($null -eq $age -or $age -gt $MaxAgeHours)
+    $policy = Get-MaintenancePolicy $map
     $hints = New-Object System.Collections.Generic.List[string]
-    if ($stale) { $hints.Add('完整扫描已过期；经用户确认后可执行 scan。') }
+    if ($stale) {
+        $hints.Add($(if ($policy.autoUpdate) { '完整扫描已过期；agent 可按策略对具体工具执行 update，完整 scan 仍建议确认。' } else { '完整扫描已过期；经用户确认后可执行 scan。' }))
+    }
     if ($dead) { $hints.Add('存在暂时不可访问的登记；确认路径或设备恢复后可执行 update。') }
     if ($changed) { $hints.Add('当前进程 PATH 与最近扫描时不同，可能是会话激活造成；find 按当前进程 PATH 判断。') }
     if (-not $hints.Count) { $hints.Add('地图可用。') }
     return (New-MapResult 'ok' @{ exists = $true; mapFile = Get-MapPath; scannedAt = $map.scannedAt; updatedAt = $map.updatedAt;
         ageHours = if ($null -ne $age) { [math]::Round($age, 1) } else { $null }; stale = $stale; tools = $toolCount;
-        deadCandidates = $dead; pathChanged = $changed; hint = ($hints -join ' ') })
+        deadCandidates = $dead; pathChanged = $changed; maintenance = $policy; hint = ($hints -join ' ') })
 }
 function Get-Requirement {
     param([string]$Name)
@@ -721,6 +750,13 @@ function Invoke-Find {
         }
         $live.Add($view)
     }
+    $policy = Get-MaintenancePolicy $map
+    $age = if ($map.scannedAt) { ((Get-Date) - [datetime]$map.scannedAt).TotalHours } else { $null }
+    $stale = ($null -eq $age -or $age -gt [double]$policy.maxMapAgeHours)
+    $recordedByPath = @{}
+    foreach ($recorded in $existing) {
+        if ($recorded.path) { $recordedByPath[(Get-ToolkitNormalizedPath $recorded.path)] = $recorded }
+    }
     $requirement = Get-Requirement $name
     if (-not (Test-ToolkitRequirementSupported $requirement.version)) {
         Throw-MapError 'requirement_unsupported' "无法判定版本要求：$($requirement.version)（$($requirement.source)）；请用支持的 -Version 或通过管理器执行。"
@@ -732,9 +768,9 @@ function Invoke-Find {
     Set-UniqueCandidateIds $candidates
     $selected = Select-FindCandidate $name $candidates $declared $preferredPath $pathDefault
     $searched = $false
-    if (-not $selected -and -not $SkipScan) {
+    if (-not $SkipScan -and (-not $selected -or $stale)) {
         # Discovery only reads file metadata. New candidates are not verified
-        # until the user explicitly invokes scan, update or add.
+        # until the agent explicitly runs update, scan or add.
         $found = @(Get-ToolCandidates -Name $name -NoProbe)
         if ($pathDefault -and -not @($found | Where-Object { $_.path -eq $pathDefault }).Count) { $found += New-Candidate $pathDefault -NoProbe }
         $seen = @{}; $combined = New-Object System.Collections.Generic.List[object]
@@ -745,11 +781,59 @@ function Invoke-Find {
         $candidates = $combined.ToArray()
         Set-UniqueCandidateIds $candidates
         $searched = $true
-        $selected = Select-FindCandidate $name $candidates $declared $preferredPath $pathDefault
+        if (-not $selected) { $selected = Select-FindCandidate $name $candidates $declared $preferredPath $pathDefault }
     }
     $chosen = @($candidates | Where-Object { $_.id -eq $selected } | Select-Object -First 1)
+    $verified = @($candidates | Where-Object { $_.verification -eq 'verified' -and -not $_.isShim })
+    $status = if ($chosen.Count) { 'ok' } elseif ($requirement.version -and $verified.Count) { 'version_mismatch' } elseif ($candidates.Count -or $pathDefault) { 'no_usable_candidate' } else { 'not_found' }
+
+    $newCandidates = @($candidates | Where-Object {
+        $_.path -and -not $recordedByPath.ContainsKey((Get-ToolkitNormalizedPath $_.path))
+    })
+    $changedCandidates = @($live | Where-Object {
+        $_.path -and $recordedByPath.ContainsKey((Get-ToolkitNormalizedPath $_.path)) -and
+        $recordedByPath[(Get-ToolkitNormalizedPath $_.path)].verification -eq 'verified' -and $_.verification -eq 'unverified'
+    })
+    $unverifiedCandidates = @($candidates | Where-Object {
+        $_.path -and $recordedByPath.ContainsKey((Get-ToolkitNormalizedPath $_.path)) -and $_.verification -eq 'unverified'
+    })
+    $pendingPaths = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($candidate in @($newCandidates) + @($changedCandidates) + @($unverifiedCandidates)) {
+        if ($candidate.path) { [void]$pendingPaths.Add((Get-ToolkitNormalizedPath $candidate.path)) }
+    }
+    $pendingCount = $pendingPaths.Count
+    $pendingList = @($pendingPaths | Select-Object -First 5)
+
+    $required = -not [bool]$chosen.Count
+    $recommended = $required -or $stale -or ($pendingCount -gt 0)
+    $maintenanceReason = if ($required) { $status } elseif ($changedCandidates.Count) { 'candidate_changed' } elseif ($newCandidates.Count) { 'new_candidates' } elseif ($stale) { 'map_stale' } else { '' }
+    $actions = @()
+    if ($pendingCount -gt 0 -or $required) {
+        $actions += @{ action = 'update'; tool = $name; autoAllowed = [bool]$policy.autoUpdate }
+    }
+    if ($stale -or $status -in @('not_found', 'no_usable_candidate')) {
+        $actions += @{ action = 'scan'; autoAllowed = [bool]$policy.autoScan }
+    }
+    if ($required) {
+        $actions += @{ action = 'add'; tool = $name; autoAllowed = $false }
+        $actions += @{ action = 'install'; tool = $name; autoAllowed = $false }
+    }
+    $maintenance = @{
+        required = $required
+        recommended = $recommended
+        reason = $maintenanceReason
+        actions = $actions
+        autoAllowed = [bool]($actions | Where-Object { $_.autoAllowed } | Select-Object -First 1)
+        policy = $policy
+        map = @{ scannedAt = $map.scannedAt; updatedAt = $map.updatedAt;
+            ageHours = if ($null -ne $age) { [math]::Round($age, 1) } else { $null }; stale = $stale }
+        pending = @{ count = $pendingCount; new = $newCandidates.Count; changed = $changedCandidates.Count;
+            unverified = $unverifiedCandidates.Count; paths = $pendingList }
+    }
+
     $fields = @{ tool = $name; requestedTool = $Tool; found = [bool]$chosen.Count; path = ''; version = ''; source = ''; note = '';
-        requirement = $requirement; candidates = $candidates; search = @{ performed = $searched; complete = $false; scope = @('map', 'PATH', 'warehouse', 'mise-installs', 'adapter-locations') };
+        requirement = $requirement; candidates = $candidates; maintenance = $maintenance;
+        search = @{ performed = $searched; complete = $false; scope = @('map', 'PATH', 'warehouse', 'mise-installs', 'adapter-locations') };
         reason = ''; verification = ''; invocation = $null }
     if ($chosen.Count) {
         $c = $chosen[0]
@@ -757,11 +841,13 @@ function Invoke-Find {
         $fields.reason = if ($preferredPath -and $preferredPath -eq $c.path) { 'user_preference' } elseif ($requirement.version) { 'requirement_match' } elseif ($pathDefault -and (Get-ToolkitNormalizedPath $pathDefault) -eq (Get-ToolkitNormalizedPath $c.path)) { 'machine_default' } else { 'available_candidate' }
         $fields.invocation = @{ executable = $c.path; arguments = @(); cwd = if ($Project) { [IO.Path]::GetFullPath($Project) } else { (Get-Location).Path } }
         if ($requirement.scope -eq 'project') { $fields.environmentHint = '需要项目环境变量或配套工具时，通过已登记的 mise 执行 mise exec -- <命令>。' }
+        if ($recommended) {
+            $fields.hint = if ($maintenance.autoAllowed) { '地图有可维护项；agent 可先执行 update 并重试。' } else { '地图有可维护项；确认后可执行 update 或 scan。' }
+        }
         return (New-MapResult 'ok' $fields)
     }
-    $verified = @($candidates | Where-Object { $_.verification -eq 'verified' -and -not $_.isShim })
-    $status = if ($requirement.version -and $verified.Count) { 'version_mismatch' } elseif ($candidates.Count -or $pathDefault) { 'no_usable_candidate' } else { 'not_found' }
     $fields.hint = if ($status -eq 'version_mismatch') { '没有满足要求的已验证候选；不会降级。确认后可使用 update、scan 或 add 验证已有副本。' } else { '没有符合条件的已验证候选；find 不执行候选或修改地图。确认后可使用 update、scan 或 add 验证已有副本。' }
+    if ($maintenance.autoAllowed) { $fields.hint += ' 已允许定向 update：agent 可先执行 update 并重试。' }
     return (New-MapResult $status $fields $false)
 }
 function Invoke-Add {
@@ -772,7 +858,7 @@ function Invoke-Add {
     $name = Get-ToolkitCanonicalName $Tool
     if ($name -notmatch '^[a-z0-9][a-z0-9._+-]*$') { Throw-MapError 'invalid_argument' '工具名不能是路径或包含分隔符。' }
     $map = Read-Map
-    if (-not $map) { $map = @{ schemaVersion = 2; warehouse = Get-WarehouseRoot; tools = @{}; scannedAt = $null; pathSnapshot = $env:PATH } }
+    if (-not $map) { $map = @{ schemaVersion = 2; warehouse = Get-WarehouseRoot; tools = @{}; scannedAt = $null; pathSnapshot = $env:PATH; settings = @{ maintenance = Get-DefaultMaintenancePolicy } } }
     $entry = $map.tools[$name]
     if (-not $entry) { $entry = @{ candidates = @(); preferred = ''; preferredPath = '' }; $map.tools[$name] = $entry }
     $previous = @($entry.candidates | Where-Object { $_.path -eq $absolute } | Select-Object -First 1)
@@ -825,6 +911,7 @@ function Get-RulesBlock {
     return $match.Value.Replace("'$placeholder'", "'$command'").Replace($placeholder, $script:MapScriptPath).Replace("'$mapPlaceholder'", "'$quotedMapPath'").Replace($mapPlaceholder, $mapPath)
 }
 function Invoke-Setup {
+    if ($AutoUpdate -and $NoAutoUpdate) { Throw-MapError 'invalid_argument' 'AutoUpdate 与 NoAutoUpdate 不能同时使用。' }
     $rulesPath = Get-RulesPath
     $block = Get-RulesBlock
     $previous = if ([IO.File]::Exists($rulesPath)) { [IO.File]::ReadAllText($rulesPath) } else { '' }
@@ -834,9 +921,29 @@ function Invoke-Setup {
     }
     $next = if ($previous -match $pattern) { [regex]::Replace($previous, $pattern, [Text.RegularExpressions.MatchEvaluator]{ param($m) $block.Trim() }) }
             elseif ($previous) { $previous.TrimEnd() + "`n`n" + $block.Trim() + "`n" } else { $block.Trim() + "`n" }
-    $fields = @{ rulesFile = $rulesPath; mapFile = Get-MapPath; rulesChanged = ($previous -ne $next); preview = $block; agentVerified = $false }
+
+    $existingMap = Read-Map
+    $existingPolicy = Get-MaintenancePolicy $existingMap
+    $hadPolicy = ($existingMap -is [hashtable] -and $existingMap.ContainsKey('settings') -and $existingMap.settings -is [hashtable] -and $existingMap.settings.ContainsKey('maintenance'))
+    $hadExplicitPolicy = [bool]$existingPolicy.configured
+    $policy = @{
+        autoUpdate = if ($NoAutoUpdate) { $false } elseif ($AutoUpdate) { $true } elseif ($hadExplicitPolicy) { [bool]$existingPolicy.autoUpdate } else { $true }
+        autoScan = [bool]$existingPolicy.autoScan
+        maxMapAgeHours = [int]$MaxAgeHours
+        configured = $true
+    }
+    $policyChanged = (-not $hadPolicy) -or (-not $hadExplicitPolicy) -or ($existingPolicy.autoUpdate -ne $policy.autoUpdate) -or
+        ($existingPolicy.autoScan -ne $policy.autoScan) -or ($existingPolicy.maxMapAgeHours -ne $policy.maxMapAgeHours) -or
+        ([bool]$existingPolicy.configured -ne $policy.configured)
+
+    $fields = @{ rulesFile = $rulesPath; mapFile = Get-MapPath; rulesChanged = ($previous -ne $next); preview = $block; agentVerified = $false;
+        maintenance = $policy; maintenanceChanged = $policyChanged }
     if ($WhatIf) { return (New-MapResult 'planned' $fields) }
-    if (-not (Read-Map)) { $null = Invoke-Scan }
+    if (-not $existingMap) { $null = Invoke-Scan }
+    $map = Read-Map
+    if (-not $map) { Throw-MapError 'operation_failed' '建图失败，未写入维护策略。' }
+    Set-MaintenancePolicy $map $policy
+    Save-Map $map
     if ($previous -ne $next) {
         if ($previous) {
             $backup = $rulesPath + '.toolkit-map-' + (Get-Date).ToString('yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 6) + '.bak'
@@ -844,7 +951,11 @@ function Invoke-Setup {
         }
         Write-AtomicUtf8 $rulesPath $next
     }
-    $fields.hint = '配置已写入。新开 agent 会话，验证它实际先查询地图；文件存在不代表模型已遵守。'
+    $fields.hint = if ($policy.autoUpdate) {
+        '配置已写入。agent 可在 find 返回 maintenance.autoAllowed 时自动定向 update；scan / install / add 仍需确认。新开 agent 会话验证它实际先查询地图。'
+    } else {
+        '配置已写入，但自动 update 已关闭；agent 遇到地图维护需求时会先询问。新开 agent 会话验证它实际先查询地图。'
+    }
     return (New-MapResult 'ok' $fields)
 }
 function Invoke-Doctor {

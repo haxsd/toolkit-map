@@ -45,11 +45,11 @@
 
 | 动作 | 参数 | 行为 |
 |---|---|---|
-| `setup` | `-Project <目录>`、`-RulesFile <文件>`、`-WhatIf` | 地图不存在时首次扫描；生成接入规则；保留已有文件内容、修改前备份；重复执行幂等 |
+| `setup` | `-Project <目录>`、`-RulesFile <文件>`、`-AutoUpdate` / `-NoAutoUpdate`、`-WhatIf` | 地图不存在时首次扫描；生成接入规则；写入维护策略（默认允许 agent 定向 `update`）；保留已有文件内容、修改前备份；重复执行幂等 |
 | `doctor` | `-Project`、`-RulesFile`、`-Bundle` | 只读检查宿主、地图、新鲜度与接入文件；`-Bundle` 附带可提交 issue 的宿主/地图摘要 |
 | `scan` | `-Throttle`（默认 min(8, CPU 数)） | 调用 census，合并仍存在的已有登记，再完整重扫；各候选的版本探测先并行跑完再按原顺序建图，`-Throttle 1` 为串行，结果相同；结果附带计量字段 probeStats（见“扫描内核”） |
 | `status` | `-MaxAgeHours`（默认 24） | 完整扫描年龄、最近更新、失效文件数、PATH 变化 |
-| `find` | `<工具>`、`-Project`、`-Version`、`-SkipScan` | 只读：按当前或指定项目声明选择；不执行新候选、不写地图；只读发现的新候选保持未验证；不匹配不降级。维护用 `scan` / `update` / `add` |
+| `find` | `<工具>`、`-Project`、`-Version`、`-SkipScan` | 只读：按当前或指定项目声明选择；不执行新候选、不写地图；只读发现的新候选保持未验证；不匹配不降级。返回 `maintenance`，给出地图年龄、待验证候选、建议动作和 `autoAllowed` |
 | `add` | `<工具> -Path <文件>`、`-Version`、`-Note`、`-Prefer` | 登记已有副本；Version 是提示，不能把探测失败变成已验证；Prefer 保存路径偏好 |
 | `update` | `[工具]` | 重探已有文件与新候选，不刷新完整扫描时间 |
 | `install` | `<工具>@<版本>`、`-Url`、`-Sha256`、`-Via winget`、`-WingetId`、`-WhatIf` | 单独的明确安装动作；portable 版本验证后落仓库；安装器由包管理器管理 |
@@ -60,6 +60,18 @@
 `find` 的只读契约：不执行新候选、不写地图（不改 `scannedAt` / `updatedAt`、候选列表或首选路径）。它可能只读发现候选元数据，但新候选保持 `unverified`，不会被默认选中；必须通过显式 `scan`（完整重扫）、`update <工具>`（只重探条目）或 `add`（登记已有副本）验证后，才可能进入选择。`-SkipScan` 可关闭这次只读发现。CLI 与 MCP 的维护边界一致。
 
 `-AllowUnverified` 不再用于 `find`：严格只读查询仅返回已验证且指纹未变的候选，传入该参数会明确报错。`-AllowIdeHost` 允许已验证的 IDE / 编辑器内置运行时。conda 环境副本不作默认首选。
+
+### 维护策略与 agent 自动维护
+
+`setup` 会把维护策略写入地图的 `settings.maintenance`：未执行 `setup` 时 `autoUpdate=false`（不预授权）；`setup` 无参数默认写入 `autoUpdate=true`，`-NoAutoUpdate` 关闭定向更新授权；`autoScan=false`、`maxMapAgeHours=24` 默认保持不变。
+
+`find` 的结果包含 `maintenance`：
+
+- `required`：没有可执行路径，必须先维护；`recommended`：当前路径可用，但地图有可维护项；
+- `actions`：`update <tool>`、`scan`、`add`、`install` 等建议，每项带 `autoAllowed`；
+- `policy`：当前维护策略；`map`：`scannedAt` / `ageHours` / `stale`；`pending`：新候选、变化候选、未验证候选的数量与路径。
+
+agent 只在 `autoAllowed:true` 时自动执行对应动作（默认只有定向 `update`），执行后重试一次 `find`；`scan` / `add` / `install` 或 `autoAllowed:false` 时只向用户确认一次。`find` 本身仍不执行候选、不写地图。
 
 ## JSON 输出协议 v2
 
@@ -165,7 +177,7 @@ MCP 还提供显式维护工具（默认只预览，`confirm:true` 才请求执�
 }
 ```
 
-地图只保存机器事实和路径偏好，项目选择在 find 时计算。`find` 不写地图；只有 `scan` / `update` / `add` 等维护动作会改动 `scannedAt` / `updatedAt` 和候选。读取 v1 地图时保留原首选路径作为迁移偏好和既有备注；写入时升级到 v2。需要重算默认排序时可重新登记目标路径或调整 preferredPath。未知未来格式不覆盖。
+地图保存机器事实、路径偏好和维护策略（`settings.maintenance`）；项目选择在 find 时计算。`find` 不写地图；只有 `scan` / `update` / `add` 等维护动作会改动 `scannedAt` / `updatedAt` 和候选。读取 v1 地图时保留原首选路径作为迁移偏好和既有备注；写入时升级到 v2。需要重算默认排序时可重新登记目标路径或调整 preferredPath。未知未来格式不覆盖。
 
 候选字段：
 

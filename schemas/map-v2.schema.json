@@ -12,6 +12,7 @@
     "warehouse": { "type": "string" },
     "pathSnapshot": { "type": "string" },
     "censusSummary": { "type": "object" },
+    "settings": { "type": "object", "additionalProperties": true },
     "tools": {
       "type": "object",
       "propertyNames": { "pattern": "^[a-z0-9][a-z0-9._+-]*$" },

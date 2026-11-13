@@ -4,7 +4,7 @@
 客户端支持 MCP 时，优先用 [MCP 接入](mcp.md)：配置一次即可直接调用 `toolkit_find`，不依赖模型记住规则文件。下面的规则文件接入是通用回退方案，两者可以同时启用。
 首次试用建议先按 [README](../README.md#快速开始) 完成一个 Cursor/Codex 项目接入。下面用于选择其他前端、跨项目全局规则或可选技能安装。
 
-`find` 是只读查询：不执行新候选、不写地图；只读发现的新候选保持未验证。地图缺失、过期或候选变化时，先用 `scan` / `update` / `add` 显式维护，再 `find`。
+`find` 是只读查询：不执行新候选、不写地图；只读发现的新候选保持未验证。结果里的 `maintenance` 会说明地图是否过期、有没有待验证候选、建议执行什么动作。`setup` 默认写入 `autoUpdate=true`；未执行 `setup` 时不预授权。`scan` / `add` / `install` 仍只向用户确认一次。
 
 | 前端 | 跨项目使用 | 只在当前项目使用 |
 |---|---|---|
@@ -40,31 +40,33 @@ $ps = (Get-Process -Id $PID).Path
 
 ## 核心契约（Windows 完整地图）
 
-1. `& $map status -Json`；无地图、过旧或候选失效时，先取得用户同意，再用 `scan` / `update` / `add` 维护。PATH 可能仅因会话不同而变化，先确认实际影响。
+1. `& $map status -Json`；无地图时先取得用户同意，再用 `setup` / `scan` 建图。PATH 可能仅因会话不同而变化，先确认实际影响。
 2. `& $map find <工具> -Project <当前项目> -Json`，**find 每次显式传当前项目**，不硬编码项目路径。`find` 只读：不执行新候选、不写地图；只读发现的新候选保持未验证。
-3. 检查退出码为 0、`ok:true`、`status:ok`、`requirement` 和 `verification:verified`，再使用返回的绝对 `path`。
+3. 检查退出码为 0、`ok:true`、`status:ok`、`requirement` 和 `verification:verified`，再使用返回的绝对 `path`。同时检查 `maintenance`：`required` 必须先处理，`recommended` 可先维护再执行。
 4. 未满足要求时先诊断；`find` 不支持 `-AllowUnverified`，不自行加 `-AllowIdeHost`，不执行 shim；先报告项目要求、发现的副本、当前解析到谁。
-5. `find` 失败只说明当前地图没有合适副本，不授权安装；先判断是地图过期、缺少候选还是版本不符，再用 `scan` / `update` / `add` 显式维护。明确需要安装时先 `install <工具>@<版本> -WhatIf -Json` 看计划，再单独安装。已有副本用 `add` 登记，不搬路径、不改全局 PATH。
+5. `maintenance.actions` 里 `autoAllowed:true` 的定向 `update <tool>` 可直接执行（`setup` 已授权），然后重试一次 `find`；`scan` / `add` / `install` 或 `autoAllowed:false` 时只确认一次。不要因为地图旧就每次全量重扫。
 6. 全局规则可选（跨项目复用），但**必须有一个 agent 能读到的持久入口**；仅安装或写好技能文件不能证明 agent 真会调用。
 7. 仅预计安装占用 ≥1 GB 时询问安装位置，下载包大小不触发询问；所有新安装都检查目标盘与暂存/缓存盘空间。估算与选盘方法见 [存储与大工具安装](storage.md)。
 
-## find 严格只读与显式维护
+## find 严格只读与 agent 自动维护
 
-`find` / `toolkit_find` 只负责“按现有地图和项目声明选择”，不承担维护：
+`find` / `toolkit_find` 只负责“按现有地图和项目声明选择”，不执行候选、不写地图：
 
 - 不执行新候选：即使只读发现新路径，也不会运行它取版本；新候选保持 `unverified`，不会被默认选中；
 - 不写地图：查询不会更新 `scannedAt` / `updatedAt`、候选列表或首选路径；
-- 验证靠显式维护：`scan` / `update` / `add` 才会实际探测并把候选变成可用的已验证副本。
+- 返回 `maintenance`：地图年龄、待验证候选、建议动作和 `autoAllowed`；`required` 表示当前没有可执行路径，`recommended` 表示路径可用但地图有可维护项。
+- 验证靠维护动作：`scan` / `update` / `add` 才会实际探测并把候选变成可用的已验证副本。`setup` 预授权后允许 agent 对具体工具自动执行定向 `update`；未执行 `setup` 时不预授权。`scan` / `add` / `install` 仍确认。
 
-需要改变地图时，由人显式执行：
+需要改变地图时，优先由 agent 按策略执行；关闭自动更新或没有预授权时，由人显式执行：
 
 ```powershell
 & $ps -NoProfile -ExecutionPolicy Bypass -File $map scan -Json              # 完整重扫
 & $ps -NoProfile -ExecutionPolicy Bypass -File $map update node -Json       # 只重探已有条目
 & $ps -NoProfile -ExecutionPolicy Bypass -File $map add node -Path 'D:\existing\node.exe' -Json  # 登记已有副本
+& $ps -NoProfile -ExecutionPolicy Bypass -File $map setup -Project $project -NoAutoUpdate -Json  # 关闭定向自动更新
 ```
 
-MCP 的维护工具（`toolkit_scan` / `toolkit_update` / `toolkit_add`）遵循同一原则：默认只返回预览，`confirm:true` 才请求执行。**`confirm:true` 不能证明操作者是人或已获用户授权**；客户端必须展示将要发生的变更并取得用户明确同意。执行 `scan` / `update` / `add` 会为取版本探测本机候选程序，因此更要先确认。维护工具不安装工具、不改 PATH。见 [MCP 维护工具](mcp.md#维护工具)。
+MCP 的维护工具遵循同一原则：`toolkit_update` 在 `find.maintenance.autoAllowed` 为 true 时可传 `confirm:true` 直接执行（策略已授权），然后重试 `find`；`toolkit_scan` / `toolkit_add` 默认只返回预览，`confirm:true` 才请求执行。**`confirm:true` 不能证明操作者是人或已获用户授权**；客户端必须展示将要发生的变更并取得用户明确同意。执行 `scan` / `update` / `add` 会为取版本探测本机候选程序，因此更要先确认。维护工具不安装工具、不改 PATH。见 [MCP 维护工具](mcp.md#维护工具)。
 
 ## Cursor
 
@@ -125,11 +127,14 @@ $claudeRules = Join-Path $env:USERPROFILE '.claude\CLAUDE.md'
 
 `setup` 写入的标记块包含本机 `map.ps1` 绝对路径。共享项目里不要把这个块提交上去；每人本地执行 `setup`，或改用本地未跟踪的规则文件。升级源码目录后路径会变化，需要重新生成。
 
-`setup` 生成的规则块应先说明 MCP 优先、再给脚本回退，并说明 `find` 只读、维护用 `scan` / `update` / `add`。用 `-WhatIf -Json` 的 `preview` 核对当前文案；如果仍是旧顺序，先更新源码再重新 `setup`，不要手工改已部署块。
+`setup` 同时写入维护策略：无参数默认 `autoUpdate=true`，允许 agent 在 `find` 需要时自动执行定向 `update <tool>`；`-NoAutoUpdate` 关闭。未执行 `setup` 时不预授权。`scan` / `add` / `install` 仍由用户确认。
+
+`setup` 生成的规则块应先说明 MCP 优先、再给脚本回退，并说明 `find` 只读、`maintenance` 的自动维护规则。用 `-WhatIf -Json` 的 `preview` 核对当前文案；如果仍是旧顺序，先更新源码再重新 `setup`，不要手工改已部署块。
 
 ```powershell
 & $map setup -Project $project -WhatIf -Json
 & $map setup -Project $project -Json
+& $map setup -Project $project -NoAutoUpdate -Json
 & $map doctor -Project $project -Json
 ```
 

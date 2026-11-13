@@ -60,7 +60,7 @@ $ps = (Get-Process -Id $PID).Path
 ## 找不到候选（not_found）
 
 - 症状：`find` 返回 `status:not_found`，`search.complete:false`。
-- 动作：`find` 只读：不执行新候选、不写地图；只读发现的新候选保持未验证。这只说明**当前地图**没有可用候选，不代表全盘不存在，也不授权安装。先显式维护地图，再重新查询：
+- 动作：`find` 只读：不执行新候选、不写地图；只读发现的新候选保持未验证。这只说明**当前地图**没有可用候选，不代表全盘不存在，也不授权安装。若结果里的 `maintenance.autoAllowed` 为 true，agent 可先执行定向 `update <tool>` 并重试；否则按 `maintenance.actions` 显式维护地图，再重新查询：
   ```powershell
   & $ps -NoProfile -ExecutionPolicy Bypass -File $map scan -Json
   & $ps -NoProfile -ExecutionPolicy Bypass -File $map update node -Json

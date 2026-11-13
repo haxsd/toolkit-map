@@ -454,6 +454,32 @@ param([switch]$Json)
     Assert ($runs[1].candidates -ge 11) "沙箱里的 11 个假工具没有全部扫到：$($runs[1].candidates)"
     Assert ($runs[1].text -eq $runs[4].text) "并行与串行扫描的地图（去掉时间字段后）必须相同：`n$($runs[1].text)`n$($runs[4].text)"
     Assert ($runs[1].launches -eq $runs[4].launches) "并行与串行的探测启动次数必须相同：$($runs[1].launches) / $($runs[4].launches)"
+
+    # 维护策略：独立临时地图，从未 setup 的状态开始。
+    $policyMap = Join-Path $scratch 'maintenance-policy.json'
+    $savedMapForPolicy = $mapFile
+    $mapFile = $policyMap
+    $r = Run-Map @('add', 'node', '-Path', $two)
+    Assert ($r.value.ok) '维护策略测试的临时地图初始化失败'
+    $r = Run-Map @('find', 'node', '-Project', $project, '-Version', '22', '-SkipScan')
+    Assert ($r.value.ok -and $r.value.maintenance -and $r.value.maintenance.policy.autoUpdate -eq $false) '未 setup 时 find 必须返回 maintenance.policy，且不得预授权 autoUpdate'
+    $r = Run-Map @('setup', '-Project', $project)
+    Assert ($r.value.ok -and $r.value.maintenance.autoUpdate -and $r.value.maintenance.configured) 'setup 无参数时应默认预授权 autoUpdate'
+    $r = Run-Map @('setup', '-Project', $project, '-NoAutoUpdate')
+    Assert ($r.value.ok -and -not $r.value.maintenance.autoUpdate) 'setup -NoAutoUpdate 必须关闭自动 update'
+    $savedPolicy = [IO.File]::ReadAllText($mapFile) | ConvertFrom-Json
+    Assert ($savedPolicy.settings.maintenance.autoUpdate -eq $false) 'setup 必须把维护策略写入地图'
+    $r = Run-Map @('find', 'node', '-Project', $project, '-Version', '999', '-SkipScan')
+    Assert (-not $r.value.ok -and $r.value.maintenance.required -and $r.value.maintenance.actions[0].autoAllowed -eq $false) '关闭策略后维护动作不得自动执行'
+    $r = Run-Map @('setup', '-Project', $project, '-AutoUpdate')
+    Assert ($r.value.ok -and $r.value.maintenance.autoUpdate) 'setup -AutoUpdate 必须恢复自动 update'
+    $r = Run-Map @('find', 'node', '-Project', $project, '-Version', '999', '-SkipScan')
+    Assert ($r.value.maintenance.autoAllowed -and $r.value.maintenance.actions[0].autoAllowed) '开启策略后定向 update 应标记 autoAllowed'
+    $r = Run-Map @('scan', '-Throttle', '1')
+    $savedPolicy = [IO.File]::ReadAllText($mapFile) | ConvertFrom-Json
+    Assert ($r.value.ok -and $savedPolicy.settings.maintenance.autoUpdate -eq $true -and $savedPolicy.settings.maintenance.configured -eq $true) 'scan 必须保留维护策略'
+    $mapFile = $savedMapForPolicy
+
     [IO.File]::WriteAllText($mapFile, '{broken')
     $r = Run-Map @('add', 'node', '-Path', $one)
     Assert ($r.code -ne 0 -and $r.value.status -eq 'map_corrupt' -and [IO.File]::ReadAllText($mapFile) -eq '{broken') '损坏地图不能被当成空地图覆盖'
