@@ -720,6 +720,16 @@ function Select-FindCandidate {
     # described as the PATH default (Invoke-Find assigns available_candidate).
     return $selected
 }
+function Test-MaintenanceCandidateEligible {
+    param($Candidate)
+    if (-not $Candidate -or -not $Candidate.path) { return $false }
+    if ($Candidate.isShim -or (Test-IsShimPath $Candidate.path)) { return $false }
+    if (Test-IsEnvInternal $Candidate.path) { return $false }
+    if ($Candidate.source -eq 'conda-env') { return $false }
+    if ($Candidate.source -eq 'ide-host' -and -not $AllowIdeHost) { return $false }
+    if ($Candidate.verification -in @('unavailable', 'skipped')) { return $false }
+    return $true
+}
 function Invoke-Find {
     if (-not $Tool) { Throw-MapError 'invalid_argument' 'find 需要工具名。' }
     $name = Get-ToolkitCanonicalName $Tool
@@ -788,14 +798,16 @@ function Invoke-Find {
     $status = if ($chosen.Count) { 'ok' } elseif ($requirement.version -and $verified.Count) { 'version_mismatch' } elseif ($candidates.Count -or $pathDefault) { 'no_usable_candidate' } else { 'not_found' }
 
     $newCandidates = @($candidates | Where-Object {
-        $_.path -and -not $recordedByPath.ContainsKey((Get-ToolkitNormalizedPath $_.path))
+        $_.path -and -not $recordedByPath.ContainsKey((Get-ToolkitNormalizedPath $_.path)) -and (Test-MaintenanceCandidateEligible $_)
     })
     $changedCandidates = @($live | Where-Object {
         $_.path -and $recordedByPath.ContainsKey((Get-ToolkitNormalizedPath $_.path)) -and
-        $recordedByPath[(Get-ToolkitNormalizedPath $_.path)].verification -eq 'verified' -and $_.verification -eq 'unverified'
+        $recordedByPath[(Get-ToolkitNormalizedPath $_.path)].verification -eq 'verified' -and $_.verification -eq 'unverified' -and
+        (Test-MaintenanceCandidateEligible $_)
     })
     $unverifiedCandidates = @($candidates | Where-Object {
-        $_.path -and $recordedByPath.ContainsKey((Get-ToolkitNormalizedPath $_.path)) -and $_.verification -eq 'unverified'
+        $_.path -and $recordedByPath.ContainsKey((Get-ToolkitNormalizedPath $_.path)) -and $_.verification -eq 'unverified' -and
+        (Test-MaintenanceCandidateEligible $_)
     })
     $pendingPaths = New-Object System.Collections.Generic.HashSet[string]
     foreach ($candidate in @($newCandidates) + @($changedCandidates) + @($unverifiedCandidates)) {
