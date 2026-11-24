@@ -48,7 +48,7 @@
 | `setup` | `-Project <目录>`、`-RulesFile <文件>`、`-AutoUpdate` / `-NoAutoUpdate`、`-WhatIf` | 地图不存在时首次扫描；生成接入规则；写入维护策略（默认允许 agent 定向 `update`）；保留已有文件内容、修改前备份；重复执行幂等 |
 | `doctor` | `-Project`、`-RulesFile`、`-Bundle` | 只读检查宿主、地图、新鲜度与接入文件；`-Bundle` 附带可提交 issue 的宿主/地图摘要 |
 | `scan` | `-Throttle`（默认 min(8, CPU 数)） | 调用 census，合并仍存在的已有登记，再完整重扫；各候选的版本探测先并行跑完再按原顺序建图，`-Throttle 1` 为串行，结果相同；结果附带计量字段 probeStats（见“扫描内核”） |
-| `status` | `-MaxAgeHours`（默认 24） | 完整扫描年龄、最近更新、失效文件数、PATH 变化 |
+| `status` | `-MaxAgeHours`（默认用 `setup` 写入的 `maxMapAgeHours`，未设置为 24） | 完整扫描年龄、最近更新、失效文件数、PATH 变化 |
 | `find` | `<工具>`、`-Project`、`-Version`、`-SkipScan` | 只读：按当前或指定项目声明选择；不执行新候选、不写地图；只读发现的新候选保持未验证；不匹配不降级。返回 `maintenance`，给出地图年龄、待验证候选、建议动作和 `autoAllowed` |
 | `add` | `<工具> -Path <文件>`、`-Version`、`-Note`、`-Prefer` | 登记已有副本；Version 是提示，不能把探测失败变成已验证；Prefer 保存路径偏好 |
 | `update` | `[工具]` | 重探已有文件与新候选，不刷新完整扫描时间 |
@@ -63,7 +63,7 @@
 
 ### 维护策略与 agent 自动维护
 
-`setup` 会把维护策略写入地图的 `settings.maintenance`：未执行 `setup` 时 `autoUpdate=false`（不预授权）；`setup` 无参数默认写入 `autoUpdate=true`，`-NoAutoUpdate` 关闭定向更新授权；`autoScan=false`、`maxMapAgeHours=24` 默认保持不变。
+`setup` 会把维护策略写入地图的 `settings.maintenance`：未执行 `setup` 时 `autoUpdate=false`（不预授权）；`setup` 无参数默认写入 `autoUpdate=true`，`-NoAutoUpdate` 关闭定向更新授权；`autoScan=false` 默认保持不变；`maxMapAgeHours` 默认 24，`-MaxAgeHours` 显式修改，重跑 `setup` 不带该参数时保留已存值。完整扫描过期后，`find` 对最近一次定向 `update`（`checkedAt`）仍在过期时长内的工具不再重复搜索磁盘；找不到可用候选时照常搜索。
 
 `find` 的结果包含 `maintenance`：
 
