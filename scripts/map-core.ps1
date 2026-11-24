@@ -5,7 +5,7 @@ function Get-MapPath {
 }
 function Get-DefaultMaintenancePolicy {
     # 未执行 setup 时不预授权；setup 会显式写入 autoUpdate=true（或用 -NoAutoUpdate 关闭）。
-    $maxAge = if ($null -ne $MaxAgeHours -and [int]$MaxAgeHours -gt 0) { [int]$MaxAgeHours } else { 24 }
+    $maxAge = if ($script:MaxAgeHoursExplicit -and [int]$MaxAgeHours -gt 0) { [int]$MaxAgeHours } else { 24 }
     return @{ autoUpdate = $false; autoScan = $false; maxMapAgeHours = $maxAge; configured = $false }
 }
 function Get-MaintenancePolicy {
@@ -19,6 +19,7 @@ function Get-MaintenancePolicy {
             }
         }
     }
+    try { if ([int]$policy.maxMapAgeHours -lt 1) { $policy.maxMapAgeHours = 24 } } catch { $policy.maxMapAgeHours = 24 }
     return $policy
 }
 function Set-MaintenancePolicy {
@@ -674,8 +675,10 @@ function Invoke-Status {
     $dead = $deadPaths.Count
     $toolCount = @($map.tools.Keys | ForEach-Object { Get-ToolkitCanonicalName $_ } | Sort-Object -Unique).Count
     $changed = ($map.pathSnapshot -ne $env:PATH)
-    $stale = ($null -eq $age -or $age -gt $MaxAgeHours)
     $policy = Get-MaintenancePolicy $map
+    # 与 find 同一口径：默认用 setup 写入的 maxMapAgeHours，显式 -MaxAgeHours 才覆盖。
+    $maxAge = if ($script:MaxAgeHoursExplicit -and $MaxAgeHours -gt 0) { [double]$MaxAgeHours } else { [double]$policy.maxMapAgeHours }
+    $stale = ($null -eq $age -or $age -gt $maxAge)
     $hints = New-Object System.Collections.Generic.List[string]
     if ($stale) {
         $hints.Add($(if ($policy.autoUpdate) { '完整扫描已过期；agent 可按策略对具体工具执行 update，完整 scan 仍建议确认。' } else { '完整扫描已过期；经用户确认后可执行 scan。' }))
@@ -684,7 +687,7 @@ function Invoke-Status {
     if ($changed) { $hints.Add('当前进程 PATH 与最近扫描时不同，可能是会话激活造成；find 按当前进程 PATH 判断。') }
     if (-not $hints.Count) { $hints.Add('地图可用。') }
     return (New-MapResult 'ok' @{ exists = $true; mapFile = Get-MapPath; scannedAt = $map.scannedAt; updatedAt = $map.updatedAt;
-        ageHours = if ($null -ne $age) { [math]::Round($age, 1) } else { $null }; stale = $stale; tools = $toolCount;
+        ageHours = if ($null -ne $age) { [math]::Round($age, 1) } else { $null }; maxAgeHours = $maxAge; stale = $stale; tools = $toolCount;
         deadCandidates = $dead; pathChanged = $changed; maintenance = $policy; hint = ($hints -join ' ') })
 }
 function Get-Requirement {
@@ -763,6 +766,14 @@ function Invoke-Find {
     $policy = Get-MaintenancePolicy $map
     $age = if ($map.scannedAt) { ((Get-Date) - [datetime]$map.scannedAt).TotalHours } else { $null }
     $stale = ($null -eq $age -or $age -gt [double]$policy.maxMapAgeHours)
+    # 完整扫描过期后，定向 update 过的工具在 maxMapAgeHours 内不再每次 find 都重新搜磁盘；
+    # 找不到可用候选时照常搜索（v2.0.0 行为）。
+    $toolCheckedAt = if ($map.tools -and $map.tools.ContainsKey($name)) { $map.tools[$name].checkedAt } else { $null }
+    $toolFresh = $false
+    if ($toolCheckedAt) {
+        try { $toolFresh = (((Get-Date) - [datetime]$toolCheckedAt).TotalHours -le [double]$policy.maxMapAgeHours) } catch { $toolFresh = $false }
+    }
+    $searchStale = $stale -and -not $toolFresh
     $recordedByPath = @{}
     foreach ($recorded in $existing) {
         if ($recorded.path) { $recordedByPath[(Get-ToolkitNormalizedPath $recorded.path)] = $recorded }
@@ -778,7 +789,7 @@ function Invoke-Find {
     Set-UniqueCandidateIds $candidates
     $selected = Select-FindCandidate $name $candidates $declared $preferredPath $pathDefault
     $searched = $false
-    if (-not $SkipScan -and (-not $selected -or $stale)) {
+    if (-not $SkipScan -and (-not $selected -or $searchStale)) {
         # Discovery only reads file metadata. New candidates are not verified
         # until the agent explicitly runs update, scan or add.
         $found = @(Get-ToolCandidates -Name $name -NoProbe)
@@ -897,7 +908,7 @@ function Invoke-Update {
             Refresh-RecordedCandidate $_ "$($entry.preferredPath)"
         } | Where-Object { $null -ne $_ }) } else { @() }
         $candidates = @(Merge-Candidates (Get-ToolCandidates $name) $existing -PreserveMissing)
-        $map.tools[$name] = @{ candidates = $candidates; preferred = ''; preferredPath = if ($entry) { "$($entry.preferredPath)" } else { '' } }
+        $map.tools[$name] = @{ candidates = $candidates; preferred = ''; preferredPath = if ($entry) { "$($entry.preferredPath)" } else { '' }; checkedAt = (Get-Date).ToString('o') }
     }
     Save-Map $map
     return (New-MapResult 'ok' @{ tools = $targets; updatedAt = $map.updatedAt; scannedAt = $map.scannedAt; mapFile = Get-MapPath })
@@ -924,6 +935,7 @@ function Get-RulesBlock {
 }
 function Invoke-Setup {
     if ($AutoUpdate -and $NoAutoUpdate) { Throw-MapError 'invalid_argument' 'AutoUpdate 与 NoAutoUpdate 不能同时使用。' }
+    if ($script:MaxAgeHoursExplicit -and $MaxAgeHours -lt 1) { Throw-MapError 'invalid_argument' 'MaxAgeHours 必须是正整数。' }
     $rulesPath = Get-RulesPath
     $block = Get-RulesBlock
     $previous = if ([IO.File]::Exists($rulesPath)) { [IO.File]::ReadAllText($rulesPath) } else { '' }
@@ -941,7 +953,7 @@ function Invoke-Setup {
     $policy = @{
         autoUpdate = if ($NoAutoUpdate) { $false } elseif ($AutoUpdate) { $true } elseif ($hadExplicitPolicy) { [bool]$existingPolicy.autoUpdate } else { $true }
         autoScan = [bool]$existingPolicy.autoScan
-        maxMapAgeHours = [int]$MaxAgeHours
+        maxMapAgeHours = if ($script:MaxAgeHoursExplicit) { [int]$MaxAgeHours } else { [int]$existingPolicy.maxMapAgeHours }
         configured = $true
     }
     $policyChanged = (-not $hadPolicy) -or (-not $hadExplicitPolicy) -or ($existingPolicy.autoUpdate -ne $policy.autoUpdate) -or

@@ -478,6 +478,40 @@ param([switch]$Json)
     $r = Run-Map @('scan', '-Throttle', '1')
     $savedPolicy = [IO.File]::ReadAllText($mapFile) | ConvertFrom-Json
     Assert ($r.value.ok -and $savedPolicy.settings.maintenance.autoUpdate -eq $true -and $savedPolicy.settings.maintenance.configured -eq $true) 'scan 必须保留维护策略'
+
+    # 过期时长：status 与 find 同一口径；重跑 setup 不带 -MaxAgeHours 时保留已存值。
+    function Set-PolicyMapAge {
+        param([double]$Hours, [switch]$DropNodeCheck)
+        $doc = [IO.File]::ReadAllText($mapFile) | ConvertFrom-Json
+        $doc.scannedAt = (Get-Date).AddHours(-$Hours).ToString('o')
+        if ($DropNodeCheck -and $doc.tools.node.PSObject.Properties['checkedAt']) { $doc.tools.node.PSObject.Properties.Remove('checkedAt') }
+        [IO.File]::WriteAllText($mapFile, ($doc | ConvertTo-Json -Depth 32))
+    }
+    $r = Run-Map @('setup', '-Project', $project, '-MaxAgeHours', '72')
+    Assert ($r.value.ok -and $r.value.maintenance.maxMapAgeHours -eq 72) 'setup -MaxAgeHours 必须写入 maxMapAgeHours'
+    $r = Run-Map @('setup', '-Project', $project)
+    Assert ($r.value.ok -and $r.value.maintenance.maxMapAgeHours -eq 72 -and $r.value.maintenance.autoUpdate) '重跑 setup 不带 -MaxAgeHours 时必须保留已存的过期时长'
+    $r = Run-Map @('setup', '-Project', $project, '-MaxAgeHours', '0')
+    Assert (-not $r.value.ok -and $r.value.status -eq 'invalid_argument') 'setup -MaxAgeHours 0 必须拒绝'
+    Set-PolicyMapAge 48
+    $r = Run-Map @('status')
+    Assert ($r.value.ok -and -not $r.value.stale -and $r.value.maxAgeHours -eq 72) 'status 必须默认使用策略里的过期时长'
+    $r = Run-Map @('status', '-MaxAgeHours', '24')
+    Assert ($r.value.ok -and $r.value.stale -and $r.value.maxAgeHours -eq 24) 'status 显式 -MaxAgeHours 必须覆盖策略'
+    $r = Run-Map @('find', 'node', '-Project', $project, '-Version', '22', '-SkipScan')
+    Assert ($r.value.ok -and -not $r.value.maintenance.map.stale) 'find 与 status 的过期判断必须一致'
+
+    # 完整扫描过期：未定向 update 的工具每次 find 仍搜索；update 后在过期时长内不再重复搜索。
+    Set-PolicyMapAge 100 -DropNodeCheck
+    $r = Run-Map @('find', 'node', '-Project', $project, '-Version', '22')
+    Assert ($r.value.ok -and $r.value.search.performed -and $r.value.maintenance.map.stale) '地图过期且工具未更新时 find 应搜索新候选'
+    $r = Run-Map @('update', 'node')
+    $savedPolicy = [IO.File]::ReadAllText($mapFile) | ConvertFrom-Json
+    Assert ($r.value.ok -and $savedPolicy.tools.node.checkedAt) 'update 必须记录工具的 checkedAt'
+    $r = Run-Map @('find', 'node', '-Project', $project, '-Version', '22')
+    Assert ($r.value.ok -and -not $r.value.search.performed -and $r.value.maintenance.map.stale) '定向 update 后 find 不应重复搜索，但仍报告完整扫描过期'
+    $r = Run-Map @('find', 'node', '-Project', $project, '-Version', '999')
+    Assert (-not $r.value.ok -and $r.value.search.performed) '找不到可用候选时 find 仍必须搜索'
     $mapFile = $savedMapForPolicy
 
     [IO.File]::WriteAllText($mapFile, '{broken')

@@ -90,6 +90,8 @@ $CommonToolNames = @(
 
 # 核心与数据配方都相对本脚本定位，可从任意项目调用。
 $script:MapScriptPath = $PSCommandPath
+# 只有显式传入 -MaxAgeHours 才覆盖 setup 写入的 maxMapAgeHours；参数默认值不算。
+$script:MaxAgeHoursExplicit = $PSBoundParameters.ContainsKey('MaxAgeHours')
 . (Join-Path $PSScriptRoot 'toolkit-common.ps1')
 . (Join-Path $PSScriptRoot 'map-core.ps1')
 $script:ToolCatalog = (ConvertTo-HashtableDeep ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'tools.json')) | ConvertFrom-Json)).tools
